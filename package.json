@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "author": "maxgfr",
   "license": "MIT",
+  "type": "module",
   "description": "A minimalist typescript swc starter",
   "main": "./build/index.js",
   "repository": {
@@ -24,7 +25,7 @@
   "scripts": {
     "start": "node build/index.js",
     "dev": "nodemon",
-    "develop": "node -r @swc-node/register ./src/index.ts",
+    "develop": "swc ./src -d build && node build/index.js",
     "test": "DOTENV_CONFIG_PATH=.env.test jest",
     "test:watch": "DOTENV_CONFIG_PATH=.env.test jest --watch",
     "clean": "rimraf build",
@@ -36,15 +37,20 @@
     "prettier": "prettier --write './src/**/*.{ts,js,json}'"
   },
   "dependencies": {
-    "dotenv": "16.0.0"
+    "cookie": "^0.4.2",
+    "dotenv": "16.0.0",
+    "https-proxy-agent": "^5.0.0",
+    "node-fetch": "^3.2.3",
+    "user-agents": "^1.0.967"
   },
   "devDependencies": {
-    "@swc-node/register": "1.4.2",
     "@swc/cli": "0.1.56",
     "@swc/core": "1.2.160",
     "@swc/jest": "0.2.20",
+    "@types/cookie": "^0.4.1",
     "@types/jest": "27.4.1",
     "@types/node": "16.11.26",
+    "@types/user-agents": "^1.0.2",
     "@typescript-eslint/eslint-plugin": "5.16.0",
     "@typescript-eslint/parser": "5.16.0",
     "eslint": "8.11.0",
@@ -55,5 +61,8 @@
     "prettier": "2.6.0",
     "rimraf": "3.0.2",
     "typescript": "4.6.2"
+  },
+  "engines": {
+    "node": "16.x"
   }
 }
