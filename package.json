@@ -1,26 +1,24 @@
 {
-  "name": "typescript-swc-starter",
+  "name": "leboncoin",
   "version": "1.0.0",
   "author": "maxgfr",
   "license": "MIT",
   "type": "module",
-  "description": "A minimalist typescript swc starter",
+  "description": "Leboncoin fetcher",
   "main": "./build/index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/maxgfr/typescript-swc-starter.git"
+    "url": "https://github.com/maxgfr/leboncoin.git"
   },
   "bugs": {
-    "url": "https://github.com/maxgfr/typescript-swc-starter/issues"
+    "url": "https://github.com/maxgfr/leboncoin/issues"
   },
-  "homepage": "https://github.com/maxgfr/typescript-swc-starter#readme",
+  "homepage": "https://github.com/maxgfr/leboncoin#readme",
   "files": [
     "build"
   ],
   "keywords": [
-    "boilerplate",
-    "typescript",
-    "swc"
+    "leboncoin"
   ],
   "scripts": {
     "start": "node build/index.js",
