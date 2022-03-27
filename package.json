@@ -21,9 +21,9 @@
     "leboncoin"
   ],
   "scripts": {
-    "start": "node build/index.js",
+    "start": "NODE_OPTIONS=\"--experimental-specifier-resolution=node\" node build/index.js",
     "dev": "nodemon",
-    "develop": "swc ./src -d build && node build/index.js",
+    "develop": "swc ./src -d build && NODE_OPTIONS=\"--experimental-specifier-resolution=node\" node build/index.js",
     "test": "DOTENV_CONFIG_PATH=.env.test jest",
     "test:watch": "DOTENV_CONFIG_PATH=.env.test jest --watch",
     "clean": "rimraf build",
