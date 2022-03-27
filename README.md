@@ -1,37 +1,5 @@
-# typescript-swc-starter
+# leboncoin
 
-A simple node boilerplate made in typescript using swc.
+Example de recherche : <https://www.leboncoin.fr/recherche?category=9&locations=Clermont-Ferrand__45.78574122226367_3.0939572793408208_9154&owner_type=private&sort=price&order=asc&real_estate_type=1%2C2>
 
-> NOTE : A version without rust compiler [swc](https://swc.rs/) is available [here](https://github.com/maxgfr/boilerplate-typescript-node).
-
-## Clone repository and install dependencies
-
-```sh
-git clone https://github.com/maxgfr/typescript-swc-starter # For cloning the repository
-cd typescript-swc-starter # To navigate to the repository root
-yarn # Install dependencies
-cp .env.example .env
-```
-
-## Running the code
-
-```sh
-yarn build # For building the code with typechecking
-yarn build:swc # For building without typechecking
-yarn start # For running the code builded
-```
-
-Or in `development` mode:
-
-```sh
-yarn dev # For running the code in development thanks to swc and nodemon
-```
-
-> **:warning: No typechecking made in dev mode**
-
-## Testing the code
-
-```sh
-yarn test # For running unit test
-yarn test:watch # For watching unit test
-```
+List de proxies <https://sunny9577.github.io/proxy-scraper/proxies.json>
