@@ -1,20 +1,22 @@
 import Apify from 'apify';
+import { SearchResult } from './types';
 
-export async function takeScreenshot(
-  url: string,
-  filename: string,
+export async function getAllSearchResult(
+  query: string,
   chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-) {
-  Apify.main(async () => {
-    const browser = await Apify.launchPuppeteer({
-      stealth: true,
-      launchOptions: {
-        executablePath: chromePath,
-      },
+): Promise<SearchResult[]> {
+  return new Promise((resolve) => {
+    Apify.main(async () => {
+      const browser = await Apify.launchPuppeteer({
+        stealth: true,
+        launchOptions: {
+          executablePath: chromePath,
+        },
+      });
+      const page = await browser.newPage();
+      await page.goto('https://www.leboncoin.fr/recherche?' + query);
+      await browser.close();
+      resolve([{ title: 'test' }]);
     });
-    const page = await browser.newPage();
-    await page.goto(url);
-    await page.screenshot({ path: `./assets/${filename}.png` });
-    await browser.close();
   });
 }
