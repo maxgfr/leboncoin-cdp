@@ -12,7 +12,7 @@ puppeteer.use(AnonymUa());
 
 export async function saveAllSearchResult(
   query: string,
-  saveContent = {
+  saveExternalContent = {
     fileName: 'scrap',
   },
   chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -27,8 +27,11 @@ export async function saveAllSearchResult(
 
   const pageContent = await page.content();
 
-  if (saveContent) {
-    fs.writeFileSync(`./assets/${saveContent.fileName}.html`, pageContent);
+  if (saveExternalContent) {
+    fs.writeFileSync(
+      `./assets/${saveExternalContent.fileName}.html`,
+      pageContent,
+    );
   }
 
   await browser.close();
