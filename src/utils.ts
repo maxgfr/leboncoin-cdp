@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 export const getNextJsProps = (content: string): Record<string, any> => {
   const result = content.match(
     // eslint-disable-next-line no-useless-escape
@@ -18,4 +20,12 @@ export const getNextJsProps = (content: string): Record<string, any> => {
     throw new Error('Problème au niveau du content');
   }
   return JSON.parse(mappedResult[0]);
+};
+
+export const mergeJsonFiles = (...files: string[]): Record<string, any> => {
+  const result = files.reduce((acc, val) => {
+    const json = JSON.parse(fs.readFileSync(val, 'utf-8'));
+    return { ...acc, ...json };
+  }, {});
+  return result;
 };

@@ -36,7 +36,7 @@ export async function saveAllSearchResult(
     );
   }
 
-  const result = exploitSearchContent(pageContent, {
+  const result = exploitSearchContent(pageContent, new Date(), {
     fileName: 'res1',
   });
 
@@ -48,9 +48,13 @@ export async function saveAllSearchResult(
         'https://www.leboncoin.fr/recherche?' + query + `&page=${i}`,
       );
 
-      exploitSearchContent(await page.content(), {
+      const res = exploitSearchContent(await page.content(), new Date(), {
         fileName: 'res' + i,
       });
+
+      if (res.isFinishToFetch) {
+        break;
+      }
     }
   }
 
