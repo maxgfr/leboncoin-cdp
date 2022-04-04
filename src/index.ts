@@ -4,9 +4,9 @@ import fs from 'fs';
 import { saveAllSearchResult } from './headless';
 
 async function main() {
-  await saveAllSearchResult(
-    'category=9&locations=Clermont-Ferrand__45.78574122226367_3.0939572793408208_9154_5000',
-  );
+  // await saveAllSearchResult(
+  //   'category=9&locations=Clermont-Ferrand__45.78574122226367_3.0939572793408208_9154_5000',
+  // );
   // exploitSearchContent(fs.readFileSync('assets/scrap.html', 'utf8'));
 }
 

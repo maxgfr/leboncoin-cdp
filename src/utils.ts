@@ -22,10 +22,28 @@ export const getNextJsProps = (content: string): Record<string, any> => {
   return JSON.parse(mappedResult[0]);
 };
 
-export const mergeJsonFiles = (...files: string[]): Record<string, any> => {
-  const result = files.reduce((acc, val) => {
+export const mergeAllAssetsJsonFiles = (
+  fileName: string,
+  lastId: number,
+  isForSave = true,
+) => {
+  const files = [];
+  for (let i = 1; i <= lastId; i++) {
+    files.push(`./assets/${fileName}${i}.json`);
+  }
+  const result = mergeArrayOfJson(...files);
+  if (isForSave)
+    fs.writeFileSync(
+      `./assets/${fileName}.json`,
+      JSON.stringify(result, null, 2),
+    );
+  return result;
+};
+
+const mergeArrayOfJson = (...files: string[]): Record<string, any>[] => {
+  const result = files.reduce((acc: Record<string, any>[], val: string) => {
     const json = JSON.parse(fs.readFileSync(val, 'utf-8'));
-    return { ...acc, ...json };
-  }, {});
+    return [...acc, ...json];
+  }, []);
   return result;
 };

@@ -6,6 +6,7 @@ import AdblockerPlugin from 'puppeteer-extra-plugin-adblocker';
 //@ts-expect-error
 import AnonymUa from 'puppeteer-extra-plugin-anonymize-ua';
 import { exploitSearchContent } from './exploit';
+import { mergeAllAssetsJsonFiles } from './utils';
 
 puppeteer.use(AdblockerPlugin());
 puppeteer.use(StealthPlugin());
@@ -42,6 +43,8 @@ export async function saveAllSearchResult(
 
   const nbPages = Math.ceil(result.total / resultPerPage);
 
+  let lastId = 1;
+
   if (nbPages > 1) {
     for (let i = 2; i <= nbPages; i++) {
       await page.goto(
@@ -52,10 +55,41 @@ export async function saveAllSearchResult(
         fileName: 'res' + i,
       });
 
+      lastId = i;
+
       if (res.isFinishToFetch) {
         break;
       }
     }
+  }
+
+  mergeAllAssetsJsonFiles('res', lastId);
+
+  await browser.close();
+}
+
+export async function saveMainPage(
+  query: string[],
+  saveExternalContent = {
+    fileName: 'content',
+  },
+  chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+): Promise<void> {
+  const browser = await puppeteer.launch({
+    executablePath: chromePath,
+    headless: false,
+  });
+
+  const page = await browser.newPage();
+  await page.goto('https://www.leboncoin.fr/recherche?' + query);
+
+  const pageContent = await page.content();
+
+  if (saveExternalContent) {
+    fs.writeFileSync(
+      `./assets/${saveExternalContent.fileName}.html`,
+      pageContent,
+    );
   }
 
   await browser.close();
