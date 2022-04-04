@@ -1,13 +1,10 @@
 import 'dotenv/config'; // To use our .env
-import { exploitSearchContent } from './exploit';
+
 import fs from 'fs';
-import { saveAllSearchResult } from './headless';
+import { saveMainPage } from './headless';
 
 async function main() {
-  // await saveAllSearchResult(
-  //   'category=9&locations=Clermont-Ferrand__45.78574122226367_3.0939572793408208_9154_5000',
-  // );
-  // exploitSearchContent(fs.readFileSync('assets/scrap.html', 'utf8'));
+  saveMainPage(['2139195596']);
 }
 
 main();

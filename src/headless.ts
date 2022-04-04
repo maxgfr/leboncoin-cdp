@@ -5,8 +5,8 @@ import AdblockerPlugin from 'puppeteer-extra-plugin-adblocker';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 //@ts-expect-error
 import AnonymUa from 'puppeteer-extra-plugin-anonymize-ua';
-import { exploitSearchContent } from './exploit';
-import { mergeAllAssetsJsonFiles } from './utils';
+import { exploitPageContent, exploitSearchContent } from './exploit';
+import { formatDate, mergeAllAssetsJsonFiles } from './utils';
 
 puppeteer.use(AdblockerPlugin());
 puppeteer.use(StealthPlugin());
@@ -14,9 +14,7 @@ puppeteer.use(AnonymUa());
 
 export async function saveAllSearchResult(
   query: string,
-  saveExternalContent = {
-    fileName: 'scrap',
-  },
+  fileName = 'search_' + formatDate(new Date()),
   chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   resultPerPage = 35,
 ): Promise<void> {
@@ -30,16 +28,7 @@ export async function saveAllSearchResult(
 
   const pageContent = await page.content();
 
-  if (saveExternalContent) {
-    fs.writeFileSync(
-      `./assets/${saveExternalContent.fileName}.html`,
-      pageContent,
-    );
-  }
-
-  const result = exploitSearchContent(pageContent, new Date(), {
-    fileName: 'res1',
-  });
+  const result = exploitSearchContent(pageContent, new Date(), fileName + '1');
 
   const nbPages = Math.ceil(result.total / resultPerPage);
 
@@ -51,9 +40,11 @@ export async function saveAllSearchResult(
         'https://www.leboncoin.fr/recherche?' + query + `&page=${i}`,
       );
 
-      const res = exploitSearchContent(await page.content(), new Date(), {
-        fileName: 'res' + i,
-      });
+      const res = exploitSearchContent(
+        await page.content(),
+        new Date(),
+        fileName + i,
+      );
 
       lastId = i;
 
@@ -63,16 +54,14 @@ export async function saveAllSearchResult(
     }
   }
 
-  mergeAllAssetsJsonFiles('res', lastId);
+  mergeAllAssetsJsonFiles(fileName, lastId);
 
   await browser.close();
 }
 
 export async function saveMainPage(
-  query: string[],
-  saveExternalContent = {
-    fileName: 'content',
-  },
+  id: string[],
+  fileName = 'page_' + formatDate(new Date()),
   chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ): Promise<void> {
   const browser = await puppeteer.launch({
@@ -81,15 +70,11 @@ export async function saveMainPage(
   });
 
   const page = await browser.newPage();
-  await page.goto('https://www.leboncoin.fr/recherche?' + query);
-
-  const pageContent = await page.content();
-
-  if (saveExternalContent) {
-    fs.writeFileSync(
-      `./assets/${saveExternalContent.fileName}.html`,
-      pageContent,
+  for (let i = 0; i < id.length; i++) {
+    await page.goto(
+      'https://www.leboncoin.fr/ventes_immobilieres/' + id[i] + '.htm',
     );
+    const res = exploitPageContent(await page.content(), fileName + id, 'wsh');
   }
 
   await browser.close();
