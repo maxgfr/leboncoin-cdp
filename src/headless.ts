@@ -1,9 +1,8 @@
-import fs from 'fs';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import AdblockerPlugin from 'puppeteer-extra-plugin-adblocker';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-//@ts-expect-error
+// @ts-expect-error
 import AnonymUa from 'puppeteer-extra-plugin-anonymize-ua';
 import { exploitPageContent, exploitSearchContent } from './exploit';
 import { formatDate, mergeAllAssetsJsonFiles } from './utils';
@@ -14,6 +13,7 @@ puppeteer.use(AnonymUa());
 
 export async function saveAllSearchResult(
   query: string,
+  maxDate = new Date(),
   fileName = 'search_' + formatDate(new Date()),
   chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   resultPerPage = 35,
@@ -42,7 +42,7 @@ export async function saveAllSearchResult(
 
       const res = exploitSearchContent(
         await page.content(),
-        new Date(),
+        maxDate,
         fileName + i,
       );
 
@@ -70,11 +70,13 @@ export async function saveMainPage(
   });
 
   const page = await browser.newPage();
+
   for (let i = 0; i < id.length; i++) {
     await page.goto(
       'https://www.leboncoin.fr/ventes_immobilieres/' + id[i] + '.htm',
     );
-    const res = exploitPageContent(await page.content(), fileName + id, 'wsh');
+    await page.click('button[data-qa-id="adview_button_phone_contact"]');
+    exploitPageContent(await page.content(), fileName + id, 'wsh');
   }
 
   await browser.close();

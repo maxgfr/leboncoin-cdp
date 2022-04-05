@@ -22,6 +22,16 @@ export const getNextJsProps = (content: string): Record<string, any> => {
   return JSON.parse(mappedResult[0]);
 };
 
+export const getPhoneNumber = (content: string): string | undefined => {
+  try {
+    const otherAndPhone = content.split('tel:');
+    const phoneNumber = otherAndPhone[1].slice(0, 10);
+    return phoneNumber;
+  } catch {
+    return undefined;
+  }
+};
+
 export const mergeAllAssetsJsonFiles = (
   fileName: string,
   lastId: number,

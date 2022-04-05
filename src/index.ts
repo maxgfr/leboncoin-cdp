@@ -1,6 +1,5 @@
-import 'dotenv/config'; // To use our .env
+import 'dotenv/config';
 
-import fs from 'fs';
 import { saveMainPage } from './headless';
 
 async function main() {

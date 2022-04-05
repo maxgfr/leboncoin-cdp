@@ -1,4 +1,5 @@
 export type SearchResult = {
+  list_id: string;
   title: string;
   description: string;
   url: string;
@@ -12,4 +13,5 @@ export type SearchResult = {
   city: string;
   user_id: string;
   has_phone: boolean;
+  phone_number?: string;
 };
