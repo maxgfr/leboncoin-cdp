@@ -76,6 +76,7 @@ export async function saveMainPage(
       'https://www.leboncoin.fr/ventes_immobilieres/' + id[i] + '.htm',
     );
     await page.click('button[data-qa-id="adview_button_phone_contact"]');
+    await page.waitForTimeout(5000);
     exploitPageContent(await page.content(), fileName + id, 'wsh');
   }
 
