@@ -26,9 +26,11 @@ export async function saveAllSearchResult(
   const page = await browser.newPage();
   await page.goto('https://www.leboncoin.fr/recherche?' + query);
 
-  const pageContent = await page.content();
-
-  const result = exploitSearchContent(pageContent, new Date(), fileName + '1');
+  const result = exploitSearchContent(
+    await page.content(),
+    maxDate,
+    fileName + '_1',
+  );
 
   const nbPages = Math.ceil(result.total / resultPerPage);
 
@@ -43,7 +45,7 @@ export async function saveAllSearchResult(
       const res = exploitSearchContent(
         await page.content(),
         maxDate,
-        fileName + i,
+        fileName + '_' + i,
       );
 
       lastId = i;
@@ -75,9 +77,8 @@ export async function saveMainPage(
     await page.goto(
       'https://www.leboncoin.fr/ventes_immobilieres/' + id[i] + '.htm',
     );
-    await page.click('button[data-qa-id="adview_button_phone_contact"]');
-    await page.waitForTimeout(5000);
-    exploitPageContent(await page.content(), fileName + id, 'wsh');
+
+    exploitPageContent(await page.content(), fileName + '_' + id[i]);
   }
 
   await browser.close();

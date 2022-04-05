@@ -35,7 +35,6 @@
     "prettier": "prettier --write './src/**/*.{ts,js,json}'"
   },
   "dependencies": {
-    "dotenv": "16.0.0",
     "puppeteer": "^13.5.1",
     "puppeteer-extra": "^3.2.3",
     "puppeteer-extra-plugin-adblocker": "^2.12.0",

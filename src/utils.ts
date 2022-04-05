@@ -39,7 +39,7 @@ export const mergeAllAssetsJsonFiles = (
 ) => {
   const files = [];
   for (let i = 1; i <= lastId; i++) {
-    files.push(`./assets/${fileName}${i}.json`);
+    files.push(`./assets/${fileName}_${i}.json`);
   }
   const result = mergeArrayOfJson(...files);
   if (isForSave)
