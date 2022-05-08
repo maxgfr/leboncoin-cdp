@@ -43,8 +43,8 @@
   },
   "devDependencies": {
     "@swc/cli": "0.1.57",
-    "@swc/core": "1.2.178",
-    "@swc/jest": "0.2.20",
+    "@swc/core": "1.2.179",
+    "@swc/jest": "0.2.21",
     "@types/cookie": "0.5.1",
     "@types/jest": "27.5.0",
     "@types/node": "16.11.33",
