@@ -43,11 +43,11 @@
   },
   "devDependencies": {
     "@swc/cli": "0.1.57",
-    "@swc/core": "1.2.224",
+    "@swc/core": "1.2.226",
     "@swc/jest": "0.2.22",
     "@types/cookie": "0.5.1",
     "@types/jest": "28.1.6",
-    "@types/node": "16.11.47",
+    "@types/node": "16.11.48",
     "@types/user-agents": "1.0.2",
     "@typescript-eslint/eslint-plugin": "5.33.0",
     "@typescript-eslint/parser": "5.33.0",
