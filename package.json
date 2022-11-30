@@ -47,7 +47,7 @@
     "@swc/jest": "0.2.23",
     "@types/cookie": "0.5.1",
     "@types/jest": "29.2.3",
-    "@types/node": "18.11.9",
+    "@types/node": "18.11.10",
     "@types/user-agents": "1.0.2",
     "@typescript-eslint/eslint-plugin": "5.45.0",
     "@typescript-eslint/parser": "5.45.0",
