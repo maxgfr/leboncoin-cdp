@@ -3,7 +3,8 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import AdblockerPlugin from 'puppeteer-extra-plugin-adblocker';
 import AnonymUa from 'puppeteer-extra-plugin-anonymize-ua';
 import { exploitPageContent, exploitSearchContent } from './exploit';
-import { formatDate, mergeAllAssetsJsonFiles } from './utils';
+import { formatDate, getNextJsProps, mergeAllAssetsJsonFiles } from './utils';
+import { Page } from 'puppeteer';
 
 puppeteer.use(AdblockerPlugin());
 puppeteer.use(StealthPlugin());
@@ -20,10 +21,26 @@ export async function saveAllSearchResult(
     headless: false,
   });
 
-  const page = await browser.newPage();
+  let page: Page;
+
+  page = await browser.newPage();
   await page.goto('https://www.leboncoin.fr/recherche?' + query);
 
   const mainContent = await page.content();
+
+  let validationHasBeenDone = false;
+
+  // while the below function crash we reload the page
+  while (!validationHasBeenDone) {
+    try {
+      getNextJsProps(mainContent);
+      validationHasBeenDone = true;
+    } catch (e) {
+      await page.close();
+      page = await browser.newPage();
+      await page.goto('https://www.leboncoin.fr/recherche?' + query);
+    }
+  }
 
   const result = exploitSearchContent(mainContent, fileName + '_1');
 

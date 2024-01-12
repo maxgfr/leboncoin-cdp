@@ -4,7 +4,6 @@ export const getNextJsProps = (content: string): Record<string, any> => {
   const regex =
     /<script\s+id="__NEXT_DATA__"\s+type="application\/json">([^<]+)<\/script>/;
   const result = content.match(regex);
-  console.log(result);
   if (!result) {
     throw new Error('Ne match rien au niveau du resultat');
   }
