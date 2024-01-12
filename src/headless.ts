@@ -26,8 +26,6 @@ export async function saveAllSearchResult(
 
   const mainContent = await page.content();
 
-  console.log(mainContent);
-
   const result = exploitSearchContent(mainContent, maxDate, fileName + '_1');
 
   const nbPages = Math.ceil(result.total / resultPerPage);
