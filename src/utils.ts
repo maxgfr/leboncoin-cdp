@@ -1,20 +1,17 @@
 import fs from 'fs';
 
 export const getNextJsProps = (content: string): Record<string, any> => {
-  const result = content.match(
-    // eslint-disable-next-line no-useless-escape
-    /<script id=\"__NEXT_DATA__\" type=\"application\/json\" crossorigin=\"anonymous\">(.*?)<\/script>/g,
-  );
+  const regex =
+    /<script\s+id="__NEXT_DATA__"\s+type="application\/json">([^<]+)<\/script>/;
+  const result = content.match(regex);
+  console.log(result);
   if (!result) {
     throw new Error('Ne match rien au niveau du resultat');
   }
   const mappedResult = result.map(function (val) {
     return val
       .replace('</script>', '')
-      .replace(
-        '<script id="__NEXT_DATA__" type="application/json" crossorigin="anonymous">',
-        '',
-      );
+      .replace('<script id="__NEXT_DATA__" type="application/json">', '');
   });
   if (!mappedResult || mappedResult.length === 0) {
     throw new Error('Problème au niveau du content');
