@@ -35,6 +35,7 @@ export async function saveAllSearchResult(
       getNextJsProps(mainContent);
       validationHasBeenDone = true;
     } catch (e) {
+      await page.waitForNavigation();
       await page.close();
       page = await browser.newPage();
       await page.goto('https://www.leboncoin.fr/recherche?' + query);
