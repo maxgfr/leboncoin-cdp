@@ -30,7 +30,6 @@ export async function saveAllSearchResult(
 
   let validationHasBeenDone = false;
 
-  // while the below function crash we reload the page
   while (!validationHasBeenDone) {
     try {
       getNextJsProps(mainContent);
