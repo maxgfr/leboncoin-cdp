@@ -11,7 +11,6 @@ puppeteer.use(AnonymUa());
 
 export async function saveAllSearchResult(
   query: string,
-  maxDate = new Date(),
   fileName = 'search_' + formatDate(new Date()),
   chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   resultPerPage = 35,
@@ -26,7 +25,7 @@ export async function saveAllSearchResult(
 
   const mainContent = await page.content();
 
-  const result = exploitSearchContent(mainContent, maxDate, fileName + '_1');
+  const result = exploitSearchContent(mainContent, fileName + '_1');
 
   const nbPages = Math.ceil(result.total / resultPerPage);
 
@@ -40,17 +39,9 @@ export async function saveAllSearchResult(
 
       const pageContent = await page.content();
 
-      const res = exploitSearchContent(
-        pageContent,
-        maxDate,
-        fileName + '_' + i,
-      );
+      exploitSearchContent(pageContent, fileName + '_' + i);
 
       lastId = i;
-
-      if (res.isFinishToFetch) {
-        break;
-      }
     }
   }
 
