@@ -46,44 +46,63 @@ describe('getBrowserAppName', () => {
 
 describe('detectUserDataDir', () => {
   const home = os.homedir();
+  const platform = os.platform();
 
   test('Brave data dir', () => {
     const result = detectUserDataDir('/path/Brave Browser/binary');
-    expect(result).toBe(
-      path.join(
-        home,
-        'Library',
-        'Application Support',
-        'BraveSoftware',
-        'Brave-Browser',
-      ),
-    );
+    if (platform === 'darwin') {
+      expect(result).toBe(
+        path.join(
+          home,
+          'Library',
+          'Application Support',
+          'BraveSoftware',
+          'Brave-Browser',
+        ),
+      );
+    } else if (platform === 'linux') {
+      expect(result).toBe(
+        path.join(home, '.config', 'BraveSoftware', 'Brave-Browser'),
+      );
+    }
   });
 
   test('Opera data dir', () => {
     const result = detectUserDataDir('/path/Opera/binary');
-    expect(result).toBe(
-      path.join(
-        home,
-        'Library',
-        'Application Support',
-        'com.operasoftware.Opera',
-      ),
-    );
+    if (platform === 'darwin') {
+      expect(result).toBe(
+        path.join(
+          home,
+          'Library',
+          'Application Support',
+          'com.operasoftware.Opera',
+        ),
+      );
+    } else if (platform === 'linux') {
+      expect(result).toBe(path.join(home, '.config', 'opera'));
+    }
   });
 
   test('Chromium data dir', () => {
     const result = detectUserDataDir('/path/Chromium/binary');
-    expect(result).toBe(
-      path.join(home, 'Library', 'Application Support', 'Chromium'),
-    );
+    if (platform === 'darwin') {
+      expect(result).toBe(
+        path.join(home, 'Library', 'Application Support', 'Chromium'),
+      );
+    } else if (platform === 'linux') {
+      expect(result).toBe(path.join(home, '.config', 'chromium'));
+    }
   });
 
   test('Chrome data dir (default)', () => {
     const result = detectUserDataDir('/path/google-chrome');
-    expect(result).toBe(
-      path.join(home, 'Library', 'Application Support', 'Google', 'Chrome'),
-    );
+    if (platform === 'darwin') {
+      expect(result).toBe(
+        path.join(home, 'Library', 'Application Support', 'Google', 'Chrome'),
+      );
+    } else if (platform === 'linux') {
+      expect(result).toBe(path.join(home, '.config', 'google-chrome'));
+    }
   });
 });
 
