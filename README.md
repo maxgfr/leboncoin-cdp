@@ -23,7 +23,8 @@ Instead of using Puppeteer (detected by DataDome), this scraper connects to your
 - ✅ **Universal**: Works with all categories (real estate, cars, electronics, etc.)
 - 🔒 **Zero detection**: Raw CDP + Next.js data routes — no automation flags
 - 🚀 **Lightweight**: No Puppeteer, just `ws` for WebSocket CDP
-- 🌐 **Multi-browser**: Supports Brave, Chrome, Opera, Chromium
+- 🌐 **Multi-browser**: Supports Brave, Chrome (default), Opera, Chromium
+- 💻 **Cross-platform**: Full support for macOS and Linux
 - 🔄 **CAPTCHA auto-detect**: Detects challenges and waits for manual resolution
 - 📊 **Real-time progress**: Progress bars and structured logging
 - ⚙️ **Configurable**: Environment variables, CLI flags, config files
@@ -38,7 +39,10 @@ pnpm install
 ## Quick Start
 
 ```bash
-# Scrape real estate listings in Paris using Brave (search results only)
+# Basic usage (uses Chrome by default, search results only)
+pnpm start -- --query "category=9&locations=75012&price=150000-300000"
+
+# Use a specific browser
 pnpm start -- --browser brave --query "category=9&locations=75012&price=150000-300000"
 
 # Scrape search results + individual ad details
@@ -390,7 +394,23 @@ pnpm start -- --browser brave --port 37000 --query "..."
 
 ### Browser not found
 
-The scraper auto-detects Brave, Chrome, and Chromium on macOS. If your browser isn't found:
+The scraper **auto-detects Chrome (default), Brave, and Chromium** on both macOS and Linux.
+
+**Linux paths checked automatically:**
+
+- Chrome: `/usr/bin/google-chrome`, `/usr/bin/google-chrome-stable`, `/opt/google/chrome/chrome`
+- Brave: `/usr/bin/brave-browser`, `/usr/bin/brave`, `/opt/brave.com/brave/brave-browser`
+- Chromium: `/usr/bin/chromium`, `/usr/bin/chromium-browser`, `/snap/bin/chromium`
+- Opera: `/usr/bin/opera`, `/usr/bin/opera-stable`
+
+**macOS paths checked automatically:**
+
+- Chrome: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+- Brave: `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser`
+- Chromium: `/Applications/Chromium.app/Contents/MacOS/Chromium`
+- Opera: `/Applications/Opera.app/Contents/MacOS/Opera`
+
+If your browser isn't found:
 
 ```bash
 # Use --chrome-path to specify a custom binary
@@ -402,8 +422,8 @@ export CHROME_PATH="/usr/bin/brave-browser"
 
 **Supported browsers:**
 
+- Chrome (default — most compatible)
 - Brave (recommended — best anti-fingerprinting)
-- Chrome
 - Opera
 - Chromium
 

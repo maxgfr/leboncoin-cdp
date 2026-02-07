@@ -25,63 +25,148 @@ export interface Config {
   };
 }
 
-/** Known browser binary paths on macOS. */
-const BROWSER_PATHS: Record<BrowserType, string> = {
+/** Browser binary paths by platform */
+const BROWSER_PATHS_MACOS: Record<BrowserType, string> = {
   chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   brave: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
   opera: '/Applications/Opera.app/Contents/MacOS/Opera',
   chromium: '/Applications/Chromium.app/Contents/MacOS/Chromium',
 };
 
+const BROWSER_PATHS_LINUX: Record<BrowserType, string[]> = {
+  chrome: [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/opt/google/chrome/chrome',
+  ],
+  brave: [
+    '/usr/bin/brave-browser',
+    '/usr/bin/brave',
+    '/opt/brave.com/brave/brave-browser',
+  ],
+  chromium: [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+  ],
+  opera: ['/usr/bin/opera', '/usr/bin/opera-stable'],
+};
+
+/**
+ * Detect the current platform.
+ */
+function getPlatform(): 'macos' | 'linux' | 'other' {
+  const platform = os.platform();
+  if (platform === 'darwin') return 'macos';
+  if (platform === 'linux') return 'linux';
+  return 'other';
+}
+
 /**
  * Resolve browser binary path from a BrowserType name.
  * Throws if the binary doesn't exist.
  */
 export function getBrowserPath(browser: BrowserType): string {
-  const p = BROWSER_PATHS[browser];
-  if (!p) throw new Error(`Unknown browser: ${browser}`);
-  try {
-    fs.accessSync(p, fs.constants.X_OK);
-    return p;
-  } catch {
+  const platform = getPlatform();
+
+  if (platform === 'macos') {
+    const p = BROWSER_PATHS_MACOS[browser];
+    if (!p) throw new Error(`Unknown browser: ${browser}`);
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch {
+      throw new Error(
+        `${browser} not found at ${p}. Install it or use --chrome-path to specify the binary.`,
+      );
+    }
+  } else if (platform === 'linux') {
+    const candidates = BROWSER_PATHS_LINUX[browser];
+    if (!candidates) throw new Error(`Unknown browser: ${browser}`);
+
+    for (const p of candidates) {
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return p;
+      } catch {
+        continue;
+      }
+    }
+
     throw new Error(
-      `${browser} not found at ${p}. Install it or use --chrome-path to specify the binary.`,
+      `${browser} not found. Tried: ${candidates.join(', ')}. Install it or use --chrome-path to specify the binary.`,
+    );
+  } else {
+    throw new Error(
+      `Unsupported platform: ${os.platform()}. Use --chrome-path to specify the browser binary.`,
     );
   }
 }
 
 /**
- * Auto-detect a Chromium-based browser on macOS.
- * Checks Chrome first, then Brave, then Chromium.
+ * Auto-detect a Chromium-based browser.
+ * Checks Chrome first (default), then Brave, then Chromium.
  */
 function detectBrowserPath(): string {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
 
-  const candidates = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  ];
+  const platform = getPlatform();
 
-  for (const p of candidates) {
-    try {
-      fs.accessSync(p, fs.constants.X_OK);
-      return p;
-    } catch {
-      continue;
+  if (platform === 'macos') {
+    const candidates = [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    ];
+
+    for (const p of candidates) {
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return p;
+      } catch {
+        continue;
+      }
     }
+
+    return candidates[0]; // fallback to Chrome
+  } else if (platform === 'linux') {
+    const candidates = [
+      // Chrome first (default)
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+      '/opt/google/chrome/chrome',
+      // Then Brave
+      '/usr/bin/brave-browser',
+      '/usr/bin/brave',
+      '/opt/brave.com/brave/brave-browser',
+      // Then Chromium
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/snap/bin/chromium',
+    ];
+
+    for (const p of candidates) {
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return p;
+      } catch {
+        continue;
+      }
+    }
+
+    return '/usr/bin/google-chrome'; // fallback to Chrome
   }
 
-  return candidates[0]; // fallback
+  return '/usr/bin/google-chrome'; // ultimate fallback
 }
 
 /**
- * Derive the macOS .app name from the binary path.
+ * Derive the browser app name from the binary path.
  */
 export function getBrowserAppName(chromePath: string): string {
-  if (chromePath.includes('Brave')) return 'Brave Browser';
-  if (chromePath.includes('Opera')) return 'Opera';
-  if (chromePath.includes('Chromium')) return 'Chromium';
+  if (chromePath.toLowerCase().includes('brave')) return 'Brave Browser';
+  if (chromePath.toLowerCase().includes('opera')) return 'Opera';
+  if (chromePath.toLowerCase().includes('chromium')) return 'Chromium';
   return 'Google Chrome';
 }
 
@@ -90,24 +175,38 @@ export function getBrowserAppName(chromePath: string): string {
  */
 export function detectUserDataDir(chromePath: string): string {
   const home = os.homedir();
-  if (chromePath.includes('Brave'))
-    return path.join(
-      home,
-      'Library',
-      'Application Support',
-      'BraveSoftware',
-      'Brave-Browser',
-    );
-  if (chromePath.includes('Opera'))
-    return path.join(
-      home,
-      'Library',
-      'Application Support',
-      'com.operasoftware.Opera',
-    );
-  if (chromePath.includes('Chromium'))
-    return path.join(home, 'Library', 'Application Support', 'Chromium');
-  return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+  const platform = getPlatform();
+  const lowerPath = chromePath.toLowerCase();
+
+  if (platform === 'macos') {
+    if (lowerPath.includes('brave'))
+      return path.join(
+        home,
+        'Library',
+        'Application Support',
+        'BraveSoftware',
+        'Brave-Browser',
+      );
+    if (lowerPath.includes('opera'))
+      return path.join(
+        home,
+        'Library',
+        'Application Support',
+        'com.operasoftware.Opera',
+      );
+    if (lowerPath.includes('chromium'))
+      return path.join(home, 'Library', 'Application Support', 'Chromium');
+    return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+  } else if (platform === 'linux') {
+    if (lowerPath.includes('brave'))
+      return path.join(home, '.config', 'BraveSoftware', 'Brave-Browser');
+    if (lowerPath.includes('opera')) return path.join(home, '.config', 'opera');
+    if (lowerPath.includes('chromium'))
+      return path.join(home, '.config', 'chromium');
+    return path.join(home, '.config', 'google-chrome');
+  }
+
+  return path.join(home, '.config', 'google-chrome'); // fallback
 }
 
 /**

@@ -6,6 +6,8 @@
  * This means zero automation flags — the browser is indistinguishable from
  * a manually launched instance.
  */
+import os from 'os';
+import path from 'path';
 import { spawn, execSync } from 'child_process';
 import { config, getBrowserAppName } from './config';
 import { logger } from './logger';
@@ -37,11 +39,23 @@ function isBrowserRunning(): boolean {
 }
 
 function quitBrowser(appName: string): void {
+  const platform = os.platform();
+
   try {
-    execSync(`osascript -e 'tell application "${appName}" to quit'`, {
-      stdio: 'ignore',
-      timeout: 5_000,
-    });
+    if (platform === 'darwin') {
+      // macOS: use AppleScript
+      execSync(`osascript -e 'tell application "${appName}" to quit'`, {
+        stdio: 'ignore',
+        timeout: 5_000,
+      });
+    } else if (platform === 'linux') {
+      // Linux: use pkill with the browser binary name
+      const binaryName = path.basename(config.browser.chromePath);
+      execSync(`pkill -x "${binaryName}"`, {
+        stdio: 'ignore',
+        timeout: 5_000,
+      });
+    }
   } catch {
     // ignore
   }
