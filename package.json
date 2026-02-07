@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "author": "maxgfr",
   "license": "MIT",
-  "description": "Generic Leboncoin scraper with anti-bot prevention",
+  "description": "Leboncoin scraper using CDP + in-page fetch (zero bot detection)",
   "repository": {
     "type": "git",
     "url": "https://github.com/maxgfr/leboncoin.git"
@@ -19,8 +19,8 @@
   "keywords": [
     "leboncoin",
     "scraper",
-    "puppeteer",
-    "anti-bot"
+    "cdp",
+    "chrome-devtools-protocol"
   ],
   "scripts": {
     "start": "rm -rf build && pnpm build:swc && node build/index.js",
@@ -37,16 +37,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "puppeteer": "^23.11.1",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-adblocker": "^2.13.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@swc/cli": "^0.5.2",
     "@swc/core": "^1.15.11",
     "@types/node": "^22.19.9",
+    "@types/ws": "^8.5.13",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "mkdirp": "^3.0.1",

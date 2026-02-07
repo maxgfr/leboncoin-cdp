@@ -1275,11 +1275,9 @@ exports[`should works 1`] = `
               "text": "Si aucune estimation fiable n’a pu être calculée, cela signifie que le véhicule est trop spécifique ou présente un état particulier (par exemple des réparations à prévoir ou un état non roulant).",
             },
             "modal-badge-1": {
-              "text": 
-"Le prix est nettement plus élevé que celui du marché pour des véhicules comparables.
+              "text": "Le prix est nettement plus élevé que celui du marché pour des véhicules comparables.
 Le véhicule peut présenter des équipements haut de gamme ou des spécificités.
-Pensez à inclure dans la description les particularités qui justifient ce prix."
-,
+Pensez à inclure dans la description les particularités qui justifient ce prix.",
             },
             "modal-badge-2": {
               "text": "Le prix est un peu plus élevé que celui du marché pour des véhicules comparables.",
@@ -1291,10 +1289,8 @@ Pensez à inclure dans la description les particularités qui justifient ce prix
               "text": "Le prix est inférieur à celui du marché pour des véhicules comparables.",
             },
             "modal-badge-5": {
-              "text": 
-"Le prix est nettement inférieur à celui du marché pour des véhicules comparables.
-Pensez à inclure dans la description les particularités qui justifient ce prix."
-,
+              "text": "Le prix est nettement inférieur à celui du marché pour des véhicules comparables.
+Pensez à inclure dans la description les particularités qui justifient ce prix.",
             },
             "modal-criterias": {
               "text": "L’indicateur prix s’appuie sur plusieurs caractéristiques techniques du véhicule. Cependant certains éléments ne sont pas pris en compte car ils ne peuvent pas être évalués de manière fiable par le système.",
@@ -6206,10 +6202,8 @@ Pensez à inclure dans la description les particularités qui justifient ce prix
               "text": "C’est pourquoi nous nous fondons sur vos correspondances afin d’<strong>améliorer votre expérience en vous proposant du contenu adapté et personnalisé lors de vos conversations avec vos interlocuteurs dans la messagerie leboncoin.</strong>",
             },
             "consent-description-p2": {
-              "text": 
-"En cliquant sur "Accepter et fermer", vous acceptez que leboncoin utilise vos conversations au sein de la messagerie afin de vous adresser des propositions commerciales et/ou promotionnelles et réaliser des statistiques. Ainsi, sur la base de votre consentement, un message automatique de notre part sera affiché à l’apparition de mots clés dans vos messages afin d’améliorer votre expérience.
- Vous pouvez changer d'avis et retirer votre consentement à tout moment en cliquant sur paramètres depuis la page mon compte dans la section messagerie. Si vous ne le souhaitez pas, vous pouvez refuser en cliquant sur "Continuer sans accepter""
-,
+              "text": "En cliquant sur "Accepter et fermer", vous acceptez que leboncoin utilise vos conversations au sein de la messagerie afin de vous adresser des propositions commerciales et/ou promotionnelles et réaliser des statistiques. Ainsi, sur la base de votre consentement, un message automatique de notre part sera affiché à l’apparition de mots clés dans vos messages afin d’améliorer votre expérience.
+ Vous pouvez changer d'avis et retirer votre consentement à tout moment en cliquant sur paramètres depuis la page mon compte dans la section messagerie. Si vous ne le souhaitez pas, vous pouvez refuser en cliquant sur "Continuer sans accepter"",
             },
             "consent-error": {
               "alt": "erreur lors de la récupération",
@@ -6223,26 +6217,20 @@ Pensez à inclure dans la description les particularités qui justifient ce prix
               "cta": "Retour",
             },
             "consent-more-info-description-p1": {
-              "text": 
-"C’est pourquoi nous nous fondons sur vos correspondances afin d’améliorer
+              "text": "C’est pourquoi nous nous fondons sur vos correspondances afin d’améliorer
  votre expérience en vous proposant du contenu adapté et personnalisé lors de
- vos conversations avec vos interlocuteurs dans la messagerie leboncoin."
-,
+ vos conversations avec vos interlocuteurs dans la messagerie leboncoin.",
             },
             "consent-more-info-description-p2": {
-              "text": 
-"En l’activant, vous acceptez que leboncoin utilise vos conversations au sein de
+              "text": "En l’activant, vous acceptez que leboncoin utilise vos conversations au sein de
  la messagerie afin de vous adresser des propositions commerciales et/ou
  promotionnelles et réaliser des statistiques. Ainsi, sur la base de votre
  consentement, un message automatique de notre part sera affiché
- à l’apparition de mots clés dans vos messages afin d’améliorer votre expérience."
-,
+ à l’apparition de mots clés dans vos messages afin d’améliorer votre expérience.",
             },
             "consent-more-info-description-p3": {
-              "text": 
-"Vous pouvez changer d’avis et le désactiver à tout moment dans les paramètres
- depuis la page mon compte dans la section messagerie."
-,
+              "text": "Vous pouvez changer d’avis et le désactiver à tout moment dans les paramètres
+ depuis la page mon compte dans la section messagerie.",
             },
             "consent-renewal": {
               "text": "Pour améliorer votre expérience nous vous proposons d’activer des fonctionnalités intelligentes qui vous proposeront du contenu adapté et personnalisé lors de vos conversations.",
@@ -6286,10 +6274,8 @@ Pensez à inclure dans la description les particularités qui justifient ce prix
             },
             "conversation-error": {
               "alt": "erreur de messagerie",
-              "text": 
-"Nous sommes désolés, nous travaillons pour réparer ça au plus vite. 
-Merci de patienter quelques minutes avant de réessayer."
-,
+              "text": "Nous sommes désolés, nous travaillons pour réparer ça au plus vite. 
+Merci de patienter quelques minutes avant de réessayer.",
               "title": "La messagerie est indisponible",
             },
             "conversation-error-mobile": {
@@ -6429,19 +6415,15 @@ Merci de patienter quelques minutes avant de réessayer."
               "text": "Echec de l‘envoi.",
             },
             "file-format-error": {
-              "text": 
-"Le format de certains fichiers ne semblent pas adaptés. Merci de réessayer en {formatAllExtensions}.
-(Taille maximale: {maxFileSize} Mo)."
-,
+              "text": "Le format de certains fichiers ne semblent pas adaptés. Merci de réessayer en {formatAllExtensions}.
+(Taille maximale: {maxFileSize} Mo).",
             },
             "file-max-amount-error": {
               "text": "Nous ne pouvons pas envoyer plus de 10 fichiers à la fois. Merci de réessayer en prenant en compte la limite de fichiers autorisés.",
             },
             "file-size-error": {
-              "text": 
-"Certains fichiers semblent trop lourds. Merci de réessayer avec des fichiers ne dépassant pas {maxFileSize} Mo.
-(Formats acceptés : {formatAllExtensions})."
-,
+              "text": "Certains fichiers semblent trop lourds. Merci de réessayer avec des fichiers ne dépassant pas {maxFileSize} Mo.
+(Formats acceptés : {formatAllExtensions}).",
             },
             "file-upload-failure-error": {
               "text": "Nous ne pouvons pas charger certains fichiers pour le moment. Merci de réessayer dans quelques minutes.",
@@ -8544,10 +8526,8 @@ Merci de patienter quelques minutes avant de réessayer."
               "text": " Pour maximiser vos chances, pensez à éviter les fautes d'orthographe, à faire usage de formules de politesse et à éviter de partager des informations sensibles.",
             },
             "placeholder": {
-              "text": 
-"Parlez de vous et de votre recherche de logement en quelques mots. 
-Exemple : Jeune couple dans la région de Marseille, nous cherchons un logement avec une chambre supplémentaire pour accueillir notre futur enfant."
-,
+              "text": "Parlez de vous et de votre recherche de logement en quelques mots. 
+Exemple : Jeune couple dans la région de Marseille, nous cherchons un logement avec une chambre supplémentaire pour accueillir notre futur enfant.",
             },
           },
           "preview": {
@@ -27015,8 +26995,7 @@ Exemple : Jeune couple dans la région de Marseille, nous cherchons un logement 
                     "value_label_reader": "Cave",
                   },
                 ],
-                "body": 
-"Appartement À Vendre
+                "body": "Appartement À Vendre
 
 Orpi vous présente en exclusivité dans un immeuble bien tenu, ce joli studio à fort potentiel à deux pas du Parc des Buttes-Chaumont
 
@@ -27046,8 +27025,7 @@ A propos de la copropriété :
 Nombre de lots : 73
 Charges prévisionnelles annuelles : 2016 €
 
-Montant estimé des dépenses annuelles d'énergie pour un usage standard : entre 740 € et 1 040 € sur les années 2021, 2022 et 2023 (abonnements compris)."
-,
+Montant estimé des dépenses annuelles d'énergie pour un usage standard : entre 740 € et 1 040 € sur les années 2021, 2022 et 2023 (abonnements compris).",
                 "brand": "leboncoin",
                 "category_id": "9",
                 "category_name": "Ventes immobilières",
@@ -27518,8 +27496,7 @@ Montant estimé des dépenses annuelles d'énergie pour un usage standard : entr
                     ],
                   },
                 ],
-                "body": 
-"Appartement À Vendre
+                "body": "Appartement À Vendre
 
 Orpi vous présente, au cœur du village Faidherbe, cet appartement 2 pièces situé rue de Montreuil, au pied des transports (métro Faidherbe Chaligny), dans un quartier très recherché pour son véritable esprit village, sa vie de quartier animée, ses nombreux restaurants, commerces de bouche et l'ambiance conviviale qui en fait l'un des secteurs les plus agréables à vivre de l'Est parisien.
 
@@ -27547,8 +27524,7 @@ A propos de la copropriété :
 Nombre de lots : 17
 Charges prévisionnelles annuelles : 1210 €
 
-Montant estimé des dépenses annuelles d'énergie pour un usage standard : entre 750 € et 1 050 € sur les années 2021, 2022 et 2023 (abonnements compris)."
-,
+Montant estimé des dépenses annuelles d'énergie pour un usage standard : entre 750 € et 1 050 € sur les années 2021, 2022 et 2023 (abonnements compris).",
                 "brand": "leboncoin",
                 "category_id": "9",
                 "category_name": "Ventes immobilières",
@@ -28021,8 +27997,7 @@ Montant estimé des dépenses annuelles d'énergie pour un usage standard : entr
                     ],
                   },
                 ],
-                "body": 
-"Appartement À Vendre
+                "body": "Appartement À Vendre
 
 Orpi vous propose ce duplex atypique, idéalement situé entre le Marché d'Aligre et le square Trousseau, au cœur du Faubourg Saint-Antoine, à deux pas des commerces et des transports.
 
@@ -28051,8 +28026,7 @@ Nombre de lots : 15
 Charges prévisionnelles annuelles : 1344 €
 
 Montant estimé des dépenses annuelles d'énergie pour un usage standard : entre 1 160 € et 1 590 € sur les années 2021, 2022 et 2023 (abonnements compris).
-Logement à consommation énergétique excessive : classe F"
-,
+Logement à consommation énergétique excessive : classe F",
                 "brand": "leboncoin",
                 "category_id": "9",
                 "category_name": "Ventes immobilières",
@@ -28219,8 +28193,7 @@ Logement à consommation énergétique excessive : classe F"
   "scriptLoader": [
     {
       "dangerouslySetInnerHTML": {
-        "__html": 
-"
+        "__html": "
     window.googletag = window.googletag || {};
     window.googletag.cmd = window.googletag.cmd || [];
 
@@ -28233,8 +28206,7 @@ Logement à consommation énergétique excessive : classe F"
         window.gptDurationLoadingTime = Date.now() - gptLoadingTimeStart
       });
     }
-  "
-,
+  ",
       },
       "id": "gpt-script",
       "strategy": "afterInteractive",
@@ -28245,24 +28217,20 @@ Logement à consommation énergétique excessive : classe F"
     },
     {
       "dangerouslySetInnerHTML": {
-        "__html": 
-"
+        "__html": "
     var pubId='01CE9HZCZVPW9QB522QNNS8MZQ';!function(h,u,b,v,i,s,o,r){function n(r){var c=console.error;function o(n){try{n(r)}catch(n){c(n)}}c(r);var n=u[h].cmd;u[h]=function(n,r,c){o(c)},u[h].cmd=n;for(var i=0;i<u[h].cmd.length;++i)o(u[h].cmd[i]);u[h].cmd={push:o}}u[h]=u[h]||function(){var n=arguments;u[h].cmd.push(function(){u[h].apply(null,n)})},u[h].cmd=u[h].cmd||[];var r=setTimeout(function(){var e=typeof window!=="undefined"&&window.LibertyNoAdblocker===!0;if(e)n(new Error("Hubvisor loading timeout !"))},s||3e3);function c(){r&&(clearTimeout(r),r=0)}var o=b.createElement(v);o.async=!0;o.src="https://cdn.hubvisor.io/wrapper/"+i+"/hubvisor.js";b.head.appendChild(o);o.addEventListener("error",function(){c();var e=typeof window!=="undefined"&&window.LibertyNoAdblocker===!0;if(e)n(new Error("Hubvisor loading failed !"))});u[h].cmd.push(function(){c()})}('Hubvisor',window,document,'script',pubId);
     window.Hubvisor=window.Hubvisor||{};window.Hubvisor.cmd=window.Hubvisor.cmd||[];
-  "
-,
+  ",
       },
       "id": "hubvisor-script",
       "strategy": "afterInteractive",
     },
     {
       "dangerouslySetInnerHTML": {
-        "__html": 
-"
+        "__html": "
     window.libertix = window.libertix || {};
     window.libertix.commandQueue = window.libertix.commandQueue || [];
-  "
-,
+  ",
       },
       "id": "libertix-script",
       "strategy": "afterInteractive",

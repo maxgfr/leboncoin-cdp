@@ -1,17 +1,26 @@
 # Leboncoin Scraper
 
-Generic web scraper for leboncoin.fr using Puppeteer connected to your real Brave/Chrome browser via CDP, with parallel processing.
+Scraper leboncoin.fr utilisant **CDP + in-page fetch** — zéro détection par les anti-bots.
+
+## Principe
+
+Au lieu d'utiliser Puppeteer (détecté par DataDome), on se connecte au navigateur via le **Chrome DevTools Protocol** brut, puis on injecte des appels `fetch()` directement dans le contexte JavaScript d'un onglet leboncoin.fr.
+
+Pourquoi c'est indétectable :
+- `fetch()` s'exécute depuis l'origine de la page → tous les cookies (dont DataDome) sont envoyés automatiquement
+- Les intercepteurs du SDK DataDome côté client s'appliquent naturellement 
+- Aucun flag d'automation, aucune trace Puppeteer
+- Indiscernable du JavaScript propre au site
 
 ## Features
 
-- ✅ **Generic**: Works with any leboncoin category (real estate, cars, electronics, etc.)
-- 🚀 **Parallel processing**: Scrapes multiple pages simultaneously (configurable)
-- 🔄 **Auto-retry**: Automatic retry with exponential backoff on failures
-- 📊 **Progress tracking**: Real-time progress bars and logging
-- ⚙️ **Configurable**: Environment variables and config files
-- 🎯 **Type-safe**: Full TypeScript support
-- 🔒 **Real browser**: Connects to your actual Brave/Chrome via CDP — no bot detection
-- 🛡️ **CAPTCHA handling**: Detects challenges and waits for manual resolution
+- ✅ **Générique** : Fonctionne avec toutes les catégories (immobilier, voitures, électronique, etc.)
+- 🔒 **Zéro détection** : CDP brut + fetch() in-page — aucun flag d'automation
+- 🚀 **Léger** : Pas de Puppeteer, juste `ws` pour le WebSocket CDP
+- 🔄 **CAPTCHA auto-detect** : Détecte les challenges et attend la résolution manuelle
+- 📊 **Suivi en temps réel** : Barres de progression et logging
+- ⚙️ **Configurable** : Variables d'environnement, CLI, fichiers de config
+- 🎯 **Type-safe** : TypeScript complet
 
 ## Installation
 
@@ -98,22 +107,22 @@ DEBUGGING_PORT=9222       # CDP remote debugging port
 # Scraping Configuration
 MAX_RETRIES=5           # Retry failed pages up to 5 times
 RATE_LIMIT=1000         # Wait 1s between page requests
-PARALLEL_PAGES=3        # Scrape 3 pages simultaneously
 
 # Output Configuration
 OUTPUT_DIR=./assets     # Save results here
 SAVE_RAW=false          # Save raw API responses
 ```
 
-### How it works
+### Comment ça marche
 
-The scraper connects to your **real Brave/Chrome browser** via the Chrome DevTools Protocol (CDP).
-This means it uses your actual cookies, history, and fingerprint — making bot detection nearly impossible.
+Le scraper se connecte à votre **vrai navigateur Brave/Chrome** via le Chrome DevTools Protocol (CDP),
+puis injecte des appels `fetch()` directement dans le contexte JS d'un onglet leboncoin.fr.
 
-1. If Brave is already running with `--remote-debugging-port=9222`, it connects directly
-2. Otherwise, it launches Brave with that flag automatically
-3. It opens new tabs to scrape, then closes them when done — your browser stays open
-4. If a CAPTCHA appears, it pauses and waits for you to solve it manually
+1. Si le navigateur tourne déjà avec CDP, il s'y connecte directement
+2. Sinon, il le lance automatiquement avec un port CDP aléatoire (30000-49999)
+3. Il trouve ou crée un onglet sur leboncoin.fr
+4. Les requêtes `fetch()` sont exécutées depuis le contexte de la page → cookies inclus
+5. Si un CAPTCHA est détecté, il attend que vous le résolviez dans le navigateur
 
 ## Building Queries
 
@@ -196,15 +205,14 @@ Same format as search results, but with potentially more detail.
 
 ## Performance
 
-### Sequential vs Parallel (100 ads)
+Les requêtes sont séquentielles (une page à la fois via fetch) avec un délai configurable entre chaque.
+C'est volontaire : éviter le rate limiting et rester discret.
 
-| Mode | Time | Speedup |
-|------|------|---------|
-| Sequential (old) | ~15 min | 1x |
-| Parallel (3 workers) | ~5 min | 3x |
-| Parallel (5 workers) | ~3 min | 5x |
-
-**Note**: Higher parallelization may trigger rate limiting. Start with 3-5 parallel pages.
+| Rate Limit | 10 pages | 50 pages |
+|-----------|----------|----------|
+| 1s | ~15s | ~1min |
+| 2s | ~25s | ~2min |
+| 3s | ~35s | ~3min |
 
 ## Development
 
@@ -239,21 +247,27 @@ pnpm typecheck       # Type-check without compilation
 
 ```
 src/
-├── types.ts           # TypeScript type definitions
-├── config.ts          # Configuration management
-├── logger.ts          # Progress logging
-├── utils.ts           # Utility functions (date, chunking, delay)
-├── exploit.ts         # HTML parsing & data extraction
-├── headless.ts        # Puppeteer browser automation
-└── index.ts           # CLI entry point
+├── types.ts           # Définitions TypeScript
+├── config.ts          # Configuration (navigateur, scraping, output)
+├── logger.ts          # Logging avec barres de progression
+├── utils.ts           # Utilitaires (date, delay, parsing __NEXT_DATA__)
+├── cdp.ts             # Client CDP léger (WebSocket brut)
+├── browser.ts         # Gestion navigateur (lancement, connexion CDP)
+├── scraper.ts         # Moteur de scraping (fetch in-page via CDP)
+├── exploit.ts         # Mapping données brutes → types Ad
+└── index.ts           # Point d'entrée CLI
 ```
 
-### Key Functions
+### Flux de données
 
-**`parseSearchResults(content)`** - Extract search results from HTML
-**`parseAdDetails(content)`** - Extract individual ad details
-**`saveAllSearchResults(query)`** - Scrape all pages for a search
-**`savePageDetailsParallel(urls)`** - Scrape individual pages in parallel
+```
+CLI (index.ts)
+  └─→ browser.ts     → Lance/connecte Chrome via CDP
+  └─→ scraper.ts     → Injecte fetch() dans l'onglet leboncoin.fr
+      └─→ fetch()    → Récupère le HTML avec __NEXT_DATA__
+  └─→ exploit.ts     → Parse searchData/ad → type Ad
+  └─→ fs.writeFile   → Sauvegarde JSON dans ./assets/
+```
 
 ## Troubleshooting
 
@@ -334,20 +348,20 @@ export CHROME_PATH="/usr/bin/brave-browser"
 
 ### CAPTCHA / Bot challenge
 
-The scraper will **automatically detect** CAPTCHA challenges and wait for you to solve them.
-Just look at the browser window and complete the verification — the scraper resumes automatically.
+Le scraper **détecte automatiquement** les challenges CAPTCHA dans les réponses fetch.
+Quand c'est détecté :
+1. Il navigue la page visible vers leboncoin.fr (pour afficher le CAPTCHA)
+2. Il attend jusqu'à 5 minutes que vous le résolviez
+3. Il reprend automatiquement le scraping
 
+Pour réduire les challenges :
+- Utilisez votre navigateur où vous êtes déjà connecté
+- Augmentez `RATE_LIMIT` (essayez 3000-5000ms)
 
-To reduce challenges:
+### Rate limiting / Bloqué
 
-- Use your Brave browser where you're already logged in
-- Don't run too many parallel pages (try `PARALLEL_PAGES=2`)
-- Increase `RATE_LIMIT` (try 3000-5000ms)
-
-### Rate limiting / Blocked
-
-- Reduce `PARALLEL_PAGES` (try 1-2)
-- Increase `RATE_LIMIT` (try 2000-5000ms)
+- Augmentez `RATE_LIMIT` (essayez 2000-5000ms)
+- Vérifiez que vous avez des cookies DataDome valides (visitez leboncoin.fr manuellement)
 
 ### Timeouts
 

@@ -1,9 +1,16 @@
 import fs from 'fs';
-import { saveAllSearchResults, savePageDetailsParallel } from './headless';
+import { connectAndNavigate } from './browser';
+import { scrapeAllSearchPages, scrapeAdDetails } from './scraper';
 import { formatDate } from './utils';
 import type { Ad } from './types';
 import { logger } from './logger';
-import { config, detectUserDataDir, createWrapperDataDir } from './config';
+import {
+  config,
+  detectUserDataDir,
+  createWrapperDataDir,
+  getBrowserPath,
+} from './config';
+import type { BrowserType } from './config';
 
 interface CliArgs {
   query?: string;
@@ -11,13 +18,12 @@ interface CliArgs {
   configFile?: string;
   detailsOnly?: boolean;
   searchOnly?: boolean;
-  // Config overrides (CLI > env > default)
+  browser?: BrowserType;
   chromePath?: string;
   debuggingPort?: number;
   pageTimeout?: number;
   maxRetries?: number;
   rateLimit?: number;
-  parallelPages?: number;
   outputDir?: string;
   saveRaw?: boolean;
 }
@@ -47,6 +53,10 @@ function parseCliArgs(): CliArgs {
       case '--search-only':
         result.searchOnly = true;
         break;
+      case '--browser':
+      case '-b':
+        result.browser = args[++i] as BrowserType;
+        break;
       case '--chrome-path':
         result.chromePath = args[++i];
         break;
@@ -63,9 +73,6 @@ function parseCliArgs(): CliArgs {
       case '--rate-limit':
         result.rateLimit = parseInt(args[++i], 10);
         break;
-      case '--parallel':
-        result.parallelPages = parseInt(args[++i], 10);
-        break;
       case '--output-dir':
         result.outputDir = args[++i];
         break;
@@ -76,6 +83,9 @@ function parseCliArgs(): CliArgs {
       case '-h':
         printHelp();
         process.exit(0);
+        break;
+      case '--':
+        // Skip -- separator (pnpm passes this through)
         break;
       default:
         if (arg.startsWith('-')) {
@@ -91,53 +101,60 @@ function parseCliArgs(): CliArgs {
 
 function printHelp(): void {
   const help = `
-Leboncoin Scraper - Generic scraper for leboncoin.fr
+Leboncoin Scraper — CDP + Next.js data routes (zero bot detection)
+
+How it works:
+  1. Opens your real browser (Brave/Chrome/Opera) and navigates to the search URL
+  2. Reads __NEXT_DATA__ from the loaded page (first page of results)
+  3. Uses Next.js /_next/data routes for subsequent pages — exactly like
+     the site's own client-side navigation
+  4. All cookies (DataDome) are sent automatically
 
 Usage: pnpm start -- [options]
 
 Options:
-  -q, --query <query>        Search query parameters (e.g., "category=9&price=150000-300000")
+  -q, --query <query>        Search query parameters
   -o, --output <name>        Output filename prefix (default: search_YYYY-MM-DD)
   -c, --config <file>        Load configuration from JSON file
   --search-only              Only scrape search results, skip individual pages
-  --details-only             Only scrape individual pages from existing search results
-  -h, --help                 Show this help message
+  --details-only             Only scrape individual pages from existing results
+  -h, --help                 Show help message
 
 Browser options:
-  --chrome-path <path>       Browser executable path (default: Brave Browser)
-  -p, --port <port>          CDP remote debugging port (default: 9222)
+  -b, --browser <name>       Browser to use: brave | chrome | opera | chromium (default: brave)
+  --chrome-path <path>       Custom browser binary path (overrides --browser)
+  -p, --port <port>          CDP remote debugging port (default: random high port)
   --timeout <ms>             Page load timeout in ms (default: 30000)
 
 Scraping options:
   --retries <n>              Max retries for failed pages (default: 5)
   --rate-limit <ms>          Delay between pages in ms (default: 1000)
-  --parallel <n>             Number of parallel pages for details (default: 3)
 
 Output options:
   --output-dir <dir>         Output directory (default: ./assets)
-  --save-raw                 Save raw API responses
+  --save-raw                 Save raw __NEXT_DATA__ responses
 
 Examples:
-  pnpm start -- --query "category=9&locations=75012&price=150000-300000"
-  pnpm start -- --query "category=9" --output "paris" --parallel 5 --rate-limit 2000
-  pnpm start -- --query "category=9" --chrome-path "/usr/bin/brave-browser" --port 9333
-  pnpm start -- --query "category=9" --search-only
+  pnpm start -- --browser brave --query "category=9&locations=75012&price=150000-300000"
+  pnpm start -- --browser chrome --query "category=2&locations=Lyon&price=0-15000"
+  pnpm start -- --browser opera --query "category=15&locations=Marseille" --search-only
+  pnpm start -- --query "category=9" --output "paris" --rate-limit 2000
   pnpm start -- --output "search_2026-2-5" --details-only
   pnpm start -- --config "./queries/paris.json"
 `;
   process.stdout.write(help);
 }
 
-async function loadConfigFile(path: string): Promise<{
+async function loadConfigFile(configPath: string): Promise<{
   query: string;
   output?: string;
 }> {
   try {
-    const content = fs.readFileSync(path, 'utf8');
+    const content = fs.readFileSync(configPath, 'utf8');
     return JSON.parse(content);
   } catch (error) {
     throw new Error(
-      `Failed to load config file ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to load config file ${configPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -145,17 +162,22 @@ async function loadConfigFile(path: string): Promise<{
 async function main() {
   const args = parseCliArgs();
 
-  // Apply CLI overrides to config (CLI > env > default)
-  if (args.chromePath) {
+  // Browser selection: --browser > --chrome-path > env > auto-detect
+  if (args.browser) {
+    config.browser.chromePath = getBrowserPath(args.browser);
+    config.browser.userDataDir = createWrapperDataDir(
+      detectUserDataDir(config.browser.chromePath),
+    );
+  } else if (args.chromePath) {
     config.browser.chromePath = args.chromePath;
-    // Recompute wrapper profile for the new browser
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(args.chromePath));
+    config.browser.userDataDir = createWrapperDataDir(
+      detectUserDataDir(args.chromePath),
+    );
   }
   if (args.debuggingPort) config.browser.debuggingPort = args.debuggingPort;
   if (args.pageTimeout) config.browser.timeout = args.pageTimeout;
   if (args.maxRetries) config.scraping.maxRetries = args.maxRetries;
   if (args.rateLimit) config.scraping.rateLimit = args.rateLimit;
-  if (args.parallelPages) config.scraping.parallelPages = args.parallelPages;
   if (args.outputDir) config.output.directory = args.outputDir;
   if (args.saveRaw) config.output.saveRawJson = true;
 
@@ -169,13 +191,25 @@ async function main() {
   } else {
     query =
       args.query ||
-      'category=9&locations=75012__48.84105000000001_2.3892800000000003_5000%2C75017__48.883869999999995_2.3186300000000006_2930&price=150000-300000';
+      'category=9&locations=75012__48.84105_2.38928_5000&price=150000-300000';
     outputName = args.output || 'search_' + formatDate(new Date());
   }
 
+  // Build the initial search URL to navigate to directly
+  const searchUrl = `${config.api.baseUrl}/recherche?${query}`;
+
+  // Connect to browser and navigate to the search URL
+  const cdp = await connectAndNavigate(searchUrl);
+
   try {
+    let buildId = '';
+
     if (!args.detailsOnly) {
-      await saveAllSearchResults(query, outputName);
+      const searchResult = await scrapeAllSearchPages(cdp, query);
+      buildId = searchResult.buildId;
+      const outputPath = `${config.output.directory}/${outputName}.json`;
+      fs.writeFileSync(outputPath, JSON.stringify(searchResult.ads, null, 2));
+      logger.success(`Saved ${searchResult.ads.length} results to ${outputPath}`);
     }
 
     if (!args.searchOnly) {
@@ -192,7 +226,57 @@ async function main() {
       const urls = results.map((ad) => ad.url);
 
       if (urls.length > 0) {
-        await savePageDetailsParallel(urls, `page_${outputName}`);
+        // If we don't have buildId (--details-only), extract it from the current page
+        if (!buildId) {
+          const nextData = await cdp.evaluate<{ buildId: string } | null>(
+            `(() => {
+              const el = document.getElementById('__NEXT_DATA__');
+              return el ? JSON.parse(el.textContent).buildId : null;
+            })()`,
+          ).catch(() => null);
+          buildId = nextData?.buildId || '';
+
+          if (!buildId) {
+            logger.warn('Could not get buildId — navigating to get one…');
+            await cdp.send('Page.enable');
+            await cdp.send('Page.navigate', { url: urls[0] });
+            try { await cdp.once('Page.loadEventFired', config.browser.timeout); } catch {}
+            await new Promise(r => setTimeout(r, 2000));
+            const nd = await cdp.evaluate<{ buildId: string } | null>(
+              `(() => {
+                const el = document.getElementById('__NEXT_DATA__');
+                return el ? { buildId: JSON.parse(el.textContent).buildId } : null;
+              })()`,
+            ).catch(() => null);
+            buildId = nd?.buildId || '';
+          }
+        }
+
+        if (!buildId) {
+          logger.error('Cannot determine buildId — ad detail scraping requires it.');
+          process.exit(1);
+        }
+
+        const details = await scrapeAdDetails(cdp, urls, buildId);
+        const detailsPath = `${config.output.directory}/details_${outputName}.json`;
+        fs.writeFileSync(
+          detailsPath,
+          JSON.stringify(details.success, null, 2),
+        );
+        logger.success(
+          `Saved ${details.success.length} ad details to ${detailsPath}`,
+        );
+
+        if (details.failed.length > 0) {
+          const failedPath = `${config.output.directory}/failed_${outputName}.json`;
+          fs.writeFileSync(
+            failedPath,
+            JSON.stringify(details.failed, null, 2),
+          );
+          logger.warn(
+            `${details.failed.length} pages failed — see ${failedPath}`,
+          );
+        }
       } else {
         logger.warn('No URLs found in results file');
       }
@@ -204,6 +288,8 @@ async function main() {
       `Fatal error: ${error instanceof Error ? error.message : String(error)}`,
     );
     process.exit(1);
+  } finally {
+    cdp.disconnect();
   }
 }
 

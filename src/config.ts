@@ -1,5 +1,8 @@
 import os from 'os';
 import path from 'path';
+import fs from 'fs';
+
+export type BrowserType = 'brave' | 'chrome' | 'opera' | 'chromium';
 
 export interface Config {
   browser: {
@@ -12,7 +15,6 @@ export interface Config {
     resultPerPage: number;
     maxRetries: number;
     rateLimit: number;
-    parallelPages: number;
   };
   output: {
     directory: string;
@@ -23,7 +25,30 @@ export interface Config {
   };
 }
 
-import fs from 'fs';
+/** Known browser binary paths on macOS. */
+const BROWSER_PATHS: Record<BrowserType, string> = {
+  chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  brave: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  opera: '/Applications/Opera.app/Contents/MacOS/Opera',
+  chromium: '/Applications/Chromium.app/Contents/MacOS/Chromium',
+};
+
+/**
+ * Resolve browser binary path from a BrowserType name.
+ * Throws if the binary doesn't exist.
+ */
+export function getBrowserPath(browser: BrowserType): string {
+  const p = BROWSER_PATHS[browser];
+  if (!p) throw new Error(`Unknown browser: ${browser}`);
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return p;
+  } catch {
+    throw new Error(
+      `${browser} not found at ${p}. Install it or use --chrome-path to specify the binary.`,
+    );
+  }
+}
 
 /**
  * Auto-detect a Chromium-based browser on macOS.
@@ -52,22 +77,23 @@ function detectBrowserPath(): string {
 
 /**
  * Derive the macOS .app name from the binary path.
- * Used for `open -a`, `pgrep`, and `osascript` commands.
  */
 export function getBrowserAppName(chromePath: string): string {
   if (chromePath.includes('Brave')) return 'Brave Browser';
+  if (chromePath.includes('Opera')) return 'Opera';
   if (chromePath.includes('Chromium')) return 'Chromium';
   return 'Google Chrome';
 }
 
 /**
  * Return the default user-data-dir for the detected browser.
- * This is the real user profile path.
  */
 export function detectUserDataDir(chromePath: string): string {
   const home = os.homedir();
   if (chromePath.includes('Brave'))
     return path.join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser');
+  if (chromePath.includes('Opera'))
+    return path.join(home, 'Library', 'Application Support', 'com.operasoftware.Opera');
   if (chromePath.includes('Chromium'))
     return path.join(home, 'Library', 'Application Support', 'Chromium');
   return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
@@ -86,7 +112,7 @@ export function detectUserDataDir(chromePath: string): string {
  *  write-lock on it at startup and may refuse to start with a symlink.
  */
 export function createWrapperDataDir(realDir: string): string {
-  const wrapper = path.join(os.tmpdir(), 'chrome-scraper-profile');
+  const wrapper = path.join(os.tmpdir(), 'lbc-scraper-profile');
 
   // Remove stale wrapper to avoid leftover symlinks to deleted dirs
   if (fs.existsSync(wrapper)) {
@@ -136,7 +162,6 @@ export const config: Config = {
     resultPerPage: 35,
     maxRetries: parseInt(process.env.MAX_RETRIES || '5', 10),
     rateLimit: parseInt(process.env.RATE_LIMIT || '1000', 10),
-    parallelPages: parseInt(process.env.PARALLEL_PAGES || '3', 10),
   },
   output: {
     directory: process.env.OUTPUT_DIR || './assets',
