@@ -1,9 +1,9 @@
 {
   "name": "leboncoin",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "maxgfr",
   "license": "MIT",
-  "description": "Leboncoin fetcher",
+  "description": "Generic Leboncoin scraper with anti-bot prevention",
   "repository": {
     "type": "git",
     "url": "https://github.com/maxgfr/leboncoin.git"
@@ -12,47 +12,49 @@
     "url": "https://github.com/maxgfr/leboncoin/issues"
   },
   "homepage": "https://github.com/maxgfr/leboncoin#readme",
+  "packageManager": "pnpm@9.15.4",
   "files": [
     "build"
   ],
   "keywords": [
-    "leboncoin"
+    "leboncoin",
+    "scraper",
+    "puppeteer",
+    "anti-bot"
   ],
   "scripts": {
-    "start": "node build/index.js",
+    "start": "rm -rf build && pnpm build:swc && node build/index.js",
     "dev": "nodemon",
-    "develop": "mkdirp assets && swc ./src -d build && node build/index.js",
+    "develop": "mkdirp assets && swc src -d build --strip-leading-paths && node build/index.js",
     "test": "mkdirp assets && vitest",
     "clean": "rimraf build",
     "build": "mkdirp assets && tsc -p tsconfig.json",
     "build:watch": "tsc -w -p tsconfig.json",
-    "build:swc": "mkdirp assets && swc ./src -d build",
-    "build:swc:watch": "swc ./src -d build -w",
-    "lint": "eslint ./src --ext .ts",
-    "prettier": "prettier --write './src/**/*.{ts,js,json}'"
+    "build:swc": "mkdirp assets && swc src -d build --strip-leading-paths",
+    "build:swc:watch": "swc src -d build --strip-leading-paths -w",
+    "lint": "eslint src/",
+    "format": "prettier --write './src/**/*.{ts,js,json}'",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "puppeteer": "^21.7.0",
+    "puppeteer": "^23.11.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-adblocker": "^2.13.6",
-    "puppeteer-extra-plugin-anonymize-ua": "^2.4.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "devDependencies": {
-    "@swc/cli": "0.1.60",
-    "@swc/core": "1.3.32",
-    "@types/cookie": "0.5.1",
-    "@types/node": "18.11.18",
-    "@types/user-agents": "1.0.2",
-    "@typescript-eslint/eslint-plugin": "5.50.0",
-    "@typescript-eslint/parser": "5.50.0",
-    "eslint": "8.33.0",
-    "eslint-config-prettier": "8.6.0",
+    "@eslint/js": "^9.39.2",
+    "@swc/cli": "^0.5.2",
+    "@swc/core": "^1.15.11",
+    "@types/node": "^22.19.9",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
     "mkdirp": "^3.0.1",
-    "nodemon": "2.0.20",
-    "prettier": "2.8.3",
-    "rimraf": "4.1.2",
-    "typescript": "4.9.5",
-    "vitest": "^1.2.0"
+    "nodemon": "^3.1.11",
+    "prettier": "^3.8.1",
+    "rimraf": "^6.1.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^2.1.9"
   }
 }
