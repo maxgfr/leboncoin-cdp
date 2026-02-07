@@ -216,57 +216,58 @@ export function detectUserDataDir(chromePath: string): string {
 }
 
 /**
- * Create a wrapper user-data-dir that symlinks ALL contents of the
- * real profile directory.  This is needed because Chrome >= 131 refuses
- * --remote-debugging-port on the default user-data-dir.
+ * Create an ISOLATED wrapper user-data-dir by COPYING the real profile.
  *
- * By symlinking everything (not just Default + Local State), the browser
- * sees ALL cookies, extensions, caches, DataDome tokens, etc. — it's
- * indistinguishable from a normal session.
+ * IMPORTANT: This creates a COMPLETE COPY of your browser profile to:
+ * - Preserve cookies, extensions, and settings for the scraper
+ * - Protect your real profile from corruption (no symlinks!)
+ * - Allow Chrome >= 131 to use --remote-debugging-port
  *
- * 'Local State' is copied instead of symlinked because Chrome holds a
- *  write-lock on it at startup and may refuse to start with a symlink.
+ * The copy is temporary and deleted on next run, so your real profile
+ * is NEVER modified.
  */
 export function createWrapperDataDir(realDir: string): string {
   const wrapper = path.join(os.tmpdir(), 'lbc-scraper-profile');
 
-  // Remove stale wrapper to avoid leftover symlinks to deleted dirs
+  // Remove stale wrapper to start fresh
   if (fs.existsSync(wrapper)) {
     fs.rmSync(wrapper, { recursive: true });
   }
-  fs.mkdirSync(wrapper, { recursive: true });
 
-  let entries: string[];
+  // Copy the entire profile directory recursively
   try {
-    entries = fs.readdirSync(realDir);
-  } catch {
-    return wrapper;
-  }
-
-  for (const entry of entries) {
-    const realPath = path.join(realDir, entry);
-    const linkPath = path.join(wrapper, entry);
-
-    if (
-      entry === 'Local State' ||
-      entry === 'SingletonLock' ||
-      entry === 'SingletonCookie' ||
-      entry === 'SingletonSocket'
-    ) {
-      // Copy files that Chrome needs exclusive write access to
-      try {
-        fs.copyFileSync(realPath, linkPath);
-      } catch {
-        // ignore
-      }
+    if (fs.existsSync(realDir)) {
+      fs.cpSync(realDir, wrapper, {
+        recursive: true,
+        // Skip lock files to avoid conflicts
+        filter: (src) => {
+          const basename = path.basename(src);
+          return (
+            basename !== 'SingletonLock' &&
+            basename !== 'SingletonCookie' &&
+            basename !== 'SingletonSocket' &&
+            basename !== 'lockfile'
+          );
+        },
+      });
+      console.log(`✓ Profile copied from ${realDir} to ${wrapper}`);
     } else {
-      // Symlink everything else (Default, caches, extensions, etc.)
-      try {
-        fs.symlinkSync(realPath, linkPath);
-      } catch {
-        // ignore
-      }
+      // If real profile doesn't exist, create minimal profile
+      fs.mkdirSync(wrapper, { recursive: true });
+      const localState = {
+        browser: { enabled_labs_experiments: [] },
+        profile: { info_cache: {} },
+      };
+      fs.writeFileSync(
+        path.join(wrapper, 'Local State'),
+        JSON.stringify(localState, null, 2),
+      );
+      console.log(`✓ Created new profile at ${wrapper}`);
     }
+  } catch (error) {
+    // Fallback: create minimal profile
+    fs.mkdirSync(wrapper, { recursive: true });
+    console.warn(`⚠ Failed to copy profile, using minimal profile:`, error);
   }
 
   return wrapper;

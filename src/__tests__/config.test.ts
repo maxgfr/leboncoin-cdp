@@ -107,8 +107,8 @@ describe('detectUserDataDir', () => {
 });
 
 describe('createWrapperDataDir', () => {
-  test('creates wrapper dir from real dir', () => {
-    // Create a temp dir with some test files
+  test('creates wrapper by copying profile', () => {
+    // Create a temp dir with some test files (simulating real profile)
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-test-'));
     fs.writeFileSync(path.join(tmpDir, 'Local State'), '{}');
     fs.writeFileSync(path.join(tmpDir, 'testfile'), 'content');
@@ -117,19 +117,20 @@ describe('createWrapperDataDir', () => {
     const wrapper = createWrapperDataDir(tmpDir);
     expect(fs.existsSync(wrapper)).toBe(true);
 
-    // Local State should be a copy (not symlink)
+    // Local State should exist and be a regular file (copied, not symlink)
     const localStatePath = path.join(wrapper, 'Local State');
     expect(fs.existsSync(localStatePath)).toBe(true);
     expect(fs.lstatSync(localStatePath).isSymbolicLink()).toBe(false);
 
-    // testfile and Default should be symlinks
+    // The wrapper should contain COPIES of all files (not symlinks)
     const testfilePath = path.join(wrapper, 'testfile');
     expect(fs.existsSync(testfilePath)).toBe(true);
-    expect(fs.lstatSync(testfilePath).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(testfilePath).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(testfilePath, 'utf-8')).toBe('content');
 
     const defaultPath = path.join(wrapper, 'Default');
     expect(fs.existsSync(defaultPath)).toBe(true);
-    expect(fs.lstatSync(defaultPath).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(defaultPath).isSymbolicLink()).toBe(false);
 
     // Cleanup
     fs.rmSync(tmpDir, { recursive: true });
@@ -139,6 +140,11 @@ describe('createWrapperDataDir', () => {
   test('handles non-existent dir gracefully', () => {
     const wrapper = createWrapperDataDir('/nonexistent/path/1234');
     expect(fs.existsSync(wrapper)).toBe(true);
+
+    // Should still create a valid wrapper with Local State
+    const localStatePath = path.join(wrapper, 'Local State');
+    expect(fs.existsSync(localStatePath)).toBe(true);
+
     fs.rmSync(wrapper, { recursive: true });
   });
 });
