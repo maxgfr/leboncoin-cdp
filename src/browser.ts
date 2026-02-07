@@ -6,10 +6,8 @@
  * This means zero automation flags — the browser is indistinguishable from
  * a manually launched instance.
  */
-import os from 'os';
-import path from 'path';
 import { spawn, execSync } from 'child_process';
-import { config, getBrowserAppName } from './config';
+import { config, getBrowserAppName, saveCdpPort, loadCdpPort, clearCdpPort } from './config';
 import { logger } from './logger';
 import { delay } from './utils';
 import { CDPClient } from './cdp';
@@ -38,44 +36,6 @@ function isBrowserRunning(): boolean {
   }
 }
 
-function quitBrowser(appName: string): void {
-  const platform = os.platform();
-
-  try {
-    if (platform === 'darwin') {
-      // macOS: use AppleScript
-      execSync(`osascript -e 'tell application "${appName}" to quit'`, {
-        stdio: 'ignore',
-        timeout: 5_000,
-      });
-    } else if (platform === 'linux') {
-      // Linux: use pkill with the browser binary name
-      const binaryName = path.basename(config.browser.chromePath);
-      execSync(`pkill -x "${binaryName}"`, {
-        stdio: 'ignore',
-        timeout: 5_000,
-      });
-    }
-  } catch {
-    // ignore
-  }
-}
-
-async function waitForBrowserExit(timeoutMs = 10_000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (!isBrowserRunning()) return;
-    await delay(500);
-  }
-  try {
-    execSync(`pkill -9 -f "${config.browser.chromePath}"`, {
-      stdio: 'ignore',
-    });
-    await delay(1_000);
-  } catch {
-    // ignore
-  }
-}
 
 async function getCdpInfo(port: number): Promise<{ wsUrl: string } | null> {
   try {
@@ -102,19 +62,25 @@ async function listTabs(port: number): Promise<TabInfo[]> {
  * Returns a CDPClient connected to that tab's JS context.
  */
 async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
-  const tabs = await listTabs(port);
-
-  // Prefer an existing leboncoin tab (re-use it)
-  let target = tabs.find(
-    (t) => t.type === 'page' && t.url.includes('leboncoin.fr'),
-  );
+  // Always open a new tab so we never clobber an existing page's data
+  logger.info('Opening a new tab…');
+  let target: TabInfo | undefined;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`);
+    target = (await res.json()) as TabInfo;
+  } catch {
+    // Fallback: reuse an existing blank tab
+    const tabs = await listTabs(port);
+    target = tabs.find(
+      (t) => t.type === 'page' && (t.url === 'about:blank' || t.url === 'chrome://newtab/'),
+    );
+    if (!target) {
+      target = tabs.find((t) => t.type === 'page');
+    }
+  }
 
   if (!target) {
-    target = tabs.find((t) => t.type === 'page');
-    if (!target) {
-      const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`);
-      target = (await res.json()) as TabInfo;
-    }
+    throw new Error('Could not open or find a usable browser tab');
   }
 
   logger.info(`Connecting to tab: ${target.url || 'about:blank'}`);
@@ -183,36 +149,53 @@ async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
 /**
  * Ensure a browser is running with CDP and return a CDPClient
  * connected to a tab navigated to `targetUrl`.
+ *
+ * Strategy (NEVER kills the user's existing browser):
+ *   1. Try the CLI/env port if provided
+ *   2. Try the saved port from a previous scraper session
+ *   3. Launch a SEPARATE browser instance with the scraper profile
  */
 export async function connectAndNavigate(
   targetUrl: string,
 ): Promise<CDPClient> {
   const browserName = getBrowserAppName(config.browser.chromePath);
-  const port = config.browser.debuggingPort;
 
-  // 1. Try connecting to an already-running CDP endpoint
-  if (port > 0) {
-    const info = await getCdpInfo(port);
+  // 1. Try the explicitly-configured port (CLI --port or env)
+  const explicitPort = config.browser.debuggingPort;
+  if (explicitPort > 0) {
+    const info = await getCdpInfo(explicitPort);
     if (info) {
-      logger.info(`Found existing ${browserName} with CDP on port ${port}`);
-      return openTab(port, targetUrl);
+      logger.info(`Found existing ${browserName} with CDP on port ${explicitPort}`);
+      saveCdpPort(explicitPort);
+      return openTab(explicitPort, targetUrl);
     }
   }
 
-  // 2. If browser is running without CDP, quit it and relaunch
-  if (isBrowserRunning()) {
-    logger.warn(`${browserName} running without CDP — restarting…`);
-    quitBrowser(browserName);
-    await waitForBrowserExit();
+  // 2. Try the port saved from a previous scraper run
+  const savedPort = loadCdpPort();
+  if (savedPort > 0 && savedPort !== explicitPort) {
+    const info = await getCdpInfo(savedPort);
+    if (info) {
+      logger.info(`Reconnecting to scraper ${browserName} on saved port ${savedPort}`);
+      config.browser.debuggingPort = savedPort;
+      return openTab(savedPort, targetUrl);
+    } else {
+      // Stale port — clean up
+      clearCdpPort();
+    }
   }
 
-  // 3. Launch browser with CDP on a random high port
+  // 3. Launch a NEW browser instance with the scraper profile
+  //    (the user's existing browser is left untouched)
   const newPort = randomHighPort();
   config.browser.debuggingPort = newPort;
 
-  logger.info(`Launching ${browserName} with CDP on port ${newPort}`);
+  logger.info(`Launching a dedicated scraper ${browserName} on port ${newPort}`);
   logger.info(`  Binary  : ${config.browser.chromePath}`);
   logger.info(`  Profile : ${config.browser.userDataDir}`);
+  if (isBrowserRunning()) {
+    logger.info(`  (your existing ${browserName} will NOT be affected)`);
+  }
 
   const child = spawn(
     config.browser.chromePath,
@@ -244,6 +227,8 @@ export async function connectAndNavigate(
     );
   }
 
-  logger.success('Browser launched and ready');
+  // Save port so the next run can reconnect without new launch
+  saveCdpPort(newPort);
+  logger.success('Scraper browser launched and ready');
   return openTab(newPort, targetUrl);
 }

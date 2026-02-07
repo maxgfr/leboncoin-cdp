@@ -9,6 +9,7 @@ import {
   detectUserDataDir,
   createWrapperDataDir,
   getBrowserPath,
+  resetScraperProfile,
 } from './config';
 import type { BrowserType } from './config';
 
@@ -19,6 +20,7 @@ interface CliArgs {
   detailsOnly?: boolean;
   searchOnly?: boolean;
   withDetails?: boolean;
+  resetProfile?: boolean;
   browser?: BrowserType;
   chromePath?: string;
   debuggingPort?: number;
@@ -84,6 +86,9 @@ function parseCliArgs(): CliArgs {
       case '--save-raw':
         result.saveRaw = true;
         break;
+      case '--reset-profile':
+        result.resetProfile = true;
+        break;
       case '--help':
       case '-h':
         printHelp();
@@ -118,7 +123,7 @@ How it works:
 Usage: pnpm start -- [options]
 
 Options:
-  -q, --query <query>        Search query parameters
+  -q, --query <query>        Search query parameters (or full URL)
   -o, --output <name>        Output filename prefix (default: search_YYYY-MM-DD_HHMMSS)
   -c, --config <file>        Load configuration from JSON file
   -h, --help                 Show help message
@@ -131,8 +136,10 @@ Scraping modes:
 Browser options:
   -b, --browser <name>       Browser to use: brave | chrome | opera | chromium (default: auto-detect)
   --chrome-path <path>       Custom browser binary path (overrides --browser)
-  -p, --port <port>          CDP remote debugging port (default: random 30000-49999)
+  -p, --port <port>          CDP remote debugging port (default: auto / saved from previous run)
   --timeout <ms>             Page load timeout in ms (default: 30000)
+  --reset-profile            Re-copy your real browser profile to the scraper profile
+                             (use if extensions/settings changed since first run)
 
 Scraping options:
   --retries <n>              Max retries for failed pages (default: 5)
@@ -157,8 +164,38 @@ Examples:
   
   # Use config file
   pnpm start -- --config "./queries/paris.json"
+  
+  # Re-sync extensions/settings from your real browser profile
+  pnpm start -- --browser brave --reset-profile --query "text=mac+m1"
 `;
   process.stdout.write(help);
+}
+
+/**
+ * Normalize a query input that may be:
+ *   - A full URL:  https://www.leboncoin.fr/recherche?text=mac+m1&...
+ *   - A path+query: recherche?text=mac+m1&...
+ *   - Just query params: text=mac+m1&...
+ * Returns only the query string portion (e.g. "text=mac+m1&...").
+ */
+function normalizeQuery(input: string): string {
+  const trimmed = input.trim();
+
+  // Full URL — extract everything after the '?'
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const url = new URL(trimmed);
+      return url.search.replace(/^\?/, '');
+    } catch {
+      // Fall through to string-based stripping
+    }
+  }
+
+  // Path prefix like "recherche?..." or "/recherche?..."
+  const match = trimmed.match(/^\/?recherche\?(.+)$/);
+  if (match) return match[1];
+
+  return trimmed;
 }
 
 async function loadConfigFile(configPath: string): Promise<{
@@ -177,6 +214,11 @@ async function loadConfigFile(configPath: string): Promise<{
 
 async function main() {
   const args = parseCliArgs();
+
+  // --reset-profile: wipe the scraper profile so it gets re-created
+  if (args.resetProfile) {
+    resetScraperProfile();
+  }
 
   // Browser selection: --browser > --chrome-path > env > auto-detect
   if (args.browser) {
@@ -197,20 +239,24 @@ async function main() {
   if (args.outputDir) config.output.directory = args.outputDir;
   if (args.saveRaw) config.output.saveRawJson = true;
 
-  let query: string;
+  let rawQuery: string;
   let outputName: string;
 
   if (args.configFile) {
     const configData = await loadConfigFile(args.configFile);
-    query = configData.query;
+    rawQuery = configData.query;
     outputName =
       configData.output || 'search_' + formatDateWithTimestamp(new Date());
   } else {
-    query =
+    rawQuery =
       args.query ||
       'category=9&locations=75012__48.84105_2.38928_5000&price=150000-300000';
     outputName = args.output || 'search_' + formatDateWithTimestamp(new Date());
   }
+
+  // Normalize query: accept full URL, path+query, or just query params
+  const query = normalizeQuery(rawQuery);
+  logger.info(`Normalized query: ${query}`);
 
   // Build the initial search URL to navigate to directly
   const searchUrl = `${config.api.baseUrl}/recherche?${query}`;

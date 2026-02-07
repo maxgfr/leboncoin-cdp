@@ -215,26 +215,30 @@ export function detectUserDataDir(chromePath: string): string {
   return path.join(home, '.config', 'google-chrome'); // fallback
 }
 
+/** Root directory for all scraper data (persistent across runs). */
+const SCRAPER_HOME = path.join(os.homedir(), '.lbc-scraper');
+const PORT_FILE = path.join(SCRAPER_HOME, 'port');
+
 /**
- * Create an ISOLATED wrapper user-data-dir by COPYING the real profile.
+ * Create a PERSISTENT scraper profile by copying the real browser profile
+ * ONCE. Subsequent runs reuse the existing profile so extensions, cookies,
+ * and settings are preserved between sessions.
  *
- * IMPORTANT: This creates a COMPLETE COPY of your browser profile to:
- * - Preserve cookies, extensions, and settings for the scraper
- * - Protect your real profile from corruption (no symlinks!)
- * - Allow Chrome >= 131 to use --remote-debugging-port
- *
- * The copy is temporary and deleted on next run, so your real profile
- * is NEVER modified.
+ * The profile lives at ~/.lbc-scraper/profile/ (not /tmp).
+ * Use --reset-profile to force a fresh copy from the real profile.
  */
 export function createWrapperDataDir(realDir: string): string {
-  const wrapper = path.join(os.tmpdir(), 'lbc-scraper-profile');
+  const wrapper = path.join(SCRAPER_HOME, 'profile');
 
-  // Remove stale wrapper to start fresh
-  if (fs.existsSync(wrapper)) {
-    fs.rmSync(wrapper, { recursive: true });
+  // If profile already exists → reuse it (fast path)
+  if (fs.existsSync(path.join(wrapper, 'Default')) || fs.existsSync(path.join(wrapper, 'Local State'))) {
+    console.log(`✓ Reusing scraper profile at ${wrapper}`);
+    return wrapper;
   }
 
-  // Copy the entire profile directory recursively
+  // First run (or after --reset-profile): copy from real profile
+  fs.mkdirSync(wrapper, { recursive: true });
+
   try {
     if (fs.existsSync(realDir)) {
       fs.cpSync(realDir, wrapper, {
@@ -253,7 +257,6 @@ export function createWrapperDataDir(realDir: string): string {
       console.log(`✓ Profile copied from ${realDir} to ${wrapper}`);
     } else {
       // If real profile doesn't exist, create minimal profile
-      fs.mkdirSync(wrapper, { recursive: true });
       const localState = {
         browser: { enabled_labs_experiments: [] },
         profile: { info_cache: {} },
@@ -265,12 +268,47 @@ export function createWrapperDataDir(realDir: string): string {
       console.log(`✓ Created new profile at ${wrapper}`);
     }
   } catch (error) {
-    // Fallback: create minimal profile
-    fs.mkdirSync(wrapper, { recursive: true });
     console.warn(`⚠ Failed to copy profile, using minimal profile:`, error);
   }
 
   return wrapper;
+}
+
+/**
+ * Delete the persistent scraper profile so it gets re-created from the
+ * real browser profile on the next run.
+ */
+export function resetScraperProfile(): void {
+  const wrapper = path.join(SCRAPER_HOME, 'profile');
+  if (fs.existsSync(wrapper)) {
+    fs.rmSync(wrapper, { recursive: true });
+    console.log('✓ Scraper profile deleted — will be re-created on next run');
+  }
+}
+
+/** Persist the CDP debugging port so the next run can reconnect. */
+export function saveCdpPort(port: number): void {
+  fs.mkdirSync(SCRAPER_HOME, { recursive: true });
+  fs.writeFileSync(PORT_FILE, String(port));
+}
+
+/** Load a previously saved CDP port (0 if none). */
+export function loadCdpPort(): number {
+  try {
+    const raw = fs.readFileSync(PORT_FILE, 'utf8').trim();
+    return parseInt(raw, 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Clear the saved CDP port file. */
+export function clearCdpPort(): void {
+  try {
+    fs.unlinkSync(PORT_FILE);
+  } catch {
+    // file may not exist
+  }
 }
 
 export const config: Config = {

@@ -4,6 +4,7 @@ import {
   detectUserDataDir,
   createWrapperDataDir,
   getBrowserPath,
+  resetScraperProfile,
 } from '../config';
 import type { BrowserType } from '../config';
 import os from 'os';
@@ -108,6 +109,9 @@ describe('detectUserDataDir', () => {
 
 describe('createWrapperDataDir', () => {
   test('creates wrapper by copying profile', () => {
+    // Ensure no pre-existing scraper profile interferes
+    resetScraperProfile();
+
     // Create a temp dir with some test files (simulating real profile)
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-test-'));
     fs.writeFileSync(path.join(tmpDir, 'Local State'), '{}');
