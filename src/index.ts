@@ -203,7 +203,8 @@ async function main() {
   if (args.configFile) {
     const configData = await loadConfigFile(args.configFile);
     query = configData.query;
-    outputName = configData.output || 'search_' + formatDateWithTimestamp(new Date());
+    outputName =
+      configData.output || 'search_' + formatDateWithTimestamp(new Date());
   } else {
     query =
       args.query ||

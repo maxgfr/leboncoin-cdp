@@ -196,7 +196,13 @@ export function detectUserDataDir(chromePath: string): string {
       );
     if (lowerPath.includes('chromium'))
       return path.join(home, 'Library', 'Application Support', 'Chromium');
-    return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+    return path.join(
+      home,
+      'Library',
+      'Application Support',
+      'Google',
+      'Chrome',
+    );
   } else if (platform === 'linux') {
     if (lowerPath.includes('brave'))
       return path.join(home, '.config', 'BraveSoftware', 'Brave-Browser');

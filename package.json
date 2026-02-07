@@ -12,7 +12,7 @@
     "url": "https://github.com/maxgfr/leboncoin-cdp-scraper/issues"
   },
   "homepage": "https://github.com/maxgfr/leboncoin-cdp-scraper#readme",
-  "packageManager": "pnpm@9.15.4",
+  "packageManager": "pnpm@10",
   "files": [
     "build"
   ],
