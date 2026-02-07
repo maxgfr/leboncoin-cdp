@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { connectAndNavigate } from './browser';
 import { scrapeAllSearchPages, scrapeAdDetails } from './scraper';
-import { formatDate } from './utils';
+import { formatDateWithTimestamp } from './utils';
 import type { Ad } from './types';
 import { logger } from './logger';
 import {
@@ -18,6 +18,7 @@ interface CliArgs {
   configFile?: string;
   detailsOnly?: boolean;
   searchOnly?: boolean;
+  withDetails?: boolean;
   browser?: BrowserType;
   chromePath?: string;
   debuggingPort?: number;
@@ -52,6 +53,10 @@ function parseCliArgs(): CliArgs {
         break;
       case '--search-only':
         result.searchOnly = true;
+        break;
+      case '--with-details':
+      case '-d':
+        result.withDetails = true;
         break;
       case '--browser':
       case '-b':
@@ -114,16 +119,19 @@ Usage: pnpm start -- [options]
 
 Options:
   -q, --query <query>        Search query parameters
-  -o, --output <name>        Output filename prefix (default: search_YYYY-MM-DD)
+  -o, --output <name>        Output filename prefix (default: search_YYYY-MM-DD_HHMMSS)
   -c, --config <file>        Load configuration from JSON file
-  --search-only              Only scrape search results, skip individual pages
-  --details-only             Only scrape individual pages from existing results
   -h, --help                 Show help message
 
+Scraping modes:
+  --search-only              Only scrape search results (default behavior)
+  -d, --with-details         Also scrape individual ad detail pages
+  --details-only             Only scrape ad details from existing results file
+
 Browser options:
-  -b, --browser <name>       Browser to use: brave | chrome | opera | chromium (default: brave)
+  -b, --browser <name>       Browser to use: brave | chrome | opera | chromium (default: auto-detect)
   --chrome-path <path>       Custom browser binary path (overrides --browser)
-  -p, --port <port>          CDP remote debugging port (default: random high port)
+  -p, --port <port>          CDP remote debugging port (default: random 30000-49999)
   --timeout <ms>             Page load timeout in ms (default: 30000)
 
 Scraping options:
@@ -135,11 +143,19 @@ Output options:
   --save-raw                 Save raw __NEXT_DATA__ responses
 
 Examples:
+  # Search only (default - no ad details)
   pnpm start -- --browser brave --query "category=9&locations=75012&price=150000-300000"
-  pnpm start -- --browser chrome --query "category=2&locations=Lyon&price=0-15000"
-  pnpm start -- --browser opera --query "category=15&locations=Marseille" --search-only
-  pnpm start -- --query "category=9" --output "paris" --rate-limit 2000
-  pnpm start -- --output "search_2026-2-5" --details-only
+  
+  # Search + individual ad details
+  pnpm start -- --browser chrome --query "category=2&locations=Lyon&price=0-15000" --with-details
+  
+  # Custom output name with slower rate limit
+  pnpm start -- --query "category=9" --output "paris_houses" --rate-limit 2000
+  
+  # Only scrape ad details from existing results
+  pnpm start -- --output "search_2026-02-07_143022" --details-only
+  
+  # Use config file
   pnpm start -- --config "./queries/paris.json"
 `;
   process.stdout.write(help);
@@ -187,12 +203,12 @@ async function main() {
   if (args.configFile) {
     const configData = await loadConfigFile(args.configFile);
     query = configData.query;
-    outputName = configData.output || 'search_' + formatDate(new Date());
+    outputName = configData.output || 'search_' + formatDateWithTimestamp(new Date());
   } else {
     query =
       args.query ||
       'category=9&locations=75012__48.84105_2.38928_5000&price=150000-300000';
-    outputName = args.output || 'search_' + formatDate(new Date());
+    outputName = args.output || 'search_' + formatDateWithTimestamp(new Date());
   }
 
   // Build the initial search URL to navigate to directly
@@ -209,10 +225,12 @@ async function main() {
       buildId = searchResult.buildId;
       const outputPath = `${config.output.directory}/${outputName}.json`;
       fs.writeFileSync(outputPath, JSON.stringify(searchResult.ads, null, 2));
-      logger.success(`Saved ${searchResult.ads.length} results to ${outputPath}`);
+      logger.success(
+        `Saved ${searchResult.ads.length} results to ${outputPath}`,
+      );
     }
 
-    if (!args.searchOnly) {
+    if (args.withDetails || args.detailsOnly) {
       const resultsPath = `${config.output.directory}/${outputName}.json`;
 
       if (!fs.existsSync(resultsPath)) {
@@ -228,51 +246,55 @@ async function main() {
       if (urls.length > 0) {
         // If we don't have buildId (--details-only), extract it from the current page
         if (!buildId) {
-          const nextData = await cdp.evaluate<{ buildId: string } | null>(
-            `(() => {
+          const nextData = await cdp
+            .evaluate<{ buildId: string } | null>(
+              `(() => {
               const el = document.getElementById('__NEXT_DATA__');
               return el ? JSON.parse(el.textContent).buildId : null;
             })()`,
-          ).catch(() => null);
+            )
+            .catch(() => null);
           buildId = nextData?.buildId || '';
 
           if (!buildId) {
             logger.warn('Could not get buildId — navigating to get one…');
             await cdp.send('Page.enable');
             await cdp.send('Page.navigate', { url: urls[0] });
-            try { await cdp.once('Page.loadEventFired', config.browser.timeout); } catch {}
-            await new Promise(r => setTimeout(r, 2000));
-            const nd = await cdp.evaluate<{ buildId: string } | null>(
-              `(() => {
+            try {
+              await cdp.once('Page.loadEventFired', config.browser.timeout);
+            } catch {
+              // Page might already be loaded
+            }
+            await new Promise((r) => setTimeout(r, 2000));
+            const nd = await cdp
+              .evaluate<{ buildId: string } | null>(
+                `(() => {
                 const el = document.getElementById('__NEXT_DATA__');
                 return el ? { buildId: JSON.parse(el.textContent).buildId } : null;
               })()`,
-            ).catch(() => null);
+              )
+              .catch(() => null);
             buildId = nd?.buildId || '';
           }
         }
 
         if (!buildId) {
-          logger.error('Cannot determine buildId — ad detail scraping requires it.');
+          logger.error(
+            'Cannot determine buildId — ad detail scraping requires it.',
+          );
           process.exit(1);
         }
 
         const details = await scrapeAdDetails(cdp, urls, buildId);
         const detailsPath = `${config.output.directory}/details_${outputName}.json`;
-        fs.writeFileSync(
-          detailsPath,
-          JSON.stringify(details.success, null, 2),
-        );
+        fs.writeFileSync(detailsPath, JSON.stringify(details.success, null, 2));
         logger.success(
           `Saved ${details.success.length} ad details to ${detailsPath}`,
         );
 
         if (details.failed.length > 0) {
           const failedPath = `${config.output.directory}/failed_${outputName}.json`;
-          fs.writeFileSync(
-            failedPath,
-            JSON.stringify(details.failed, null, 2),
-          );
+          fs.writeFileSync(failedPath, JSON.stringify(details.failed, null, 2));
           logger.warn(
             `${details.failed.length} pages failed — see ${failedPath}`,
           );

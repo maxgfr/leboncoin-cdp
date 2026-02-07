@@ -35,9 +35,7 @@ describe('getBrowserAppName', () => {
 
   test('detects Chromium', () => {
     expect(
-      getBrowserAppName(
-        '/Applications/Chromium.app/Contents/MacOS/Chromium',
-      ),
+      getBrowserAppName('/Applications/Chromium.app/Contents/MacOS/Chromium'),
     ).toBe('Chromium');
   });
 
@@ -52,14 +50,25 @@ describe('detectUserDataDir', () => {
   test('Brave data dir', () => {
     const result = detectUserDataDir('/path/Brave Browser/binary');
     expect(result).toBe(
-      path.join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser'),
+      path.join(
+        home,
+        'Library',
+        'Application Support',
+        'BraveSoftware',
+        'Brave-Browser',
+      ),
     );
   });
 
   test('Opera data dir', () => {
     const result = detectUserDataDir('/path/Opera/binary');
     expect(result).toBe(
-      path.join(home, 'Library', 'Application Support', 'com.operasoftware.Opera'),
+      path.join(
+        home,
+        'Library',
+        'Application Support',
+        'com.operasoftware.Opera',
+      ),
     );
   });
 

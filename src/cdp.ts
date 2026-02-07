@@ -30,9 +30,11 @@ export class CDPClient {
         if (cb) {
           if (cb.timer) clearTimeout(cb.timer);
           this.pending.delete(msg.id);
-          msg.error
-            ? cb.reject(new Error(msg.error.message))
-            : cb.resolve(msg.result);
+          if (msg.error) {
+            cb.reject(new Error(msg.error.message));
+          } else {
+            cb.resolve(msg.result);
+          }
         }
         return;
       }
@@ -131,10 +133,7 @@ export class CDPClient {
    * tokens are available. DataDome cannot distinguish this from
    * leboncoin's own frontend code.
    */
-  async evaluate<T = any>(
-    expression: string,
-    awaitPromise = true,
-  ): Promise<T> {
+  async evaluate<T = any>(expression: string, awaitPromise = true): Promise<T> {
     const result = await this.send('Runtime.evaluate', {
       expression,
       returnByValue: true,

@@ -38,10 +38,10 @@ function isBrowserRunning(): boolean {
 
 function quitBrowser(appName: string): void {
   try {
-    execSync(
-      `osascript -e 'tell application "${appName}" to quit'`,
-      { stdio: 'ignore', timeout: 5_000 },
-    );
+    execSync(`osascript -e 'tell application "${appName}" to quit'`, {
+      stdio: 'ignore',
+      timeout: 5_000,
+    });
   } catch {
     // ignore
   }
@@ -63,9 +63,7 @@ async function waitForBrowserExit(timeoutMs = 10_000): Promise<void> {
   }
 }
 
-async function getCdpInfo(
-  port: number,
-): Promise<{ wsUrl: string } | null> {
+async function getCdpInfo(port: number): Promise<{ wsUrl: string } | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json/version`);
     if (!res.ok) return null;
@@ -89,10 +87,7 @@ async function listTabs(port: number): Promise<TabInfo[]> {
  * Find or create a tab and navigate it to the target URL.
  * Returns a CDPClient connected to that tab's JS context.
  */
-async function openTab(
-  port: number,
-  targetUrl: string,
-): Promise<CDPClient> {
+async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
   const tabs = await listTabs(port);
 
   // Prefer an existing leboncoin tab (re-use it)
@@ -103,9 +98,7 @@ async function openTab(
   if (!target) {
     target = tabs.find((t) => t.type === 'page');
     if (!target) {
-      const res = await fetch(
-        `http://127.0.0.1:${port}/json/new?about:blank`,
-      );
+      const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`);
       target = (await res.json()) as TabInfo;
     }
   }
@@ -138,11 +131,13 @@ async function openTab(
   await delay(2_000); // Extra time for JS hydration + DataDome init
 
   // Check if we landed on a CAPTCHA
-  const onCaptcha = await cdp.evaluate<boolean>(
-    `document.body.innerHTML.includes('geo.captcha-delivery') || ` +
-    `!!document.querySelector('iframe[src*="datadome"]')`,
-    false,
-  ).catch(() => false);
+  const onCaptcha = await cdp
+    .evaluate<boolean>(
+      `document.body.innerHTML.includes('geo.captcha-delivery') || ` +
+        `!!document.querySelector('iframe[src*="datadome"]')`,
+      false,
+    )
+    .catch(() => false);
 
   if (onCaptcha) {
     logger.warn('CAPTCHA detected after navigation — solve it in the browser');
@@ -150,13 +145,15 @@ async function openTab(
     const start = Date.now();
     while (Date.now() - start < 5 * 60 * 1_000) {
       await delay(3_000);
-      const clear = await cdp.evaluate<boolean>(
-        `window.location.hostname.includes('leboncoin.fr') && ` +
-        `!document.querySelector('iframe[src*="captcha"]') && ` +
-        `!document.querySelector('iframe[src*="datadome"]') && ` +
-        `!document.body.innerHTML.includes('geo.captcha-delivery')`,
-        false,
-      ).catch(() => false);
+      const clear = await cdp
+        .evaluate<boolean>(
+          `window.location.hostname.includes('leboncoin.fr') && ` +
+            `!document.querySelector('iframe[src*="captcha"]') && ` +
+            `!document.querySelector('iframe[src*="datadome"]') && ` +
+            `!document.body.innerHTML.includes('geo.captcha-delivery')`,
+          false,
+        )
+        .catch(() => false);
       if (clear) {
         logger.success('CAPTCHA resolved');
         await delay(1_500);
@@ -173,7 +170,9 @@ async function openTab(
  * Ensure a browser is running with CDP and return a CDPClient
  * connected to a tab navigated to `targetUrl`.
  */
-export async function connectAndNavigate(targetUrl: string): Promise<CDPClient> {
+export async function connectAndNavigate(
+  targetUrl: string,
+): Promise<CDPClient> {
   const browserName = getBrowserAppName(config.browser.chromePath);
   const port = config.browser.debuggingPort;
 
@@ -181,18 +180,14 @@ export async function connectAndNavigate(targetUrl: string): Promise<CDPClient> 
   if (port > 0) {
     const info = await getCdpInfo(port);
     if (info) {
-      logger.info(
-        `Found existing ${browserName} with CDP on port ${port}`,
-      );
+      logger.info(`Found existing ${browserName} with CDP on port ${port}`);
       return openTab(port, targetUrl);
     }
   }
 
   // 2. If browser is running without CDP, quit it and relaunch
   if (isBrowserRunning()) {
-    logger.warn(
-      `${browserName} running without CDP — restarting…`,
-    );
+    logger.warn(`${browserName} running without CDP — restarting…`);
     quitBrowser(browserName);
     await waitForBrowserExit();
   }

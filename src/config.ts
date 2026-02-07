@@ -91,9 +91,20 @@ export function getBrowserAppName(chromePath: string): string {
 export function detectUserDataDir(chromePath: string): string {
   const home = os.homedir();
   if (chromePath.includes('Brave'))
-    return path.join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser');
+    return path.join(
+      home,
+      'Library',
+      'Application Support',
+      'BraveSoftware',
+      'Brave-Browser',
+    );
   if (chromePath.includes('Opera'))
-    return path.join(home, 'Library', 'Application Support', 'com.operasoftware.Opera');
+    return path.join(
+      home,
+      'Library',
+      'Application Support',
+      'com.operasoftware.Opera',
+    );
   if (chromePath.includes('Chromium'))
     return path.join(home, 'Library', 'Application Support', 'Chromium');
   return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
@@ -131,7 +142,12 @@ export function createWrapperDataDir(realDir: string): string {
     const realPath = path.join(realDir, entry);
     const linkPath = path.join(wrapper, entry);
 
-    if (entry === 'Local State' || entry === 'SingletonLock' || entry === 'SingletonCookie' || entry === 'SingletonSocket') {
+    if (
+      entry === 'Local State' ||
+      entry === 'SingletonLock' ||
+      entry === 'SingletonCookie' ||
+      entry === 'SingletonSocket'
+    ) {
       // Copy files that Chrome needs exclusive write access to
       try {
         fs.copyFileSync(realPath, linkPath);

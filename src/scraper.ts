@@ -20,7 +20,7 @@ import { processSearchData, processAdData } from './exploit';
 import { config } from './config';
 import { logger } from './logger';
 import { delay } from './utils';
-import type { Ad, SearchResults } from './types';
+import type { Ad } from './types';
 
 /**
  * Extract __NEXT_DATA__ from the currently loaded page's DOM.
@@ -42,7 +42,7 @@ async function extractNextDataFromDOM(cdp: CDPClient): Promise<{
   if (!result) {
     throw new Error(
       'Could not read __NEXT_DATA__ from the page. ' +
-      'The page may not have loaded correctly or a CAPTCHA may be blocking.',
+        'The page may not have loaded correctly or a CAPTCHA may be blocking.',
     );
   }
 
@@ -134,9 +134,9 @@ async function waitForCaptchaResolution(cdp: CDPClient): Promise<void> {
     try {
       const clear = await cdp.evaluate<boolean>(
         `window.location.hostname.includes('leboncoin.fr') && ` +
-        `!document.querySelector('iframe[src*="captcha"]') && ` +
-        `!document.querySelector('iframe[src*="datadome"]') && ` +
-        `!document.body.innerHTML.includes('geo.captcha-delivery')`,
+          `!document.querySelector('iframe[src*="captcha"]') && ` +
+          `!document.querySelector('iframe[src*="datadome"]') && ` +
+          `!document.body.innerHTML.includes('geo.captcha-delivery')`,
         false,
       );
       if (clear) {
@@ -167,11 +167,13 @@ async function navigateWithCaptchaHandling(
   }
   await delay(2_000);
 
-  const onCaptcha = await cdp.evaluate<boolean>(
-    `document.body.innerHTML.includes('geo.captcha-delivery') || ` +
-    `!!document.querySelector('iframe[src*="datadome"]')`,
-    false,
-  ).catch(() => false);
+  const onCaptcha = await cdp
+    .evaluate<boolean>(
+      `document.body.innerHTML.includes('geo.captcha-delivery') || ` +
+        `!!document.querySelector('iframe[src*="datadome"]')`,
+      false,
+    )
+    .catch(() => false);
 
   if (onCaptcha) {
     await waitForCaptchaResolution(cdp);
@@ -211,13 +213,13 @@ export async function scrapeAllSearchPages(
   const allAds = [...first.results];
 
   const nbPages = Math.ceil(first.total / config.scraping.resultPerPage);
-  logger.info(`Found ${first.total} results across ${nbPages} pages (buildId: ${buildId})`);
+  logger.info(
+    `Found ${first.total} results across ${nbPages} pages (buildId: ${buildId})`,
+  );
 
   // Subsequent pages via Next.js data routes
   for (let i = 2; i <= nbPages; i++) {
-    await delay(
-      config.scraping.rateLimit + Math.floor(Math.random() * 2_000),
-    );
+    await delay(config.scraping.rateLimit + Math.floor(Math.random() * 2_000));
     logger.progress(i - 1, nbPages, `Page ${i}/${nbPages}`);
 
     try {
@@ -225,8 +227,14 @@ export async function scrapeAllSearchPages(
       const page = processSearchData(pageData);
       allAds.push(...page.results);
     } catch (error: any) {
-      if (error.message?.includes('BLOCKED') || error.message?.includes('CAPTCHA')) {
-        await navigateWithCaptchaHandling(cdp, `${config.api.baseUrl}/recherche?${query}&page=${i}`);
+      if (
+        error.message?.includes('BLOCKED') ||
+        error.message?.includes('CAPTCHA')
+      ) {
+        await navigateWithCaptchaHandling(
+          cdp,
+          `${config.api.baseUrl}/recherche?${query}&page=${i}`,
+        );
         const retryData = await extractNextDataFromDOM(cdp);
         allAds.push(...processSearchData(retryData.searchData).results);
       } else {
