@@ -1,4 +1,4 @@
-# Leboncoin Scraper
+# leboncoin-cdp-scraper
 
 Scrape leboncoin.fr using **raw CDP + Next.js data routes** — zero bot detection.
 
@@ -489,8 +489,4 @@ If the scraper fails to connect to an existing tab:
 
 ## License
 
-MIT
-
-## Author
-
-maxgfr
+[MIT License](LICENSE)

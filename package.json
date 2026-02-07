@@ -1,17 +1,17 @@
 {
-  "name": "leboncoin",
+  "name": "leboncoin-cdp-scraper",
   "version": "2.0.0",
   "author": "maxgfr",
   "license": "MIT",
   "description": "Leboncoin scraper using CDP + in-page fetch (zero bot detection)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/maxgfr/leboncoin.git"
+    "url": "https://github.com/maxgfr/leboncoin-cdp-scraper.git"
   },
   "bugs": {
-    "url": "https://github.com/maxgfr/leboncoin/issues"
+    "url": "https://github.com/maxgfr/leboncoin-cdp-scraper/issues"
   },
-  "homepage": "https://github.com/maxgfr/leboncoin#readme",
+  "homepage": "https://github.com/maxgfr/leboncoin-cdp-scraper#readme",
   "packageManager": "pnpm@9.15.4",
   "files": [
     "build"
