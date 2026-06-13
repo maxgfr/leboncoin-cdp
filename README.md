@@ -60,7 +60,8 @@ pnpm start -- --help
 pnpm start -- [options]
 
 Options:
-  -q, --query <query>        Search query parameters
+  -q, --query <query>        Search query parameters, a full /recherche URL,
+                             or a /carte (map view) URL — all are accepted
   -o, --output <name>        Output filename prefix (default: search_YYYY-MM-DD_HHMMSS)
   -c, --config <file>        Load configuration from JSON file
   -h, --help                 Show help message
@@ -79,6 +80,7 @@ Browser options:
 Scraping options:
   --retries <n>              Max retries for failed pages (default: 5)
   --rate-limit <ms>          Delay between pages in ms (default: 1000)
+  --max-pages <n>            Limit number of search pages to scrape (default: all)
 
 Output options:
   --output-dir <dir>         Output directory (default: ./assets)
@@ -146,10 +148,14 @@ DEBUGGING_PORT=0           # CDP port (0 = random high port)
 # Scraping Configuration
 MAX_RETRIES=5              # Retry failed pages up to 5 times
 RATE_LIMIT=1000            # Wait 1s between page requests
+MAX_PAGES=                 # Limit search pages to scrape (empty = all)
 
 # Output Configuration
 OUTPUT_DIR=./assets        # Save results here
 SAVE_RAW=false             # Save raw __NEXT_DATA__ responses
+
+# Advanced
+# LBC_SCRAPER_HOME=        # Override the data dir (default: ~/.lbc-scraper)
 ```
 
 ### How the Scraper Works
@@ -176,18 +182,27 @@ Leboncoin uses URL query parameters. Here are common patterns:
 
 ### Filters
 
-- `price=150000-300000` - Price range
+- `price=150000-300000` - Price range (`min`/`max` also accepted, e.g. `price=min-300000`)
 - `locations=CITY__LAT_LON_RADIUS` - Location with radius
-- `real_estate_type=1` - Apartments only (real estate)
-- `real_estate_type=2` - Houses only (real estate)
-- `rooms=2-4` - 2 to 4 rooms
+- `real_estate_type=1` - Houses only (maison)
+- `real_estate_type=2` - Apartments only (appartement)
+- `rooms=2-4` - 2 to 4 rooms (pièces)
+- `bedrooms=2-4` - 2 to 4 bedrooms (chambres)
+
+### Map (carte) URLs
+
+You can paste a **map-view** URL straight from the site, e.g.
+`https://www.leboncoin.fr/carte/ventes_immobilieres?lat=45.78&lng=3.09&city=Clermont-Ferrand&defaultRadius=6650&real_estate_type=1`.
+The scraper translates the map params (`lat`/`lng`/`city`/`defaultRadius`) into
+the `/recherche` `locations=CITY__LAT_LON_RADIUS` encoding and reads the
+category id from the page automatically.
 
 ### Example Queries
 
 **Paris apartments €150k-€300k:**
 
 ```
-category=9&locations=75012__48.84_2.38_5000&price=150000-300000&real_estate_type=1
+category=9&locations=75012__48.84_2.38_5000&price=150000-300000&real_estate_type=2
 ```
 
 **Used cars in Lyon under €10k:**

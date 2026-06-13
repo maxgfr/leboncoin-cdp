@@ -1,4 +1,4 @@
-import { expect, test, describe } from 'vitest';
+import { expect, test, describe, beforeAll, afterAll } from 'vitest';
 import {
   getBrowserAppName,
   detectUserDataDir,
@@ -10,6 +10,20 @@ import type { BrowserType } from '../config';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+
+// Redirect the scraper home to a throwaway dir so the test suite never wipes
+// the user's real ~/.lbc-scraper profile (cookies/login).
+let testHome: string;
+const prevHome = process.env.LBC_SCRAPER_HOME;
+beforeAll(() => {
+  testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'lbc-home-'));
+  process.env.LBC_SCRAPER_HOME = testHome;
+});
+afterAll(() => {
+  if (prevHome === undefined) delete process.env.LBC_SCRAPER_HOME;
+  else process.env.LBC_SCRAPER_HOME = prevHome;
+  fs.rmSync(testHome, { recursive: true, force: true });
+});
 
 describe('getBrowserAppName', () => {
   test('detects Brave', () => {

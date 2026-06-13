@@ -15,6 +15,8 @@ export interface Config {
     resultPerPage: number;
     maxRetries: number;
     rateLimit: number;
+    /** Optional cap on the number of search pages to scrape (undefined = all). */
+    maxPages?: number;
   };
   output: {
     directory: string;
@@ -215,9 +217,20 @@ export function detectUserDataDir(chromePath: string): string {
   return path.join(home, '.config', 'google-chrome'); // fallback
 }
 
-/** Root directory for all scraper data (persistent across runs). */
-const SCRAPER_HOME = path.join(os.homedir(), '.lbc-scraper');
-const PORT_FILE = path.join(SCRAPER_HOME, 'port');
+/**
+ * Root directory for all scraper data (persistent across runs).
+ * Resolved lazily so it can be overridden via LBC_SCRAPER_HOME — used by tests
+ * to avoid touching the user's real ~/.lbc-scraper profile.
+ */
+function getScraperHome(): string {
+  return (
+    process.env.LBC_SCRAPER_HOME || path.join(os.homedir(), '.lbc-scraper')
+  );
+}
+
+function getPortFile(): string {
+  return path.join(getScraperHome(), 'port');
+}
 
 /**
  * Create a PERSISTENT scraper profile by copying the real browser profile
@@ -228,7 +241,7 @@ const PORT_FILE = path.join(SCRAPER_HOME, 'port');
  * Use --reset-profile to force a fresh copy from the real profile.
  */
 export function createWrapperDataDir(realDir: string): string {
-  const wrapper = path.join(SCRAPER_HOME, 'profile');
+  const wrapper = path.join(getScraperHome(), 'profile');
 
   // If profile already exists → reuse it (fast path)
   if (fs.existsSync(path.join(wrapper, 'Default')) || fs.existsSync(path.join(wrapper, 'Local State'))) {
@@ -279,7 +292,7 @@ export function createWrapperDataDir(realDir: string): string {
  * real browser profile on the next run.
  */
 export function resetScraperProfile(): void {
-  const wrapper = path.join(SCRAPER_HOME, 'profile');
+  const wrapper = path.join(getScraperHome(), 'profile');
   if (fs.existsSync(wrapper)) {
     fs.rmSync(wrapper, { recursive: true });
     console.log('✓ Scraper profile deleted — will be re-created on next run');
@@ -288,14 +301,14 @@ export function resetScraperProfile(): void {
 
 /** Persist the CDP debugging port so the next run can reconnect. */
 export function saveCdpPort(port: number): void {
-  fs.mkdirSync(SCRAPER_HOME, { recursive: true });
-  fs.writeFileSync(PORT_FILE, String(port));
+  fs.mkdirSync(getScraperHome(), { recursive: true });
+  fs.writeFileSync(getPortFile(), String(port));
 }
 
 /** Load a previously saved CDP port (0 if none). */
 export function loadCdpPort(): number {
   try {
-    const raw = fs.readFileSync(PORT_FILE, 'utf8').trim();
+    const raw = fs.readFileSync(getPortFile(), 'utf8').trim();
     return parseInt(raw, 10) || 0;
   } catch {
     return 0;
@@ -305,7 +318,7 @@ export function loadCdpPort(): number {
 /** Clear the saved CDP port file. */
 export function clearCdpPort(): void {
   try {
-    fs.unlinkSync(PORT_FILE);
+    fs.unlinkSync(getPortFile());
   } catch {
     // file may not exist
   }
@@ -322,6 +335,9 @@ export const config: Config = {
     resultPerPage: 35,
     maxRetries: parseInt(process.env.MAX_RETRIES || '5', 10),
     rateLimit: parseInt(process.env.RATE_LIMIT || '1000', 10),
+    maxPages: process.env.MAX_PAGES
+      ? parseInt(process.env.MAX_PAGES, 10)
+      : undefined,
   },
   output: {
     directory: process.env.OUTPUT_DIR || './assets',
