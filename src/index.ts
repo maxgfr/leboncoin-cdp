@@ -1,7 +1,8 @@
 import fs from 'fs';
-import { connectAndNavigate } from './browser';
+import { connectAndNavigate, waitForPageReady } from './browser';
 import { scrapeAllSearchPages, scrapeAdDetails } from './scraper';
 import { formatDateWithTimestamp } from './utils';
+import { normalizeSearchInput } from './query';
 import type { Ad } from './types';
 import { logger } from './logger';
 import {
@@ -27,6 +28,7 @@ interface CliArgs {
   pageTimeout?: number;
   maxRetries?: number;
   rateLimit?: number;
+  maxPages?: number;
   outputDir?: string;
   saveRaw?: boolean;
 }
@@ -79,6 +81,10 @@ function parseCliArgs(): CliArgs {
         break;
       case '--rate-limit':
         result.rateLimit = parseInt(args[++i], 10);
+        break;
+      case '--max-pages':
+      case '--pages':
+        result.maxPages = parseInt(args[++i], 10);
         break;
       case '--output-dir':
         result.outputDir = args[++i];
@@ -144,6 +150,7 @@ Browser options:
 Scraping options:
   --retries <n>              Max retries for failed pages (default: 5)
   --rate-limit <ms>          Delay between pages in ms (default: 1000)
+  --max-pages <n>            Limit number of search pages to scrape (default: all)
 
 Output options:
   --output-dir <dir>         Output directory (default: ./assets)
@@ -169,33 +176,6 @@ Examples:
   pnpm start -- --browser brave --reset-profile --query "text=mac+m1"
 `;
   process.stdout.write(help);
-}
-
-/**
- * Normalize a query input that may be:
- *   - A full URL:  https://www.leboncoin.fr/recherche?text=mac+m1&...
- *   - A path+query: recherche?text=mac+m1&...
- *   - Just query params: text=mac+m1&...
- * Returns only the query string portion (e.g. "text=mac+m1&...").
- */
-function normalizeQuery(input: string): string {
-  const trimmed = input.trim();
-
-  // Full URL — extract everything after the '?'
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    try {
-      const url = new URL(trimmed);
-      return url.search.replace(/^\?/, '');
-    } catch {
-      // Fall through to string-based stripping
-    }
-  }
-
-  // Path prefix like "recherche?..." or "/recherche?..."
-  const match = trimmed.match(/^\/?recherche\?(.+)$/);
-  if (match) return match[1];
-
-  return trimmed;
 }
 
 async function loadConfigFile(configPath: string): Promise<{
@@ -236,6 +216,7 @@ async function main() {
   if (args.pageTimeout) config.browser.timeout = args.pageTimeout;
   if (args.maxRetries) config.scraping.maxRetries = args.maxRetries;
   if (args.rateLimit) config.scraping.rateLimit = args.rateLimit;
+  if (args.maxPages) config.scraping.maxPages = args.maxPages;
   if (args.outputDir) config.output.directory = args.outputDir;
   if (args.saveRaw) config.output.saveRawJson = true;
 
@@ -254,21 +235,19 @@ async function main() {
     outputName = args.output || 'search_' + formatDateWithTimestamp(new Date());
   }
 
-  // Normalize query: accept full URL, path+query, or just query params
-  const query = normalizeQuery(rawQuery);
-  logger.info(`Normalized query: ${query}`);
-
-  // Build the initial search URL to navigate to directly
-  const searchUrl = `${config.api.baseUrl}/recherche?${query}`;
+  // Normalize input: accept full URL (/recherche or /carte map view),
+  // path+query, or raw query params — and translate map params to /recherche.
+  const search = normalizeSearchInput(rawQuery, config.api.baseUrl);
+  logger.info(`Navigating to: ${search.navigateUrl}`);
 
   // Connect to browser and navigate to the search URL
-  const cdp = await connectAndNavigate(searchUrl);
+  const cdp = await connectAndNavigate(search.navigateUrl);
 
   try {
     let buildId = '';
 
     if (!args.detailsOnly) {
-      const searchResult = await scrapeAllSearchPages(cdp, query);
+      const searchResult = await scrapeAllSearchPages(cdp, search);
       buildId = searchResult.buildId;
       const outputPath = `${config.output.directory}/${outputName}.json`;
       fs.writeFileSync(outputPath, JSON.stringify(searchResult.ads, null, 2));
@@ -307,11 +286,7 @@ async function main() {
             logger.warn('Could not get buildId — navigating to get one…');
             await cdp.send('Page.enable');
             await cdp.send('Page.navigate', { url: urls[0] });
-            try {
-              await cdp.once('Page.loadEventFired', config.browser.timeout);
-            } catch {
-              // Page might already be loaded
-            }
+            await waitForPageReady(cdp);
             await new Promise((r) => setTimeout(r, 2000));
             const nd = await cdp
               .evaluate<{ buildId: string } | null>(

@@ -58,25 +58,62 @@ async function listTabs(port: number): Promise<TabInfo[]> {
 }
 
 /**
+ * Open a new browser tab via the DevTools HTTP endpoint.
+ * Modern Chrome (>= ~v111) requires PUT for /json/new and rejects GET;
+ * older builds only accept GET. Try PUT first, then fall back to GET.
+ */
+async function openNewTab(port: number): Promise<TabInfo | null> {
+  for (const method of ['PUT', 'GET'] as const) {
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/json/new?about:blank`,
+        { method },
+      );
+      if (!res.ok) continue;
+      const data = (await res.json()) as TabInfo;
+      if (data?.webSocketDebuggerUrl) return data;
+    } catch {
+      // Try the next verb
+    }
+  }
+  return null;
+}
+
+/**
+ * Wait until the page is usable, then return.
+ *
+ * We resolve on whichever of DOMContentLoaded / load fires first. The data we
+ * need (`__NEXT_DATA__`) is in the server-rendered HTML, so DOMContentLoaded is
+ * sufficient — and the full `load` event on ad-heavy Leboncoin pages often
+ * takes 30s+ or never fires, which would otherwise stall every navigation.
+ */
+export async function waitForPageReady(cdp: CDPClient): Promise<void> {
+  await Promise.race([
+    cdp.once('Page.domContentEventFired', config.browser.timeout).catch(() => {}),
+    cdp.once('Page.loadEventFired', config.browser.timeout).catch(() => {}),
+  ]);
+}
+
+/**
  * Find or create a tab and navigate it to the target URL.
  * Returns a CDPClient connected to that tab's JS context.
  */
 async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
   // Always open a new tab so we never clobber an existing page's data
   logger.info('Opening a new tab…');
-  let target: TabInfo | undefined;
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`);
-    target = (await res.json()) as TabInfo;
-  } catch {
+  let target: TabInfo | null = await openNewTab(port);
+
+  if (!target) {
     // Fallback: reuse an existing blank tab
     const tabs = await listTabs(port);
-    target = tabs.find(
-      (t) => t.type === 'page' && (t.url === 'about:blank' || t.url === 'chrome://newtab/'),
-    );
-    if (!target) {
-      target = tabs.find((t) => t.type === 'page');
-    }
+    target =
+      tabs.find(
+        (t) =>
+          t.type === 'page' &&
+          (t.url === 'about:blank' || t.url === 'chrome://newtab/'),
+      ) ??
+      tabs.find((t) => t.type === 'page') ??
+      null;
   }
 
   if (!target) {
@@ -92,8 +129,10 @@ async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
   } catch {
     logger.warn('Tab not responding — opening a fresh tab…');
     cdp.disconnect();
-    const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`);
-    const freshTab = (await res.json()) as TabInfo;
+    const freshTab = await openNewTab(port);
+    if (!freshTab) {
+      throw new Error('Could not open a fresh browser tab');
+    }
     cdp = await CDPClient.connect(freshTab.webSocketDebuggerUrl);
     await cdp.send('Page.enable', {}, 15_000);
   }
@@ -102,12 +141,8 @@ async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
   logger.info(`Navigating to ${targetUrl}`);
   await cdp.send('Page.navigate', { url: targetUrl });
 
-  // Wait for full page load
-  try {
-    await cdp.once('Page.loadEventFired', config.browser.timeout);
-  } catch {
-    // Might already be loaded
-  }
+  // Wait until the DOM is ready (don't block on the slow/never-firing `load`)
+  await waitForPageReady(cdp);
   await delay(2_000); // Extra time for JS hydration + DataDome init
 
   // Check if we landed on a CAPTCHA

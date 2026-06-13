@@ -16,26 +16,43 @@
  *   - No Puppeteer, no automation flags
  */
 import { CDPClient } from './cdp';
+import { waitForPageReady } from './browser';
 import { processSearchData, processAdData } from './exploit';
 import { config } from './config';
 import { logger } from './logger';
 import { delay } from './utils';
+import { buildQueryString, type NormalizedSearch } from './query';
 import type { Ad } from './types';
+
+/** Hard ceiling on pages when the page doesn't expose max_pages (Leboncoin
+ *  caps search pagination far below this; the guard just prevents runaways). */
+const FALLBACK_MAX_PAGES = 100;
+
+interface FirstPageData {
+  buildId: string;
+  searchData: { total: number; ads: any[]; max_pages?: number };
+  categoryId: string | null;
+}
 
 /**
  * Extract __NEXT_DATA__ from the currently loaded page's DOM.
  * This is used after a real navigation (first page).
+ *
+ * Handles both result shapes:
+ *   - /recherche page → pageProps.searchData
+ *   - /carte map page → pageProps.searchResult
  */
-async function extractNextDataFromDOM(cdp: CDPClient): Promise<{
-  buildId: string;
-  searchData: { total: number; ads: any[] };
-}> {
-  const result = await cdp.evaluate<{ buildId: string; pageProps: any } | null>(
+async function extractNextDataFromDOM(cdp: CDPClient): Promise<FirstPageData> {
+  const result = await cdp.evaluate<FirstPageData | null>(
     `(() => {
       const el = document.getElementById('__NEXT_DATA__');
       if (!el || !el.textContent) return null;
       const data = JSON.parse(el.textContent);
-      return { buildId: data.buildId, pageProps: data.props.pageProps };
+      const pp = data.props && data.props.pageProps;
+      const searchData = pp ? (pp.searchData || pp.searchResult || null) : null;
+      const categoryId =
+        (pp && pp.categoryId) || (data.query && data.query.category) || null;
+      return { buildId: data.buildId, searchData, categoryId };
     })()`,
   );
 
@@ -46,16 +63,13 @@ async function extractNextDataFromDOM(cdp: CDPClient): Promise<{
     );
   }
 
-  if (!result.pageProps?.searchData) {
+  if (!result.searchData) {
     throw new Error(
-      'No searchData in __NEXT_DATA__ — the page may not be a search results page.',
+      'No searchData/searchResult in __NEXT_DATA__ — the page may not be a search results page.',
     );
   }
 
-  return {
-    buildId: result.buildId,
-    searchData: result.pageProps.searchData,
-  };
+  return result;
 }
 
 /**
@@ -160,11 +174,7 @@ async function navigateWithCaptchaHandling(
 ): Promise<void> {
   await cdp.send('Page.enable');
   await cdp.send('Page.navigate', { url });
-  try {
-    await cdp.once('Page.loadEventFired', config.browser.timeout);
-  } catch {
-    // might already be loaded
-  }
+  await waitForPageReady(cdp);
   await delay(2_000);
 
   const onCaptcha = await cdp
@@ -189,33 +199,55 @@ async function navigateWithCaptchaHandling(
  */
 export async function scrapeAllSearchPages(
   cdp: CDPClient,
-  query: string,
-): Promise<{ ads: Ad[]; buildId: string }> {
-  logger.startTask(`Scraping search: ${query}`);
+  search: NormalizedSearch,
+): Promise<{ ads: Ad[]; buildId: string; query: string }> {
+  logger.startTask('Scraping search results');
 
   // First page: read from the already-loaded DOM
-  let firstPage: { buildId: string; searchData: { total: number; ads: any[] } };
+  let firstPage: FirstPageData;
   try {
     firstPage = await extractNextDataFromDOM(cdp);
   } catch (error: any) {
     // Maybe the page didn't load right — try navigating directly
     logger.warn(`First extraction failed: ${error.message}`);
     logger.info('Re-navigating to search URL…');
-    await navigateWithCaptchaHandling(
-      cdp,
-      `${config.api.baseUrl}/recherche?${query}`,
-    );
+    await navigateWithCaptchaHandling(cdp, search.navigateUrl);
     firstPage = await extractNextDataFromDOM(cdp);
   }
 
-  const { buildId, searchData } = firstPage;
+  const { buildId, searchData, categoryId } = firstPage;
+
+  // Canonical pagination query (injects the numeric category for /carte URLs).
+  const query = buildQueryString(search.params, categoryId);
+
   const first = processSearchData(searchData);
   const allAds = [...first.results];
 
-  const nbPages = Math.ceil(first.total / config.scraping.resultPerPage);
+  // Cap pages: Leboncoin limits search pagination, the user may request fewer
+  // via --max-pages, and a misread total must never trigger millions of
+  // requests.
+  const totalPages = Math.ceil(first.total / config.scraping.resultPerPage);
+  const siteCap =
+    typeof searchData.max_pages === 'number' && searchData.max_pages > 0
+      ? searchData.max_pages
+      : FALLBACK_MAX_PAGES;
+  const userCap =
+    config.scraping.maxPages && config.scraping.maxPages > 0
+      ? config.scraping.maxPages
+      : Infinity;
+  const nbPages = Math.min(totalPages, siteCap, userCap);
+
   logger.info(
-    `Found ${first.total} results across ${nbPages} pages (buildId: ${buildId})`,
+    `Found ${first.total} results across ${totalPages} pages (buildId: ${buildId})`,
   );
+  logger.info(`Pagination query: ${query}`);
+  if (nbPages < totalPages) {
+    const reason =
+      userCap <= siteCap && userCap < totalPages
+        ? `limited to ${nbPages} page(s) via --max-pages`
+        : `Leboncoin caps pagination at ${nbPages} of ${totalPages} pages`;
+    logger.warn(`Scraping the first ${nbPages} page(s) — ${reason}.`);
+  }
 
   // Subsequent pages via Next.js data routes
   for (let i = 2; i <= nbPages; i++) {
@@ -245,7 +277,7 @@ export async function scrapeAllSearchPages(
 
   if (nbPages > 1) logger.progress(nbPages, nbPages);
   logger.endTask();
-  return { ads: allAds, buildId };
+  return { ads: allAds, buildId, query };
 }
 
 /**
