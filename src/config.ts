@@ -1,8 +1,8 @@
-import os from 'os';
-import path from 'path';
-import fs from 'fs';
+import os from "os";
+import path from "path";
+import fs from "fs";
 
-export type BrowserType = 'brave' | 'chrome' | 'opera' | 'chromium';
+export type BrowserType = "brave" | "chrome" | "opera" | "chromium";
 
 export interface Config {
   browser: {
@@ -29,39 +29,27 @@ export interface Config {
 
 /** Browser binary paths by platform */
 const BROWSER_PATHS_MACOS: Record<BrowserType, string> = {
-  chrome: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  brave: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-  opera: '/Applications/Opera.app/Contents/MacOS/Opera',
-  chromium: '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  brave: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  opera: "/Applications/Opera.app/Contents/MacOS/Opera",
+  chromium: "/Applications/Chromium.app/Contents/MacOS/Chromium",
 };
 
 const BROWSER_PATHS_LINUX: Record<BrowserType, string[]> = {
-  chrome: [
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/opt/google/chrome/chrome',
-  ],
-  brave: [
-    '/usr/bin/brave-browser',
-    '/usr/bin/brave',
-    '/opt/brave.com/brave/brave-browser',
-  ],
-  chromium: [
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/snap/bin/chromium',
-  ],
-  opera: ['/usr/bin/opera', '/usr/bin/opera-stable'],
+  chrome: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/opt/google/chrome/chrome"],
+  brave: ["/usr/bin/brave-browser", "/usr/bin/brave", "/opt/brave.com/brave/brave-browser"],
+  chromium: ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium"],
+  opera: ["/usr/bin/opera", "/usr/bin/opera-stable"],
 };
 
 /**
  * Detect the current platform.
  */
-function getPlatform(): 'macos' | 'linux' | 'other' {
+function getPlatform(): "macos" | "linux" | "other" {
   const platform = os.platform();
-  if (platform === 'darwin') return 'macos';
-  if (platform === 'linux') return 'linux';
-  return 'other';
+  if (platform === "darwin") return "macos";
+  if (platform === "linux") return "linux";
+  return "other";
 }
 
 /**
@@ -71,18 +59,16 @@ function getPlatform(): 'macos' | 'linux' | 'other' {
 export function getBrowserPath(browser: BrowserType): string {
   const platform = getPlatform();
 
-  if (platform === 'macos') {
+  if (platform === "macos") {
     const p = BROWSER_PATHS_MACOS[browser];
     if (!p) throw new Error(`Unknown browser: ${browser}`);
     try {
       fs.accessSync(p, fs.constants.X_OK);
       return p;
     } catch {
-      throw new Error(
-        `${browser} not found at ${p}. Install it or use --chrome-path to specify the binary.`,
-      );
+      throw new Error(`${browser} not found at ${p}. Install it or use --chrome-path to specify the binary.`);
     }
-  } else if (platform === 'linux') {
+  } else if (platform === "linux") {
     const candidates = BROWSER_PATHS_LINUX[browser];
     if (!candidates) throw new Error(`Unknown browser: ${browser}`);
 
@@ -90,18 +76,12 @@ export function getBrowserPath(browser: BrowserType): string {
       try {
         fs.accessSync(p, fs.constants.X_OK);
         return p;
-      } catch {
-        continue;
-      }
+      } catch {}
     }
 
-    throw new Error(
-      `${browser} not found. Tried: ${candidates.join(', ')}. Install it or use --chrome-path to specify the binary.`,
-    );
+    throw new Error(`${browser} not found. Tried: ${candidates.join(", ")}. Install it or use --chrome-path to specify the binary.`);
   } else {
-    throw new Error(
-      `Unsupported platform: ${os.platform()}. Use --chrome-path to specify the browser binary.`,
-    );
+    throw new Error(`Unsupported platform: ${os.platform()}. Use --chrome-path to specify the browser binary.`);
   }
 }
 
@@ -114,62 +94,58 @@ function detectBrowserPath(): string {
 
   const platform = getPlatform();
 
-  if (platform === 'macos') {
+  if (platform === "macos") {
     const candidates = [
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
     ];
 
     for (const p of candidates) {
       try {
         fs.accessSync(p, fs.constants.X_OK);
         return p;
-      } catch {
-        continue;
-      }
+      } catch {}
     }
 
     return candidates[0]; // fallback to Chrome
-  } else if (platform === 'linux') {
+  } else if (platform === "linux") {
     const candidates = [
       // Chrome first (default)
-      '/usr/bin/google-chrome',
-      '/usr/bin/google-chrome-stable',
-      '/opt/google/chrome/chrome',
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      "/opt/google/chrome/chrome",
       // Then Brave
-      '/usr/bin/brave-browser',
-      '/usr/bin/brave',
-      '/opt/brave.com/brave/brave-browser',
+      "/usr/bin/brave-browser",
+      "/usr/bin/brave",
+      "/opt/brave.com/brave/brave-browser",
       // Then Chromium
-      '/usr/bin/chromium',
-      '/usr/bin/chromium-browser',
-      '/snap/bin/chromium',
+      "/usr/bin/chromium",
+      "/usr/bin/chromium-browser",
+      "/snap/bin/chromium",
     ];
 
     for (const p of candidates) {
       try {
         fs.accessSync(p, fs.constants.X_OK);
         return p;
-      } catch {
-        continue;
-      }
+      } catch {}
     }
 
-    return '/usr/bin/google-chrome'; // fallback to Chrome
+    return "/usr/bin/google-chrome"; // fallback to Chrome
   }
 
-  return '/usr/bin/google-chrome'; // ultimate fallback
+  return "/usr/bin/google-chrome"; // ultimate fallback
 }
 
 /**
  * Derive the browser app name from the binary path.
  */
 export function getBrowserAppName(chromePath: string): string {
-  if (chromePath.toLowerCase().includes('brave')) return 'Brave Browser';
-  if (chromePath.toLowerCase().includes('opera')) return 'Opera';
-  if (chromePath.toLowerCase().includes('chromium')) return 'Chromium';
-  return 'Google Chrome';
+  if (chromePath.toLowerCase().includes("brave")) return "Brave Browser";
+  if (chromePath.toLowerCase().includes("opera")) return "Opera";
+  if (chromePath.toLowerCase().includes("chromium")) return "Chromium";
+  return "Google Chrome";
 }
 
 /**
@@ -180,41 +156,19 @@ export function detectUserDataDir(chromePath: string): string {
   const platform = getPlatform();
   const lowerPath = chromePath.toLowerCase();
 
-  if (platform === 'macos') {
-    if (lowerPath.includes('brave'))
-      return path.join(
-        home,
-        'Library',
-        'Application Support',
-        'BraveSoftware',
-        'Brave-Browser',
-      );
-    if (lowerPath.includes('opera'))
-      return path.join(
-        home,
-        'Library',
-        'Application Support',
-        'com.operasoftware.Opera',
-      );
-    if (lowerPath.includes('chromium'))
-      return path.join(home, 'Library', 'Application Support', 'Chromium');
-    return path.join(
-      home,
-      'Library',
-      'Application Support',
-      'Google',
-      'Chrome',
-    );
-  } else if (platform === 'linux') {
-    if (lowerPath.includes('brave'))
-      return path.join(home, '.config', 'BraveSoftware', 'Brave-Browser');
-    if (lowerPath.includes('opera')) return path.join(home, '.config', 'opera');
-    if (lowerPath.includes('chromium'))
-      return path.join(home, '.config', 'chromium');
-    return path.join(home, '.config', 'google-chrome');
+  if (platform === "macos") {
+    if (lowerPath.includes("brave")) return path.join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser");
+    if (lowerPath.includes("opera")) return path.join(home, "Library", "Application Support", "com.operasoftware.Opera");
+    if (lowerPath.includes("chromium")) return path.join(home, "Library", "Application Support", "Chromium");
+    return path.join(home, "Library", "Application Support", "Google", "Chrome");
+  } else if (platform === "linux") {
+    if (lowerPath.includes("brave")) return path.join(home, ".config", "BraveSoftware", "Brave-Browser");
+    if (lowerPath.includes("opera")) return path.join(home, ".config", "opera");
+    if (lowerPath.includes("chromium")) return path.join(home, ".config", "chromium");
+    return path.join(home, ".config", "google-chrome");
   }
 
-  return path.join(home, '.config', 'google-chrome'); // fallback
+  return path.join(home, ".config", "google-chrome"); // fallback
 }
 
 /**
@@ -223,13 +177,11 @@ export function detectUserDataDir(chromePath: string): string {
  * to avoid touching the user's real ~/.lbc-scraper profile.
  */
 function getScraperHome(): string {
-  return (
-    process.env.LBC_SCRAPER_HOME || path.join(os.homedir(), '.lbc-scraper')
-  );
+  return process.env.LBC_SCRAPER_HOME || path.join(os.homedir(), ".lbc-scraper");
 }
 
 function getPortFile(): string {
-  return path.join(getScraperHome(), 'port');
+  return path.join(getScraperHome(), "port");
 }
 
 /**
@@ -241,10 +193,10 @@ function getPortFile(): string {
  * Use --reset-profile to force a fresh copy from the real profile.
  */
 export function createWrapperDataDir(realDir: string): string {
-  const wrapper = path.join(getScraperHome(), 'profile');
+  const wrapper = path.join(getScraperHome(), "profile");
 
   // If profile already exists → reuse it (fast path)
-  if (fs.existsSync(path.join(wrapper, 'Default')) || fs.existsSync(path.join(wrapper, 'Local State'))) {
+  if (fs.existsSync(path.join(wrapper, "Default")) || fs.existsSync(path.join(wrapper, "Local State"))) {
     console.log(`✓ Reusing scraper profile at ${wrapper}`);
     return wrapper;
   }
@@ -259,12 +211,7 @@ export function createWrapperDataDir(realDir: string): string {
         // Skip lock files to avoid conflicts
         filter: (src) => {
           const basename = path.basename(src);
-          return (
-            basename !== 'SingletonLock' &&
-            basename !== 'SingletonCookie' &&
-            basename !== 'SingletonSocket' &&
-            basename !== 'lockfile'
-          );
+          return basename !== "SingletonLock" && basename !== "SingletonCookie" && basename !== "SingletonSocket" && basename !== "lockfile";
         },
       });
       console.log(`✓ Profile copied from ${realDir} to ${wrapper}`);
@@ -274,10 +221,7 @@ export function createWrapperDataDir(realDir: string): string {
         browser: { enabled_labs_experiments: [] },
         profile: { info_cache: {} },
       };
-      fs.writeFileSync(
-        path.join(wrapper, 'Local State'),
-        JSON.stringify(localState, null, 2),
-      );
+      fs.writeFileSync(path.join(wrapper, "Local State"), JSON.stringify(localState, null, 2));
       console.log(`✓ Created new profile at ${wrapper}`);
     }
   } catch (error) {
@@ -292,10 +236,10 @@ export function createWrapperDataDir(realDir: string): string {
  * real browser profile on the next run.
  */
 export function resetScraperProfile(): void {
-  const wrapper = path.join(getScraperHome(), 'profile');
+  const wrapper = path.join(getScraperHome(), "profile");
   if (fs.existsSync(wrapper)) {
     fs.rmSync(wrapper, { recursive: true });
-    console.log('✓ Scraper profile deleted — will be re-created on next run');
+    console.log("✓ Scraper profile deleted — will be re-created on next run");
   }
 }
 
@@ -308,7 +252,7 @@ export function saveCdpPort(port: number): void {
 /** Load a previously saved CDP port (0 if none). */
 export function loadCdpPort(): number {
   try {
-    const raw = fs.readFileSync(getPortFile(), 'utf8').trim();
+    const raw = fs.readFileSync(getPortFile(), "utf8").trim();
     return parseInt(raw, 10) || 0;
   } catch {
     return 0;
@@ -328,22 +272,20 @@ export const config: Config = {
   browser: {
     chromePath: detectBrowserPath(),
     userDataDir: createWrapperDataDir(detectUserDataDir(detectBrowserPath())),
-    timeout: parseInt(process.env.PAGE_TIMEOUT || '30000', 10),
-    debuggingPort: parseInt(process.env.DEBUGGING_PORT || '0', 10),
+    timeout: parseInt(process.env.PAGE_TIMEOUT || "30000", 10),
+    debuggingPort: parseInt(process.env.DEBUGGING_PORT || "0", 10),
   },
   scraping: {
     resultPerPage: 35,
-    maxRetries: parseInt(process.env.MAX_RETRIES || '5', 10),
-    rateLimit: parseInt(process.env.RATE_LIMIT || '1000', 10),
-    maxPages: process.env.MAX_PAGES
-      ? parseInt(process.env.MAX_PAGES, 10)
-      : undefined,
+    maxRetries: parseInt(process.env.MAX_RETRIES || "5", 10),
+    rateLimit: parseInt(process.env.RATE_LIMIT || "1000", 10),
+    maxPages: process.env.MAX_PAGES ? parseInt(process.env.MAX_PAGES, 10) : undefined,
   },
   output: {
-    directory: process.env.OUTPUT_DIR || './assets',
-    saveRawJson: process.env.SAVE_RAW === 'true',
+    directory: process.env.OUTPUT_DIR || "./assets",
+    saveRawJson: process.env.SAVE_RAW === "true",
   },
   api: {
-    baseUrl: 'https://www.leboncoin.fr',
+    baseUrl: "https://www.leboncoin.fr",
   },
 };

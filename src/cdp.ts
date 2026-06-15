@@ -4,7 +4,7 @@
  * Uses a raw WebSocket to communicate with a Chrome/Brave tab.
  * No Puppeteer, no automation flags, no bot-detection footprint.
  */
-import WebSocket from 'ws';
+import WebSocket from "ws";
 
 interface PendingCommand {
   resolve: (value: any) => void;
@@ -21,11 +21,11 @@ export class CDPClient {
   private constructor(ws: WebSocket) {
     this.ws = ws;
 
-    ws.on('message', (raw: Buffer) => {
+    ws.on("message", (raw: Buffer) => {
       const msg = JSON.parse(raw.toString());
 
       // Response to a command we sent
-      if ('id' in msg) {
+      if ("id" in msg) {
         const cb = this.pending.get(msg.id);
         if (cb) {
           if (cb.timer) clearTimeout(cb.timer);
@@ -40,14 +40,14 @@ export class CDPClient {
       }
 
       // Event from the browser
-      if ('method' in msg) {
+      if ("method" in msg) {
         const handlers = this.eventHandlers.get(msg.method);
         handlers?.forEach((fn) => fn(msg.params));
       }
     });
 
-    ws.on('close', () => {
-      this.pending.forEach((cb) => cb.reject(new Error('WebSocket closed')));
+    ws.on("close", () => {
+      this.pending.forEach((cb) => cb.reject(new Error("WebSocket closed")));
       this.pending.clear();
     });
   }
@@ -63,11 +63,11 @@ export class CDPClient {
         reject(new Error(`CDP connection timeout (${timeoutMs}ms)`));
       }, timeoutMs);
 
-      ws.once('open', () => {
+      ws.once("open", () => {
         clearTimeout(timer);
         resolve(new CDPClient(ws));
       });
-      ws.once('error', (err) => {
+      ws.once("error", (err) => {
         clearTimeout(timer);
         reject(err);
       });
@@ -77,11 +77,7 @@ export class CDPClient {
   /**
    * Send a CDP command and wait for the response.
    */
-  send(
-    method: string,
-    params: Record<string, any> = {},
-    timeoutMs = 60_000,
-  ): Promise<any> {
+  send(method: string, params: Record<string, any> = {}, timeoutMs = 60_000): Promise<any> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -134,17 +130,14 @@ export class CDPClient {
    * leboncoin's own frontend code.
    */
   async evaluate<T = any>(expression: string, awaitPromise = true): Promise<T> {
-    const result = await this.send('Runtime.evaluate', {
+    const result = await this.send("Runtime.evaluate", {
       expression,
       returnByValue: true,
       awaitPromise,
     });
 
     if (result.exceptionDetails) {
-      const desc =
-        result.exceptionDetails.exception?.description ||
-        result.exceptionDetails.text ||
-        'Evaluation failed';
+      const desc = result.exceptionDetails.exception?.description || result.exceptionDetails.text || "Evaluation failed";
       throw new Error(desc);
     }
 
@@ -157,7 +150,7 @@ export class CDPClient {
   disconnect(): void {
     this.pending.forEach((cb) => {
       if (cb.timer) clearTimeout(cb.timer);
-      cb.reject(new Error('Disconnected'));
+      cb.reject(new Error("Disconnected"));
     });
     this.pending.clear();
     this.ws.close();

@@ -40,12 +40,10 @@ export class Logger {
   progress(current: number, total: number, item?: string): void {
     const percent = Math.floor((current / total) * 100);
     const bar = this.createProgressBar(percent);
-    const itemInfo = item ? ` - ${item}` : '';
-    process.stdout.write(
-      `\r[${bar}] ${current}/${total} (${percent}%)${itemInfo}`,
-    );
+    const itemInfo = item ? ` - ${item}` : "";
+    process.stdout.write(`\r[${bar}] ${current}/${total} (${percent}%)${itemInfo}`);
     if (current === total) {
-      process.stdout.write('\n');
+      process.stdout.write("\n");
     }
   }
 
@@ -53,7 +51,7 @@ export class Logger {
     const total = 20;
     const filled = Math.floor((percent / 100) * total);
     const empty = total - filled;
-    return '█'.repeat(filled) + '░'.repeat(empty);
+    return "█".repeat(filled) + "░".repeat(empty);
   }
 }
 

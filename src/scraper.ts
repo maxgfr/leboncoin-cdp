@@ -15,14 +15,15 @@
  *   - All cookies (DataDome) are sent automatically via fetch()
  *   - No Puppeteer, no automation flags
  */
-import { CDPClient } from './cdp';
-import { waitForPageReady } from './browser';
-import { processSearchData, processAdData } from './exploit';
-import { config } from './config';
-import { logger } from './logger';
-import { delay } from './utils';
-import { buildQueryString, type NormalizedSearch } from './query';
-import type { Ad } from './types';
+import type { CDPClient } from "./cdp";
+import { waitForPageReady } from "./browser";
+import { processSearchData, processAdData } from "./exploit";
+import { config } from "./config";
+import { logger } from "./logger";
+import { delay } from "./utils";
+import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
+import { buildQueryString, type NormalizedSearch } from "./query";
+import type { Ad } from "./types";
 
 /** Hard ceiling on pages when the page doesn't expose max_pages (Leboncoin
  *  caps search pagination far below this; the guard just prevents runaways). */
@@ -57,16 +58,11 @@ async function extractNextDataFromDOM(cdp: CDPClient): Promise<FirstPageData> {
   );
 
   if (!result) {
-    throw new Error(
-      'Could not read __NEXT_DATA__ from the page. ' +
-        'The page may not have loaded correctly or a CAPTCHA may be blocking.',
-    );
+    throw new Error("Could not read __NEXT_DATA__ from the page. " + "The page may not have loaded correctly or a CAPTCHA may be blocking.");
   }
 
   if (!result.searchData) {
-    throw new Error(
-      'No searchData/searchResult in __NEXT_DATA__ — the page may not be a search results page.',
-    );
+    throw new Error("No searchData/searchResult in __NEXT_DATA__ — the page may not be a search results page.");
   }
 
   return result;
@@ -76,12 +72,7 @@ async function extractNextDataFromDOM(cdp: CDPClient): Promise<FirstPageData> {
  * Fetch a subsequent search page using the Next.js data route.
  * This mimics Next.js client-side navigation and returns JSON directly.
  */
-async function fetchNextDataRoute(
-  cdp: CDPClient,
-  buildId: string,
-  query: string,
-  page: number,
-): Promise<{ total: number; ads: any[] }> {
+async function fetchNextDataRoute(cdp: CDPClient, buildId: string, query: string, page: number): Promise<{ total: number; ads: any[] }> {
   const escapedBuildId = JSON.stringify(buildId);
   const escapedQuery = JSON.stringify(query);
 
@@ -106,14 +97,10 @@ async function fetchNextDataRoute(
 /**
  * Fetch ad detail using the Next.js data route.
  */
-async function fetchAdDataRoute(
-  cdp: CDPClient,
-  buildId: string,
-  adPath: string,
-): Promise<any> {
+async function fetchAdDataRoute(cdp: CDPClient, buildId: string, adPath: string): Promise<any> {
   const escapedBuildId = JSON.stringify(buildId);
   // adPath is e.g. "/ad/ventes_immobilieres/3138258318"
-  const jsonPath = adPath.replace(/\.htm$/, '') + '.json';
+  const jsonPath = adPath.replace(/\.htm$/, "") + ".json";
   const escapedPath = JSON.stringify(jsonPath);
 
   const result = await cdp.evaluate<any>(`(async () => {
@@ -135,58 +122,17 @@ async function fetchAdDataRoute(
 }
 
 /**
- * Handle CAPTCHA by waiting for the user to solve it.
- */
-async function waitForCaptchaResolution(cdp: CDPClient): Promise<void> {
-  logger.warn('CAPTCHA / bot challenge detected');
-  logger.warn('Please solve the CAPTCHA in the browser window…');
-  logger.info('Waiting up to 5 minutes…');
-
-  const start = Date.now();
-  while (Date.now() - start < 5 * 60 * 1_000) {
-    await delay(3_000);
-    try {
-      const clear = await cdp.evaluate<boolean>(
-        `window.location.hostname.includes('leboncoin.fr') && ` +
-          `!document.querySelector('iframe[src*="captcha"]') && ` +
-          `!document.querySelector('iframe[src*="datadome"]') && ` +
-          `!document.body.innerHTML.includes('geo.captcha-delivery')`,
-        false,
-      );
-      if (clear) {
-        logger.success('CAPTCHA resolved — resuming');
-        await delay(2_000);
-        return;
-      }
-    } catch {
-      // Page might be mid-navigation
-    }
-  }
-  throw new Error('CAPTCHA not solved within 5 minutes');
-}
-
-/**
  * Navigate to a URL, handling CAPTCHA if it appears.
  */
-async function navigateWithCaptchaHandling(
-  cdp: CDPClient,
-  url: string,
-): Promise<void> {
-  await cdp.send('Page.enable');
-  await cdp.send('Page.navigate', { url });
+async function navigateWithCaptchaHandling(cdp: CDPClient, url: string): Promise<void> {
+  await cdp.send("Page.enable");
+  await cdp.send("Page.navigate", { url });
   await waitForPageReady(cdp);
   await delay(2_000);
 
-  const onCaptcha = await cdp
-    .evaluate<boolean>(
-      `document.body.innerHTML.includes('geo.captcha-delivery') || ` +
-        `!!document.querySelector('iframe[src*="datadome"]')`,
-      false,
-    )
-    .catch(() => false);
-
-  if (onCaptcha) {
-    await waitForCaptchaResolution(cdp);
+  if (await isOnCaptcha(cdp)) {
+    const ok = await waitForCaptchaResolution(cdp);
+    if (!ok) throw new Error("CAPTCHA not solved within 5 minutes");
   }
 }
 
@@ -197,11 +143,8 @@ async function navigateWithCaptchaHandling(
  * (browser.ts navigated there). We read __NEXT_DATA__ from the DOM
  * for the first page, then use /_next/data routes for the rest.
  */
-export async function scrapeAllSearchPages(
-  cdp: CDPClient,
-  search: NormalizedSearch,
-): Promise<{ ads: Ad[]; buildId: string; query: string }> {
-  logger.startTask('Scraping search results');
+export async function scrapeAllSearchPages(cdp: CDPClient, search: NormalizedSearch): Promise<{ ads: Ad[]; buildId: string; query: string }> {
+  logger.startTask("Scraping search results");
 
   // First page: read from the already-loaded DOM
   let firstPage: FirstPageData;
@@ -210,7 +153,7 @@ export async function scrapeAllSearchPages(
   } catch (error: any) {
     // Maybe the page didn't load right — try navigating directly
     logger.warn(`First extraction failed: ${error.message}`);
-    logger.info('Re-navigating to search URL…');
+    logger.info("Re-navigating to search URL…");
     await navigateWithCaptchaHandling(cdp, search.navigateUrl);
     firstPage = await extractNextDataFromDOM(cdp);
   }
@@ -227,19 +170,11 @@ export async function scrapeAllSearchPages(
   // via --max-pages, and a misread total must never trigger millions of
   // requests.
   const totalPages = Math.ceil(first.total / config.scraping.resultPerPage);
-  const siteCap =
-    typeof searchData.max_pages === 'number' && searchData.max_pages > 0
-      ? searchData.max_pages
-      : FALLBACK_MAX_PAGES;
-  const userCap =
-    config.scraping.maxPages && config.scraping.maxPages > 0
-      ? config.scraping.maxPages
-      : Infinity;
+  const siteCap = typeof searchData.max_pages === "number" && searchData.max_pages > 0 ? searchData.max_pages : FALLBACK_MAX_PAGES;
+  const userCap = config.scraping.maxPages && config.scraping.maxPages > 0 ? config.scraping.maxPages : Infinity;
   const nbPages = Math.min(totalPages, siteCap, userCap);
 
-  logger.info(
-    `Found ${first.total} results across ${totalPages} pages (buildId: ${buildId})`,
-  );
+  logger.info(`Found ${first.total} results across ${totalPages} pages (buildId: ${buildId})`);
   logger.info(`Pagination query: ${query}`);
   if (nbPages < totalPages) {
     const reason =
@@ -259,14 +194,8 @@ export async function scrapeAllSearchPages(
       const page = processSearchData(pageData);
       allAds.push(...page.results);
     } catch (error: any) {
-      if (
-        error.message?.includes('BLOCKED') ||
-        error.message?.includes('CAPTCHA')
-      ) {
-        await navigateWithCaptchaHandling(
-          cdp,
-          `${config.api.baseUrl}/recherche?${query}&page=${i}`,
-        );
+      if (error.message?.includes("BLOCKED") || error.message?.includes("CAPTCHA")) {
+        await navigateWithCaptchaHandling(cdp, `${config.api.baseUrl}/recherche?${query}&page=${i}`);
         const retryData = await extractNextDataFromDOM(cdp);
         allAds.push(...processSearchData(retryData.searchData).results);
       } else {
@@ -283,11 +212,7 @@ export async function scrapeAllSearchPages(
 /**
  * Scrape individual ad detail pages via Next.js data routes.
  */
-export async function scrapeAdDetails(
-  cdp: CDPClient,
-  urls: string[],
-  buildId: string,
-): Promise<{ success: Ad[]; failed: { url: string; error: string }[] }> {
+export async function scrapeAdDetails(cdp: CDPClient, urls: string[], buildId: string): Promise<{ success: Ad[]; failed: { url: string; error: string }[] }> {
   logger.startTask(`Scraping ${urls.length} ad details`);
 
   const result: {
@@ -299,14 +224,11 @@ export async function scrapeAdDetails(
     logger.progress(i + 1, urls.length);
 
     try {
-      const urlPath = urls[i].replace(/^https?:\/\/[^/]+/, '');
+      const urlPath = urls[i].replace(/^https?:\/\/[^/]+/, "");
       const adData = await fetchAdDataRoute(cdp, buildId, urlPath);
       result.success.push(processAdData(adData));
     } catch (error: any) {
-      if (
-        error.message?.includes('BLOCKED') ||
-        error.message?.includes('CAPTCHA')
-      ) {
+      if (error.message?.includes("BLOCKED") || error.message?.includes("CAPTCHA")) {
         // Navigate to the ad page to clear CAPTCHA
         await navigateWithCaptchaHandling(cdp, urls[i]);
         try {
@@ -335,9 +257,7 @@ export async function scrapeAdDetails(
     }
 
     if (i < urls.length - 1) {
-      await delay(
-        config.scraping.rateLimit + Math.floor(Math.random() * 1_500),
-      );
+      await delay(config.scraping.rateLimit + Math.floor(Math.random() * 1_500));
     }
   }
 
