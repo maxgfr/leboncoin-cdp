@@ -203,12 +203,13 @@ function scaffoldAnnonce(dir, init = {}, opts = {}) {
     slug: path.basename(path.resolve(dir)),
     title: init.title ?? "",
     category: init.category ?? "",
-    price: 0,
-    zipcode: "",
-    attributes: {},
+    price: init.price ?? 0,
+    zipcode: init.zipcode ?? "",
+    condition: init.condition,
+    attributes: init.attributes ?? {},
     photos: [],
     status: "draft",
-    description: PLACEHOLDER_BODY
+    description: init.notes && init.notes.trim() ? init.notes.trim() : PLACEHOLDER_BODY
   };
   writeAnnonce(dir, a);
   return a;
@@ -219,7 +220,7 @@ function listPhotoFiles(dir) {
   return fs.readdirSync(pdir).filter((f) => PHOTO_EXTS.has(path.extname(f).toLowerCase())).sort();
 }
 function resolvePhotoPaths(dir, a) {
-  const names = a.photos && a.photos.length ? a.photos : listPhotoFiles(dir);
+  const names = a.photos?.length ? a.photos : listPhotoFiles(dir);
   return names.map((n) => path.resolve(dir, PHOTOS_DIRNAME, n));
 }
 function listAnnonces(root) {
@@ -4879,13 +4880,7 @@ var init_scrape = __esm({
   }
 });
 
-// src/comparables.ts
-var comparables_exports = {};
-__export(comparables_exports, {
-  runComparables: () => runComparables
-});
-import fs4 from "fs";
-import path5 from "path";
+// src/comparables-format.ts
 function buildQueryFromAnnonce(a) {
   const params = new URLSearchParams();
   if (a.title) params.set("text", a.title);
@@ -4920,6 +4915,19 @@ function digest(a, ads) {
   lines.push("");
   return lines.join("\n");
 }
+var init_comparables_format = __esm({
+  "src/comparables-format.ts"() {
+    "use strict";
+  }
+});
+
+// src/comparables.ts
+var comparables_exports = {};
+__export(comparables_exports, {
+  runComparables: () => runComparables
+});
+import fs4 from "fs";
+import path5 from "path";
 async function runComparables(annoncesDir, slug, opts = {}) {
   const dir = path5.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
@@ -4965,6 +4973,7 @@ var init_comparables = __esm({
   "src/comparables.ts"() {
     "use strict";
     init_browser();
+    init_comparables_format();
     init_config();
     init_logger();
     init_markdown();
@@ -5078,6 +5087,37 @@ var init_deposit_form = __esm({
   }
 });
 
+// src/screenshot.ts
+import { writeFileSync } from "fs";
+async function captureScreenshot(cdp, absPath) {
+  try {
+    await cdp.send("Page.enable").catch(() => {
+    });
+    const res = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+    const data = res?.data;
+    if (typeof data !== "string" || !data) return false;
+    writeFileSync(absPath, Buffer.from(data, "base64"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function savePageHtml(cdp, absPath) {
+  try {
+    const html = await cdp.evaluate("document.documentElement.outerHTML", false);
+    if (typeof html !== "string" || !html) return false;
+    writeFileSync(absPath, html);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var init_screenshot = __esm({
+  "src/screenshot.ts"() {
+    "use strict";
+  }
+});
+
 // src/selectors.ts
 var BASE_URL, DEPOSIT, MANAGE;
 var init_selectors = __esm({
@@ -5157,11 +5197,26 @@ async function defaultConnect(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
+async function readFormError(cdp) {
+  return cdp.evaluate(
+    `(() => {
+        const els = Array.from(document.querySelectorAll('[role="alert"], [class*="error" i], [data-qa-id*="error" i]'));
+        for (const el of els) {
+          const t = (el.innerText || el.textContent || '').trim();
+          if (t && el.offsetParent !== null && t.length > 0 && t.length < 200) return t;
+        }
+        return null;
+      })()`,
+    false
+  ).catch(() => null);
+}
 async function fillForm(cdp, a, photos) {
+  const fields = [];
+  let categoryFilled = false;
   if (a.category) {
     const catSel = await resolveSelector(cdp, DEPOSIT.categoryInput);
     if (catSel) {
-      await setInputValue(cdp, DEPOSIT.categoryInput, a.category);
+      categoryFilled = await setInputValue(cdp, DEPOSIT.categoryInput, a.category);
       await delay(1200);
       await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.category);
       await delay(1500);
@@ -5169,15 +5224,28 @@ async function fillForm(cdp, a, photos) {
       logger.warn("Category field not found \u2014 pick the category manually in the browser.");
     }
   }
-  if (!await setInputValue(cdp, DEPOSIT.titleInput, a.title)) logger.warn("Could not fill the title field.");
-  if (!await setInputValue(cdp, DEPOSIT.descTextarea, a.description)) logger.warn("Could not fill the description field.");
-  if (!await setInputValue(cdp, DEPOSIT.priceInput, String(a.price))) logger.warn("Could not fill the price field.");
+  fields.push({ field: "category", required: true, hasValue: !!a.category, filled: categoryFilled });
+  const fillText = async (field, required, value, candidates) => {
+    if (!value) {
+      fields.push({ field, required, hasValue: false, filled: false });
+      return;
+    }
+    const filled = await setInputValue(cdp, candidates, value);
+    if (!filled) logger.warn(`Could not fill the ${field} field.`);
+    fields.push({ field, required, hasValue: true, filled });
+  };
+  await fillText("title", true, a.title, DEPOSIT.titleInput);
+  await fillText("description", true, a.description, DEPOSIT.descTextarea);
+  await fillText("price", true, a.price > 0 ? String(a.price) : "", DEPOSIT.priceInput);
+  let zipFilled = false;
   if (a.zipcode) {
-    if (await setInputValue(cdp, DEPOSIT.zipcodeInput, a.zipcode)) {
+    zipFilled = await setInputValue(cdp, DEPOSIT.zipcodeInput, a.zipcode);
+    if (zipFilled) {
       await delay(1200);
       await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.city ?? a.zipcode);
     }
   }
+  fields.push({ field: "zipcode", required: true, hasValue: !!a.zipcode, filled: zipFilled });
   if (a.condition) await setInputValue(cdp, DEPOSIT.attrByKey("condition"), a.condition);
   for (const [key, value] of Object.entries(a.attributes ?? {})) {
     const ok = await setInputValue(cdp, DEPOSIT.attrByKey(key), String(value));
@@ -5192,6 +5260,24 @@ async function fillForm(cdp, a, photos) {
   if (uploaded === 0) logger.warn("Could not upload photos automatically \u2014 add them manually in the browser.");
   else logger.info(`Uploaded ${uploaded}/${photos.length} photo(s).`);
   await delay(1500);
+  const missing = [];
+  for (const f of fields) {
+    if (!f.required) continue;
+    if (!f.hasValue) missing.push(`${f.field} (missing in annonce)`);
+    else if (!f.filled) missing.push(`${f.field} (form field not found)`);
+  }
+  if (uploaded < photos.length) missing.push(`photos (${uploaded}/${photos.length} uploaded)`);
+  return { fields, missing, uploadedPhotos: uploaded, expectedPhotos: photos.length };
+}
+function logFillReport(r) {
+  logger.info("Field resolution:");
+  for (const f of r.fields) {
+    const mark = f.filled ? "\u2713" : f.hasValue ? "\u2717" : "\u2014";
+    const note = !f.hasValue ? " [no value in annonce]" : !f.filled ? " [form field not found]" : "";
+    logger.info(`  ${mark} ${f.field}${f.required ? "" : " (optional)"}${note}`);
+  }
+  logger.info(`  ${r.uploadedPhotos === r.expectedPhotos ? "\u2713" : "\u2717"} photos: ${r.uploadedPhotos}/${r.expectedPhotos}`);
+  if (r.missing.length) logger.warn(`Ask the user about: ${r.missing.join(", ")}`);
 }
 async function waitForPublished(cdp, timeoutMs) {
   const start = Date.now();
@@ -5240,22 +5326,49 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
       return { ok: false, reason: "login-required" };
     }
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
-    await fillForm(cdp, a, photos);
+    const report = await fillForm(cdp, a, photos);
+    if (opts.screenshot !== false) {
+      const png = path6.join(dir, "publish-preview.png");
+      if (await captureScreenshot(cdp, png)) {
+        report.previewPng = png;
+        logger.info(`Saved form screenshot \u2192 ${png} (read it to verify before submitting)`);
+      }
+    }
+    if (opts.diagnostic) {
+      const htmlPath = path6.join(dir, "publish-preview.html");
+      if (await savePageHtml(cdp, htmlPath)) report.previewHtml = htmlPath;
+      logFillReport(report);
+      logger.info("Diagnostic \u2014 nothing submitted.");
+      return { ok: false, reason: "diagnostic", report, missing: report.missing };
+    }
+    if (opts.strict && report.missing.length) {
+      logger.error(`Strict mode: ${report.missing.length} required field(s) unresolved/missing \u2014 not submitting:`);
+      for (const m of report.missing) logger.error(`  - ${m}`);
+      return { ok: false, reason: "incomplete", report, missing: report.missing };
+    }
     if (opts.dryRun) {
+      logFillReport(report);
       logger.info("Dry run \u2014 form filled, nothing submitted.");
-      return { ok: false, reason: "dry-run" };
+      return { ok: false, reason: "dry-run", report, missing: report.missing };
     }
     if (opts.yes) {
       logger.info("Auto-submitting (--yes)\u2026");
       await clickButton(cdp, DEPOSIT.publishButton);
+      await delay(1500);
+      const err = await readFormError(cdp);
+      if (err) {
+        logger.error(`Leboncoin rejected the form: ${err}`);
+        return { ok: false, reason: "form-error", error: err, report, missing: report.missing };
+      }
     } else {
+      if (report.missing.length) logger.warn(`Before submitting, check: ${report.missing.join(", ")}`);
       logger.warn("Form prefilled. Review it in the browser and click \xAB D\xE9poser mon annonce \xBB yourself.");
       logger.info("Waiting for you to publish\u2026");
     }
     const published = await waitForPublished(cdp, opts.timeoutSubmitMs ?? DEFAULT_SUBMIT_TIMEOUT_MS);
     if (!published) {
       logger.warn("Did not detect a published ad before the timeout.");
-      return { ok: false, reason: "not-published" };
+      return { ok: false, reason: "not-published", report, missing: report.missing };
     }
     a.status = "published";
     a.leboncoin_url = published.url;
@@ -5263,7 +5376,7 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
     a.published_at = (/* @__PURE__ */ new Date()).toISOString();
     writeAnnonce(dir, a);
     logger.success(`Published: ${published.url}`);
-    return { ok: true, leboncoin_id: published.id || void 0, leboncoin_url: published.url };
+    return { ok: true, leboncoin_id: published.id || void 0, leboncoin_url: published.url, report };
   } finally {
     cdp.disconnect();
   }
@@ -5276,6 +5389,7 @@ var init_publish = __esm({
     init_deposit_form();
     init_logger();
     init_markdown();
+    init_screenshot();
     init_selectors();
     init_utils();
     DEFAULT_SUBMIT_TIMEOUT_MS = 15 * 60 * 1e3;
@@ -5365,7 +5479,19 @@ function runNew(annoncesDir, slug, opts = {}) {
     throw new Error(`invalid slug "${slug ?? ""}" \u2014 use letters, digits, dash or underscore (e.g. macbook-air-m1)`);
   }
   const dir = path2.join(annoncesDir, slug);
-  scaffoldAnnonce(dir, { title: opts.title, category: opts.category }, { force: opts.force });
+  scaffoldAnnonce(
+    dir,
+    {
+      title: opts.title,
+      category: opts.category,
+      notes: opts.notes,
+      price: opts.price,
+      zipcode: opts.zipcode,
+      condition: opts.condition,
+      attributes: opts.attributes
+    },
+    { force: opts.force }
+  );
   return { slug, dir, markdown: path2.join(dir, "annonce.md") };
 }
 function runList(annoncesDir, filterStatus) {
@@ -5383,17 +5509,23 @@ function runList(annoncesDir, filterStatus) {
 init_markdown();
 import path3 from "path";
 var PLACEHOLDER_RE = /fill this in|décris ton article ici|lorem ipsum/i;
+var TITLE_MAX = 100;
+var DESC_MAX = 4e3;
+var PHOTOS_MAX = 25;
 function validateAnnonce(dir) {
   const slug = path3.basename(path3.resolve(dir));
   let a;
   try {
     a = parseAnnonce(dir);
   } catch (e) {
-    return { ok: false, slug, issues: [{ field: "file", message: e.message }] };
+    return { ok: false, slug, issues: [{ field: "file", message: e.message }], warnings: [] };
   }
   const issues = [];
-  if (!a.title.trim()) issues.push({ field: "title", message: "title is required" });
-  else if (a.title.trim().length < 5) issues.push({ field: "title", message: "title is too short (min 5 chars)" });
+  const warnings = [];
+  const title = a.title.trim();
+  if (!title) issues.push({ field: "title", message: "title is required" });
+  else if (title.length < 5) issues.push({ field: "title", message: "title is too short (min 5 chars)" });
+  else if (title.length > TITLE_MAX) warnings.push({ field: "title", message: `title is long (${title.length} > ${TITLE_MAX}); Leboncoin may truncate it` });
   if (!a.category.trim()) issues.push({ field: "category", message: "category is required" });
   if (!Number.isFinite(a.price) || a.price <= 0) {
     issues.push({ field: "price", message: "price must be a positive number" });
@@ -5404,6 +5536,8 @@ function validateAnnonce(dir) {
   const photos = listPhotoFiles(dir);
   if (photos.length === 0) {
     issues.push({ field: "photos", message: "at least one photo is required in photos/" });
+  } else if (photos.length > PHOTOS_MAX) {
+    warnings.push({ field: "photos", message: `${photos.length} photos; Leboncoin caps around ${PHOTOS_MAX} \u2014 the extras may be ignored` });
   }
   for (const p of a.photos) {
     if (!photos.includes(p)) {
@@ -5415,16 +5549,22 @@ function validateAnnonce(dir) {
     issues.push({ field: "description", message: "description body is empty or still a placeholder" });
   } else if (body.length < 20) {
     issues.push({ field: "description", message: "description is too short (min 20 chars)" });
+  } else if (body.length > DESC_MAX) {
+    warnings.push({ field: "description", message: `description is long (${body.length} > ${DESC_MAX}); Leboncoin may reject or truncate it` });
   }
   if (a.status !== "draft") {
     issues.push({ field: "status", message: `status must be "draft" to publish (is "${a.status}")` });
   }
-  return { ok: issues.length === 0, slug, issues };
+  return { ok: issues.length === 0, slug, issues, warnings };
 }
 function formatValidationReport(r) {
-  if (r.ok) return `\u2713 ${r.slug}: valid \u2014 ready to publish`;
-  const lines = [`\u2717 ${r.slug}: ${r.issues.length} issue(s)`];
-  for (const i of r.issues) lines.push(`  - [${i.field}] ${i.message}`);
+  const lines = [];
+  if (r.ok) lines.push(`\u2713 ${r.slug}: valid \u2014 ready to publish`);
+  else {
+    lines.push(`\u2717 ${r.slug}: ${r.issues.length} issue(s)`);
+    for (const i of r.issues) lines.push(`  - [${i.field}] ${i.message}`);
+  }
+  for (const w of r.warnings) lines.push(`  \u26A0 [${w.field}] ${w.message}`);
   return lines.join("\n");
 }
 
@@ -5438,20 +5578,24 @@ them on your own account via the Chrome DevTools Protocol. Markdown is the sourc
 of truth; you (or the agent) write the copy, the engine just drives the browser.
 
 Usage:
-  leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--force]
+  leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
+                       [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
   leboncoin validate <slug>
-  leboncoin publish <slug> [--yes] [--dry-run] [--timeout-submit <ms>]
+  leboncoin publish <slug> [--diagnostic] [--strict] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
   leboncoin delete <slug> [--yes]
   leboncoin list [--status draft|published|deleted]
   leboncoin scrape --query "<query|url>" [scraper options]
 
 Commands:
-  new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft).
+  new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
-  publish       Open the deposit form, fill it + upload photos via CDP. Semi-auto by
-                default: review and click \xAB D\xE9poser mon annonce \xBB yourself. --yes to auto-submit.
+  publish       Open the deposit form, fill it + upload photos via CDP, save a preview
+                screenshot (read it to verify). Semi-auto by default: review and click
+                \xAB D\xE9poser mon annonce \xBB yourself. --diagnostic = fill + screenshot + HTML +
+                field report, no submit. --strict = refuse to submit while fields are missing.
+                --yes = auto-submit. --no-screenshot to skip the capture.
   delete        Remove a published ad (confirms unless --yes).
   list/status   Show local annonces and their published state.
   scrape        The original read-only scraper (search results + ad details).
@@ -5483,10 +5627,28 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "output-dir",
   "title",
   "category",
+  "notes",
+  "price",
+  "zipcode",
+  "condition",
+  "attributes",
   "status",
   "timeout-submit"
 ]);
-var BOOL_FLAGS = /* @__PURE__ */ new Set(["json", "with-details", "details-only", "search-only", "save-raw", "reset-profile", "yes", "dry-run", "force"]);
+var BOOL_FLAGS = /* @__PURE__ */ new Set([
+  "json",
+  "with-details",
+  "details-only",
+  "search-only",
+  "save-raw",
+  "reset-profile",
+  "yes",
+  "dry-run",
+  "diagnostic",
+  "strict",
+  "no-screenshot",
+  "force"
+]);
 var SHORT = {
   q: "query",
   o: "output",
@@ -5565,6 +5727,18 @@ function intOf(raw) {
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) ? n : void 0;
 }
+function parseAttributes(raw) {
+  if (!raw) return void 0;
+  const out = {};
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    const k = pair.slice(0, eq).trim();
+    const v = pair.slice(eq + 1).trim();
+    if (k) out[k] = v;
+  }
+  return Object.keys(out).length ? out : void 0;
+}
 function requireSlug(p) {
   const slug = p.positional[0];
   if (!slug) fail(`missing <slug> (e.g. leboncoin ${p.command} macbook-air-m1)`);
@@ -5579,6 +5753,11 @@ async function main() {
       const r = runNew(annoncesDirOf(p), slug, {
         title: p.values.title,
         category: p.values.category,
+        notes: p.values.notes,
+        price: intOf(p.values.price),
+        zipcode: p.values.zipcode,
+        condition: p.values.condition,
+        attributes: parseAttributes(p.values.attributes),
         force: p.bools.has("force")
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
@@ -5656,11 +5835,19 @@ async function main() {
       const r = await runPublish2(annoncesDirOf(p), slug, {
         yes: p.bools.has("yes"),
         dryRun: p.bools.has("dry-run"),
+        diagnostic: p.bools.has("diagnostic"),
+        strict: p.bools.has("strict"),
+        screenshot: !p.bools.has("no-screenshot"),
         timeoutSubmitMs: intOf(p.values["timeout-submit"])
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
-      if (!r.ok && r.reason === "login-required") process.exit(2);
-      if (!r.ok && r.reason === "not-published") process.exit(2);
+      else if (r.missing && r.missing.length) {
+        process.stderr.write(`leboncoin: ask the user about \u2192 ${r.missing.join(", ")}
+`);
+      }
+      if (!r.ok && ["login-required", "not-published", "incomplete", "form-error"].includes(r.reason ?? "")) {
+        process.exit(2);
+      }
       return;
     }
     case "delete": {

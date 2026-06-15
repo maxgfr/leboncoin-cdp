@@ -39,8 +39,20 @@ judgment in `comparables.md` whenever possible.
   directory.
 - Suggest the user add a clear, well-lit main shot if the thumbnail would be weak.
 
-## 5. Then validate → publish
+## 5. Ask the user for anything missing
 
-- `validate <slug>` and fix each issue before publishing.
-- At `publish`, in semi-auto (default) tell the user to **review the prefilled form and
-  click « Déposer mon annonce »**. Only use `--yes` if they explicitly asked.
+You don't always have every fact. If the annonce is missing a required field — zipcode,
+exact model/year, condition, price — **ask the user** and write the answer into `annonce.md`.
+Never invent it and never publish a blank field. Two signals tell you what's missing:
+- `validate <slug>` issues (hard requirements), and
+- `publish <slug> --diagnostic` → its `missing[]` (fields empty in the annonce or that didn't
+  resolve on the live form). In normal `publish`, the CLI also prints `ask the user about → …`.
+
+## 6. Then validate → publish (verify with the screenshot)
+
+- `validate <slug>` and fix each issue (warnings are advisory).
+- `publish <slug>` fills the form and saves `annonces/<slug>/publish-preview.png` — **Read
+  that screenshot** to confirm the form looks right before anyone submits. For a deeper look
+  (which selector matched each field + the page HTML), use `publish <slug> --diagnostic`.
+- In semi-auto (default) tell the user to **review the prefilled form and click
+  « Déposer mon annonce »**. Only use `--yes` if they explicitly asked for full-auto.
