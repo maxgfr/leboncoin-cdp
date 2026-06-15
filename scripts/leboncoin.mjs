@@ -5569,7 +5569,7 @@ function formatValidationReport(r) {
 }
 
 // src/types.ts
-var VERSION = "1.0.0";
+var VERSION = "1.1.0";
 
 // src/cli.ts
 var HELP = `leboncoin v${VERSION}

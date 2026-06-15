@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+# [1.1.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.0.0...v1.1.0) (2026-06-15)
+
+
+### Features
+
+* publish diagnostics — screenshot + field report, ask-when-missing, intake flags ([c9cc952](https://github.com/maxgfr/leboncoin-cdp/commit/c9cc9528f3ef16348ae4925559e9b479e3eb9a2e))
+
 # 1.0.0 (2026-06-15)
 
 
