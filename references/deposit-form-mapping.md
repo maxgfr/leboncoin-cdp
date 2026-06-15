@@ -41,11 +41,13 @@ case-insensitive), then by CSS fallback. URL recognition uses regex lists:
 
 ## Runbook — when publishing breaks
 
-1. Run `publish <slug> --dry-run` and watch the browser + the warnings ("Could not fill
-   the X field", "Attribute … could not be set"). Each warning points at a stale candidate.
-2. In the opened deposit form, DevTools → inspect the offending field. Find a **stable**
-   selector (prefer `name`, `data-qa-id`, `data-testid`, `aria-label`; avoid hashed class
-   names).
+1. Run `publish <slug> --diagnostic` (or `--dry-run`). It fills what it can, **saves
+   `annonces/<slug>/publish-preview.png` and `publish-preview.html`**, and prints a
+   field-by-field report (`✓`/`✗`/`—` per field + `missing[]`). The `✗` fields and the saved
+   HTML are exactly what you need to author selectors offline.
+2. Inspect `publish-preview.html` (or the live form in DevTools) for each `✗` field. Find a
+   **stable** selector (prefer `name`, `data-qa-id`, `data-testid`, `aria-label`; avoid hashed
+   class names).
 3. Add it to the **front** of that field's candidate array in `src/selectors.ts`. Keep the
    old ones as fallbacks.
 4. If a published URL stops yielding an id, update `DEPOSIT.publishedUrlPattern` (capture

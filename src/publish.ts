@@ -1,9 +1,15 @@
 /**
  * The CDP publish engine. Opens the deposit form on the logged-in stealth
- * profile, fills every field + uploads photos, then (semi-auto, the default)
- * waits for the user to review and click « Déposer mon annonce » — which also
- * clears DataDome at submit. `--yes` clicks publish automatically. On success it
- * captures the new ad's list_id/URL and writes them back to the annonce.
+ * profile, fills every field + uploads photos, captures a screenshot the agent
+ * can review, then (semi-auto, the default) waits for the user to review and
+ * click « Déposer mon annonce » — which also clears DataDome at submit. `--yes`
+ * clicks publish automatically. On success it captures the new ad's list_id/URL
+ * and writes them back to the annonce.
+ *
+ * fillForm returns a FillReport (which fields resolved/were filled, and what is
+ * missing) so the agent can ask the user for the gaps. `--diagnostic` saves the
+ * screenshot + page HTML + prints the report without submitting; `--strict`
+ * refuses to submit while required fields are unresolved/missing.
  *
  * The browser connection is injected via `deps.connect` so tests exercise the
  * full flow against a fake CDP client with no browser and no config side effects
@@ -15,6 +21,7 @@ import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
 import { clickButton, currentUrl, firstAdLink, pickSuggestion, resolveSelector, setInputValue, uploadPhotos } from "./deposit-form";
 import { logger } from "./logger";
 import { parseAnnonce, resolvePhotoPaths, writeAnnonce } from "./markdown";
+import { captureScreenshot, savePageHtml } from "./screenshot";
 import { DEPOSIT } from "./selectors";
 import type { Annonce } from "./types";
 import { delay } from "./utils";
@@ -24,6 +31,12 @@ export interface PublishOptions {
   yes?: boolean;
   /** Fill the form but submit nothing (debug the field mapping). */
   dryRun?: boolean;
+  /** Fill + screenshot + save HTML + print the field report; submit nothing. */
+  diagnostic?: boolean;
+  /** Refuse to submit while any required field is unresolved/missing. */
+  strict?: boolean;
+  /** Capture a preview screenshot after filling (default true). */
+  screenshot?: boolean;
   /** Max wait for the published ad to appear (default 15 min). */
   timeoutSubmitMs?: number;
 }
@@ -32,11 +45,35 @@ export interface PublishDeps {
   connect: (url: string) => Promise<CDPClient>;
 }
 
+export interface FieldFill {
+  field: string;
+  required: boolean;
+  /** The annonce provided a value for this field. */
+  hasValue: boolean;
+  /** The value was successfully placed into the form. */
+  filled: boolean;
+}
+
+export interface FillReport {
+  fields: FieldFill[];
+  /** Required fields the agent should ask the user about (empty in the annonce, or the form field wasn't found). */
+  missing: string[];
+  uploadedPhotos: number;
+  expectedPhotos: number;
+  /** Where the preview screenshot/HTML were saved (if any). */
+  previewPng?: string;
+  previewHtml?: string;
+}
+
 export interface PublishResult {
   ok: boolean;
   leboncoin_id?: string;
   leboncoin_url?: string;
-  reason?: "login-required" | "dry-run" | "not-published";
+  reason?: "login-required" | "dry-run" | "diagnostic" | "incomplete" | "not-published" | "form-error";
+  /** Required fields still missing/unresolved (so the agent can ask the user). */
+  missing?: string[];
+  report?: FillReport;
+  error?: string;
 }
 
 const DEFAULT_SUBMIT_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -46,14 +83,34 @@ async function defaultConnect(url: string): Promise<CDPClient> {
   return connectAndNavigate(url);
 }
 
-/** Fill the entire deposit form from the annonce (best-effort, never throws). */
-async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<void> {
+/** Read a visible form-error message off the page, if any (best-effort). */
+async function readFormError(cdp: CDPClient): Promise<string | null> {
+  return cdp
+    .evaluate<string | null>(
+      `(() => {
+        const els = Array.from(document.querySelectorAll('[role="alert"], [class*="error" i], [data-qa-id*="error" i]'));
+        for (const el of els) {
+          const t = (el.innerText || el.textContent || '').trim();
+          if (t && el.offsetParent !== null && t.length > 0 && t.length < 200) return t;
+        }
+        return null;
+      })()`,
+      false,
+    )
+    .catch(() => null);
+}
+
+/** Fill the entire deposit form from the annonce (best-effort, never throws). Returns a FillReport. */
+async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<FillReport> {
+  const fields: FieldFill[] = [];
+
   // 1. Category first — choosing it mutates the rest of the form, so later
   //    selectors must be resolved AFTER this step.
+  let categoryFilled = false;
   if (a.category) {
     const catSel = await resolveSelector(cdp, DEPOSIT.categoryInput);
     if (catSel) {
-      await setInputValue(cdp, DEPOSIT.categoryInput, a.category);
+      categoryFilled = await setInputValue(cdp, DEPOSIT.categoryInput, a.category);
       await delay(1_200);
       await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.category);
       await delay(1_500);
@@ -61,21 +118,35 @@ async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<v
       logger.warn("Category field not found — pick the category manually in the browser.");
     }
   }
+  fields.push({ field: "category", required: true, hasValue: !!a.category, filled: categoryFilled });
 
   // 2. Core text fields.
-  if (!(await setInputValue(cdp, DEPOSIT.titleInput, a.title))) logger.warn("Could not fill the title field.");
-  if (!(await setInputValue(cdp, DEPOSIT.descTextarea, a.description))) logger.warn("Could not fill the description field.");
-  if (!(await setInputValue(cdp, DEPOSIT.priceInput, String(a.price)))) logger.warn("Could not fill the price field.");
+  const fillText = async (field: string, required: boolean, value: string, candidates: string[]): Promise<void> => {
+    if (!value) {
+      fields.push({ field, required, hasValue: false, filled: false });
+      return;
+    }
+    const filled = await setInputValue(cdp, candidates, value);
+    if (!filled) logger.warn(`Could not fill the ${field} field.`);
+    fields.push({ field, required, hasValue: true, filled });
+  };
+
+  await fillText("title", true, a.title, DEPOSIT.titleInput);
+  await fillText("description", true, a.description, DEPOSIT.descTextarea);
+  await fillText("price", true, a.price > 0 ? String(a.price) : "", DEPOSIT.priceInput);
 
   // 3. Location (zipcode → pick the city suggestion).
+  let zipFilled = false;
   if (a.zipcode) {
-    if (await setInputValue(cdp, DEPOSIT.zipcodeInput, a.zipcode)) {
+    zipFilled = await setInputValue(cdp, DEPOSIT.zipcodeInput, a.zipcode);
+    if (zipFilled) {
       await delay(1_200);
       await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.city ?? a.zipcode);
     }
   }
+  fields.push({ field: "zipcode", required: true, hasValue: !!a.zipcode, filled: zipFilled });
 
-  // 4. Condition + category-specific attributes (unknown keys are logged, never fatal).
+  // 4. Condition + category-specific attributes (optional; unknown keys logged, never fatal).
   if (a.condition) await setInputValue(cdp, DEPOSIT.attrByKey("condition"), a.condition);
   for (const [key, value] of Object.entries(a.attributes ?? {})) {
     const ok = await setInputValue(cdp, DEPOSIT.attrByKey(key), String(value));
@@ -85,7 +156,6 @@ async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<v
   // 5. Photos (the one CDP DOM-domain operation).
   let uploaded = await uploadPhotos(cdp, DEPOSIT.photoFileInput, photos);
   if (uploaded < photos.length) {
-    // The real <input type=file> may be mounted only after clicking an "add" control.
     await clickButton(cdp, DEPOSIT.photoAddButton);
     await delay(800);
     uploaded = await uploadPhotos(cdp, DEPOSIT.photoFileInput, photos);
@@ -93,6 +163,27 @@ async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<v
   if (uploaded === 0) logger.warn("Could not upload photos automatically — add them manually in the browser.");
   else logger.info(`Uploaded ${uploaded}/${photos.length} photo(s).`);
   await delay(1_500); // let thumbnails render
+
+  const missing: string[] = [];
+  for (const f of fields) {
+    if (!f.required) continue;
+    if (!f.hasValue) missing.push(`${f.field} (missing in annonce)`);
+    else if (!f.filled) missing.push(`${f.field} (form field not found)`);
+  }
+  if (uploaded < photos.length) missing.push(`photos (${uploaded}/${photos.length} uploaded)`);
+
+  return { fields, missing, uploadedPhotos: uploaded, expectedPhotos: photos.length };
+}
+
+function logFillReport(r: FillReport): void {
+  logger.info("Field resolution:");
+  for (const f of r.fields) {
+    const mark = f.filled ? "✓" : f.hasValue ? "✗" : "—";
+    const note = !f.hasValue ? " [no value in annonce]" : !f.filled ? " [form field not found]" : "";
+    logger.info(`  ${mark} ${f.field}${f.required ? "" : " (optional)"}${note}`);
+  }
+  logger.info(`  ${r.uploadedPhotos === r.expectedPhotos ? "✓" : "✗"} photos: ${r.uploadedPhotos}/${r.expectedPhotos}`);
+  if (r.missing.length) logger.warn(`Ask the user about: ${r.missing.join(", ")}`);
 }
 
 /** Poll the page until a published-ad URL appears (or timeout). */
@@ -146,17 +237,48 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
     }
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
 
-    await fillForm(cdp, a, photos);
+    const report = await fillForm(cdp, a, photos);
+
+    // Preview screenshot (default on) so the agent can SEE the prefilled form.
+    if (opts.screenshot !== false) {
+      const png = path.join(dir, "publish-preview.png");
+      if (await captureScreenshot(cdp, png)) {
+        report.previewPng = png;
+        logger.info(`Saved form screenshot → ${png} (read it to verify before submitting)`);
+      }
+    }
+
+    if (opts.diagnostic) {
+      const htmlPath = path.join(dir, "publish-preview.html");
+      if (await savePageHtml(cdp, htmlPath)) report.previewHtml = htmlPath;
+      logFillReport(report);
+      logger.info("Diagnostic — nothing submitted.");
+      return { ok: false, reason: "diagnostic", report, missing: report.missing };
+    }
+
+    if (opts.strict && report.missing.length) {
+      logger.error(`Strict mode: ${report.missing.length} required field(s) unresolved/missing — not submitting:`);
+      for (const m of report.missing) logger.error(`  - ${m}`);
+      return { ok: false, reason: "incomplete", report, missing: report.missing };
+    }
 
     if (opts.dryRun) {
+      logFillReport(report);
       logger.info("Dry run — form filled, nothing submitted.");
-      return { ok: false, reason: "dry-run" };
+      return { ok: false, reason: "dry-run", report, missing: report.missing };
     }
 
     if (opts.yes) {
       logger.info("Auto-submitting (--yes)…");
       await clickButton(cdp, DEPOSIT.publishButton);
+      await delay(1_500);
+      const err = await readFormError(cdp);
+      if (err) {
+        logger.error(`Leboncoin rejected the form: ${err}`);
+        return { ok: false, reason: "form-error", error: err, report, missing: report.missing };
+      }
     } else {
+      if (report.missing.length) logger.warn(`Before submitting, check: ${report.missing.join(", ")}`);
       logger.warn("Form prefilled. Review it in the browser and click « Déposer mon annonce » yourself.");
       logger.info("Waiting for you to publish…");
     }
@@ -164,7 +286,7 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
     const published = await waitForPublished(cdp, opts.timeoutSubmitMs ?? DEFAULT_SUBMIT_TIMEOUT_MS);
     if (!published) {
       logger.warn("Did not detect a published ad before the timeout.");
-      return { ok: false, reason: "not-published" };
+      return { ok: false, reason: "not-published", report, missing: report.missing };
     }
 
     a.status = "published";
@@ -173,7 +295,7 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
     a.published_at = new Date().toISOString();
     writeAnnonce(dir, a);
     logger.success(`Published: ${published.url}`);
-    return { ok: true, leboncoin_id: published.id || undefined, leboncoin_url: published.url };
+    return { ok: true, leboncoin_id: published.id || undefined, leboncoin_url: published.url, report };
   } finally {
     cdp.disconnect();
   }

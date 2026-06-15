@@ -25,6 +25,10 @@ flags and DataDome sees a normal browser.
   captcha at submit.
 - **These actions hit the user's real account.** Confirm intent before publishing or
   deleting. `delete` asks for a y/N confirmation unless `--yes`.
+- **Verify with the screenshot; ask when unsure.** `publish` saves
+  `annonces/<slug>/publish-preview.png` of the prefilled form — **Read that PNG** to confirm
+  visually before the human submits. If required info is missing (the CLI prints
+  `ask the user about → …`), ask the user and fix `annonce.md` rather than publishing a blank.
 
 ## The script (zero install — just `node`)
 
@@ -34,10 +38,10 @@ node scripts/leboncoin.mjs <command> [options]
 
 | Command | What it does |
 |---|---|
-| `new <slug>` | Scaffold `annonces/<slug>/annonce.md` + `photos/` (a draft). |
+| `new <slug>` | Scaffold `annonces/<slug>/annonce.md` + `photos/`. `--notes`/`--price`/`--zipcode`/`--condition`/`--attributes` prefill it. |
 | `comparables <slug>` | Scrape similar live listings → `comparables.json` + `comparables.md` (price/keyword/attribute grounding). |
-| `validate <slug>` | Structural gate: required fields, ≥1 photo, real description, `status: draft`. Exit ≠ 0 if invalid. |
-| `publish <slug>` | Open the deposit form, fill it + upload photos via CDP. Semi-auto; `--yes` auto-submits, `--dry-run` fills only. |
+| `validate <slug>` | Structural gate: required fields, ≥1 photo, real description, `status: draft`. Exit ≠ 0 if invalid (warnings are advisory). |
+| `publish <slug>` | Fill the deposit form + upload photos via CDP, save a preview screenshot. Semi-auto; `--diagnostic` (field report + HTML, no submit), `--strict`, `--yes`, `--no-screenshot`. |
 | `delete <slug>` | Remove a published ad (confirms unless `--yes`). |
 | `list` / `status` | Show local annonces and their published state. |
 | `scrape` | The original read-only scraper (search results + ad details). |
@@ -47,20 +51,25 @@ Full reference: `references/cli.md`.
 
 ## Workflow
 
-1. **Create** — `node scripts/leboncoin.mjs new <slug> --title "<t>" --category "<c>"`.
-   Drop the user's photos into `annonces/<slug>/photos/`.
-2. **Write the copy** — the user gives a rough description + photos. You improve it:
-   write a clear, honest description into the markdown body. This is *your* judgment,
-   not the CLI's. See `references/enrichment-playbook.md`.
-3. **Ground it** — `comparables <slug>` (reuses the scraper). Read
-   `annonces/<slug>/comparables.md`, then set `price`, `category` and the
-   category-specific `attributes` in `annonce.md` based on what comparable ads show.
-4. **Validate** — `validate <slug>` until it passes (fix each reported issue).
-5. **Publish** — `publish <slug>`. Tell the user: *review the prefilled form in the
-   browser and click « Déposer mon annonce »*. Do **not** use `--yes` unless the user
-   asked for full-auto. On success the new ad's id/URL are written back into
-   `annonce.md` and `status` becomes `published`.
-6. **Delete** when needed — `delete <slug>` (uses the stored id).
+1. **Create** — `new <slug> --title "<t>" --category "<c>" --notes "<rough description>"`.
+   `--notes` seeds the body; you can also pass `--price`, `--zipcode`, `--condition`,
+   `--attributes "k=v,k2=v2"`. Drop the user's photos into `annonces/<slug>/photos/`.
+2. **Write the copy** — the user gives rough notes + photos. You improve the description
+   into the markdown body (honest, specific). This is *your* judgment, not the CLI's.
+3. **Ask for what's missing** — if the annonce lacks required facts (zipcode, exact
+   model/year, condition, price), **ask the user** and write the answers into `annonce.md`.
+   Never publish blanks. See `references/enrichment-playbook.md`.
+4. **Ground it** — `comparables <slug>`; read `annonces/<slug>/comparables.md`, then set
+   `price`/`category`/`attributes` from what comparable ads show.
+5. **Validate** — `validate <slug>` until it passes (warnings are advisory).
+6. **Preview & publish** — `publish <slug>`. The engine fills the form, uploads the photos,
+   and saves `annonces/<slug>/publish-preview.png` — **Read that screenshot to verify the
+   form**. If fields are blank/unresolved (the CLI prints `ask the user about → …`, or run
+   `publish <slug> --diagnostic` for the full field report + saved HTML), ask the user, fix
+   `annonce.md`, and retry. Then tell the user: *review the prefilled form and click
+   « Déposer mon annonce »*. Use `--yes` only if they asked for full-auto. On success the ad
+   id/URL are written back and `status` becomes `published`.
+7. **Delete** when needed — `delete <slug>` (uses the stored id).
 
 ## Markdown schema
 

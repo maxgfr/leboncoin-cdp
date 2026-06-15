@@ -200,8 +200,19 @@ export function writeAnnonce(dir: string, a: Annonce): void {
 
 /* ─────────────────────────── scaffold / list ─────────────────────────── */
 
+export interface ScaffoldInit {
+  title?: string;
+  category?: string;
+  price?: number;
+  zipcode?: string;
+  condition?: string;
+  attributes?: Record<string, string>;
+  /** Free-text description body (else the placeholder is written). */
+  notes?: string;
+}
+
 /** Create `<dir>/annonce.md` + `<dir>/photos/` for a fresh draft listing. */
-export function scaffoldAnnonce(dir: string, init: { title?: string; category?: string } = {}, opts: { force?: boolean } = {}): Annonce {
+export function scaffoldAnnonce(dir: string, init: ScaffoldInit = {}, opts: { force?: boolean } = {}): Annonce {
   const file = path.join(dir, ANNONCE_FILENAME);
   if (fs.existsSync(file) && !opts.force) {
     throw new Error(`annonce already exists at ${file} (use --force to overwrite)`);
@@ -211,12 +222,13 @@ export function scaffoldAnnonce(dir: string, init: { title?: string; category?: 
     slug: path.basename(path.resolve(dir)),
     title: init.title ?? "",
     category: init.category ?? "",
-    price: 0,
-    zipcode: "",
-    attributes: {},
+    price: init.price ?? 0,
+    zipcode: init.zipcode ?? "",
+    condition: init.condition,
+    attributes: init.attributes ?? {},
     photos: [],
     status: "draft",
-    description: PLACEHOLDER_BODY,
+    description: init.notes && init.notes.trim() ? init.notes.trim() : PLACEHOLDER_BODY,
   };
   writeAnnonce(dir, a);
   return a;
@@ -234,7 +246,7 @@ export function listPhotoFiles(dir: string): string[] {
 
 /** Absolute paths to the photos to upload, in order (frontmatter list wins). */
 export function resolvePhotoPaths(dir: string, a: Annonce): string[] {
-  const names = a.photos && a.photos.length ? a.photos : listPhotoFiles(dir);
+  const names = a.photos?.length ? a.photos : listPhotoFiles(dir);
   return names.map((n) => path.resolve(dir, PHOTOS_DIRNAME, n));
 }
 

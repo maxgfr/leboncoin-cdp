@@ -1,5 +1,5 @@
 {
-  "name": "leboncoin-cdp-scraper",
+  "name": "leboncoin-cdp",
   "version": "1.0.0",
   "author": "maxgfr",
   "license": "MIT",
@@ -7,12 +7,12 @@
   "description": "Manage your Leboncoin listings from local markdown + photos and publish/delete them on your own account via the Chrome DevTools Protocol — built on the original zero-bot-detection CDP scraper. A skills.sh agent skill.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/maxgfr/leboncoin-cdp-scraper.git"
+    "url": "https://github.com/maxgfr/leboncoin-cdp.git"
   },
   "bugs": {
-    "url": "https://github.com/maxgfr/leboncoin-cdp-scraper/issues"
+    "url": "https://github.com/maxgfr/leboncoin-cdp/issues"
   },
-  "homepage": "https://github.com/maxgfr/leboncoin-cdp-scraper#readme",
+  "homepage": "https://github.com/maxgfr/leboncoin-cdp#readme",
   "packageManager": "pnpm@10.33.0",
   "bin": {
     "leboncoin": "scripts/leboncoin.mjs"

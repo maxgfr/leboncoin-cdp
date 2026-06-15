@@ -29,6 +29,9 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Lint
+        run: pnpm run lint # biome ci .
+
       - name: Build is reproducible (committed bundle up to date)
         run: pnpm run check:build # tsup && git diff --exit-code -- scripts/leboncoin.mjs
 

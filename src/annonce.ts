@@ -11,6 +11,12 @@ const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 export interface NewOptions {
   title?: string;
   category?: string;
+  /** Free-text description (e.g. the user's rough notes). */
+  notes?: string;
+  price?: number;
+  zipcode?: string;
+  condition?: string;
+  attributes?: Record<string, string>;
   force?: boolean;
 }
 
@@ -19,7 +25,19 @@ export function runNew(annoncesDir: string, slug: string, opts: NewOptions = {})
     throw new Error(`invalid slug "${slug ?? ""}" — use letters, digits, dash or underscore (e.g. macbook-air-m1)`);
   }
   const dir = path.join(annoncesDir, slug);
-  scaffoldAnnonce(dir, { title: opts.title, category: opts.category }, { force: opts.force });
+  scaffoldAnnonce(
+    dir,
+    {
+      title: opts.title,
+      category: opts.category,
+      notes: opts.notes,
+      price: opts.price,
+      zipcode: opts.zipcode,
+      condition: opts.condition,
+      attributes: opts.attributes,
+    },
+    { force: opts.force },
+  );
   return { slug, dir, markdown: path.join(dir, "annonce.md") };
 }
 

@@ -12,20 +12,24 @@ them on your own account via the Chrome DevTools Protocol. Markdown is the sourc
 of truth; you (or the agent) write the copy, the engine just drives the browser.
 
 Usage:
-  leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--force]
+  leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
+                       [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
   leboncoin validate <slug>
-  leboncoin publish <slug> [--yes] [--dry-run] [--timeout-submit <ms>]
+  leboncoin publish <slug> [--diagnostic] [--strict] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
   leboncoin delete <slug> [--yes]
   leboncoin list [--status draft|published|deleted]
   leboncoin scrape --query "<query|url>" [scraper options]
 
 Commands:
-  new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft).
+  new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
-  publish       Open the deposit form, fill it + upload photos via CDP. Semi-auto by
-                default: review and click « Déposer mon annonce » yourself. --yes to auto-submit.
+  publish       Open the deposit form, fill it + upload photos via CDP, save a preview
+                screenshot (read it to verify). Semi-auto by default: review and click
+                « Déposer mon annonce » yourself. --diagnostic = fill + screenshot + HTML +
+                field report, no submit. --strict = refuse to submit while fields are missing.
+                --yes = auto-submit. --no-screenshot to skip the capture.
   delete        Remove a published ad (confirms unless --yes).
   list/status   Show local annonces and their published state.
   scrape        The original read-only scraper (search results + ad details).
@@ -59,11 +63,29 @@ const VALUE_FLAGS = new Set([
   "output-dir",
   "title",
   "category",
+  "notes",
+  "price",
+  "zipcode",
+  "condition",
+  "attributes",
   "status",
   "timeout-submit",
 ]);
 
-const BOOL_FLAGS = new Set(["json", "with-details", "details-only", "search-only", "save-raw", "reset-profile", "yes", "dry-run", "force"]);
+const BOOL_FLAGS = new Set([
+  "json",
+  "with-details",
+  "details-only",
+  "search-only",
+  "save-raw",
+  "reset-profile",
+  "yes",
+  "dry-run",
+  "diagnostic",
+  "strict",
+  "no-screenshot",
+  "force",
+]);
 
 const SHORT: Record<string, string> = {
   q: "query",
@@ -161,6 +183,20 @@ function intOf(raw: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** Parse `--attributes "brand=Apple,model=MacBook Air M1"` into a map. */
+function parseAttributes(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  const out: Record<string, string> = {};
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    const k = pair.slice(0, eq).trim();
+    const v = pair.slice(eq + 1).trim();
+    if (k) out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function requireSlug(p: Parsed): string {
   const slug = p.positional[0];
   if (!slug) fail(`missing <slug> (e.g. leboncoin ${p.command} macbook-air-m1)`);
@@ -177,6 +213,11 @@ async function main(): Promise<void> {
       const r = runNew(annoncesDirOf(p), slug, {
         title: p.values.title,
         category: p.values.category,
+        notes: p.values.notes,
+        price: intOf(p.values.price),
+        zipcode: p.values.zipcode,
+        condition: p.values.condition,
+        attributes: parseAttributes(p.values.attributes),
         force: p.bools.has("force"),
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
@@ -257,11 +298,18 @@ async function main(): Promise<void> {
       const r = await runPublish(annoncesDirOf(p), slug, {
         yes: p.bools.has("yes"),
         dryRun: p.bools.has("dry-run"),
+        diagnostic: p.bools.has("diagnostic"),
+        strict: p.bools.has("strict"),
+        screenshot: !p.bools.has("no-screenshot"),
         timeoutSubmitMs: intOf(p.values["timeout-submit"]),
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
-      if (!r.ok && r.reason === "login-required") process.exit(2);
-      if (!r.ok && r.reason === "not-published") process.exit(2);
+      else if (r.missing && r.missing.length) {
+        process.stderr.write(`leboncoin: ask the user about → ${r.missing.join(", ")}\n`);
+      }
+      if (!r.ok && ["login-required", "not-published", "incomplete", "form-error"].includes(r.reason ?? "")) {
+        process.exit(2);
+      }
       return;
     }
 

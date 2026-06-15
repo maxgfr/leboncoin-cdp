@@ -10,8 +10,11 @@ Global options (any command): `--annonces-dir <dir>` (default `./annonces`),
 `--json` (machine-readable stdout), `-h`/`--help`, `-v`/`--version`.
 
 ## `new <slug>`
-Scaffold `annonces/<slug>/annonce.md` (draft stub) + `photos/`.
+Scaffold `annonces/<slug>/annonce.md` (draft) + `photos/`.
 - `--title "<t>"`, `--category "<c>"` — prefill those fields.
+- `--notes "<texte libre>"` — seed the description body with the user's rough notes (else a placeholder).
+- `--price <n>`, `--zipcode <cp>`, `--condition "<c>"` — prefill structured fields.
+- `--attributes "brand=Apple,model=MacBook Air M1"` — comma-separated `k=v` pairs into `attributes`.
 - `--force` — overwrite an existing annonce.md.
 - Exit 0 on success; 1 if it already exists (without `--force`) or the slug is invalid.
 
@@ -32,13 +35,25 @@ Structural gate (pure, no CDP). Checks: title (≥5), category, price (>0), zipc
 - **Exit 0 if valid, non-zero if not** — gate publishing on this.
 
 ## `publish <slug>`  *(CDP, write)*
-Open the deposit form, fill every field, upload photos, then:
+Open the deposit form, fill every field, upload photos, and save a preview screenshot
+(`annonces/<slug>/publish-preview.png` — Read it to verify), then:
 - **default (semi-auto)**: pause for the user to review and click « Déposer mon annonce ».
-- `--yes` — fill **and** click publish (still pauses for a captcha if one appears).
-- `--dry-run` — fill only, submit nothing (debug the field mapping).
+- `--diagnostic` — fill + screenshot + save the form HTML (`publish-preview.html`) + print a
+  field-by-field resolution report; **submit nothing**. `--json` returns the `FillReport`
+  (`{ fields, missing, uploadedPhotos, expectedPhotos }`). Use it to author/tighten selectors
+  and to see which fields to ask the user about.
+- `--strict` — refuse to submit while any required field is unresolved/missing.
+- `--no-screenshot` — skip the preview capture.
+- `--yes` — fill **and** click publish (still pauses for a captcha; detects a form error and
+  returns `reason: "form-error"`).
+- `--dry-run` — fill only, print the report, submit nothing.
 - `--timeout-submit <ms>` — max wait for the published ad to appear (default 900000 = 15 min).
 - On success: writes `leboncoin_id`/`leboncoin_url`/`published_at`, `status: published`.
-- Exit 0 published; 2 if `login-required` / `not-published`; 1 on a fatal error.
+- The result carries `missing[]` (required fields empty in the annonce or unresolved on the
+  form) — the agent asks the user about these. In non-JSON mode the CLI prints
+  `leboncoin: ask the user about → …`.
+- Exit 0 published / diagnostic / dry-run; 2 if `login-required` / `not-published` /
+  `incomplete` / `form-error`; 1 on a fatal error.
 
 ## `delete <slug>`  *(CDP, write)*
 Navigate to the published ad (by stored `leboncoin_id`/`leboncoin_url`), click delete +

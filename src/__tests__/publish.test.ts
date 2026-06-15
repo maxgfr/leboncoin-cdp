@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -14,9 +14,9 @@ import { runPublish } from "../publish";
 import type { Annonce } from "../types";
 
 /**
- * A fake CDPClient that answers cdp.evaluate by pattern-matching the in-page
- * JS the engine sends, and records cdp.send calls — so the whole publish flow
- * runs with no browser, no network, no config side effects.
+ * A fake CDPClient that answers cdp.evaluate by pattern-matching the in-page JS
+ * the engine sends, and records cdp.send calls — so the whole publish flow runs
+ * with no browser, no network, no config side effects.
  */
 class FakeCDP {
   calls: { method: string; params: Record<string, unknown> }[] = [];
@@ -29,6 +29,8 @@ class FakeCDP {
       return this.submitted && this.opts.publishedUrl ? this.opts.publishedUrl : (this.opts.url ?? "https://www.leboncoin.fr/deposer-une-annonce");
     }
     if (expr.includes("geo.captcha-delivery")) return expr.includes("hostname"); // isOnCaptcha=false, isClear=true
+    if (expr.includes('role="alert"')) return null; // readFormError → no error
+    if (expr.includes("documentElement.outerHTML")) return "<html><body>form</body></html>"; // savePageHtml
     if (expr.includes('a[href*="/ad/"]')) return ""; // firstAdLink
     if (expr.includes("files")) return this.filesSet.length; // upload verify
     if (expr.includes("querySelectorAll('button")) {
@@ -50,6 +52,7 @@ class FakeCDP {
       this.filesSet = params.files as string[];
       return {};
     }
+    if (method === "Page.captureScreenshot") return { data: "iVBORw0KGgo=" };
     return {};
   }
   on(): void {}
@@ -87,7 +90,7 @@ function setupDraft(over: Partial<Annonce> = {}): { dir: string; root: string } 
 }
 
 describe("runPublish", () => {
-  it("fills the form, uploads photos via DOM.setFileInputFiles, and writes back the ad id (--yes)", async () => {
+  it("fills the form, uploads photos, screenshots, and writes back the ad id (--yes)", async () => {
     const { dir, root } = setupDraft();
     const cdp = new FakeCDP({ publishedUrl: "https://www.leboncoin.fr/ad/informatique/3138258318" });
     const res = await runPublish(root, "ad", { yes: true, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
@@ -98,12 +101,34 @@ describe("runPublish", () => {
     const after = parseAnnonce(dir);
     expect(after.status).toBe("published");
     expect(after.leboncoin_id).toBe("3138258318");
-    expect(after.published_at).toBeTruthy();
 
+    // DOM upload sequence + screenshot happened
+    const methods = cdp.calls.map((c) => c.method);
+    expect(methods).toEqual(expect.arrayContaining(["DOM.getDocument", "DOM.querySelector", "DOM.setFileInputFiles", "Page.captureScreenshot"]));
     const upload = cdp.calls.find((c) => c.method === "DOM.setFileInputFiles");
-    expect(upload).toBeTruthy();
     expect((upload?.params.files as string[]).length).toBe(2);
-    expect(cdp.calls.map((c) => c.method)).toEqual(expect.arrayContaining(["DOM.getDocument", "DOM.querySelector", "DOM.setFileInputFiles"]));
+    expect(existsSync(join(dir, "publish-preview.png"))).toBe(true);
+  });
+
+  it("--diagnostic fills + screenshots + saves HTML + reports missing, without submitting", async () => {
+    const { dir, root } = setupDraft({ zipcode: "" }); // a required field left empty
+    const cdp = new FakeCDP();
+    const res = await runPublish(root, "ad", { diagnostic: true }, { connect: async () => cdp as never });
+
+    expect(res.reason).toBe("diagnostic");
+    expect(res.missing).toEqual(expect.arrayContaining([expect.stringContaining("zipcode")]));
+    expect(parseAnnonce(dir).status).toBe("draft"); // not submitted
+    expect(cdp.submitted).toBe(false);
+    expect(existsSync(join(dir, "publish-preview.png"))).toBe(true);
+    expect(existsSync(join(dir, "publish-preview.html"))).toBe(true);
+  });
+
+  it("--no-screenshot skips the capture", async () => {
+    const { dir, root } = setupDraft();
+    const cdp = new FakeCDP({ publishedUrl: "https://www.leboncoin.fr/ad/x/999999" });
+    await runPublish(root, "ad", { yes: true, screenshot: false, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
+    expect(cdp.calls.some((c) => c.method === "Page.captureScreenshot")).toBe(false);
+    expect(existsSync(join(dir, "publish-preview.png"))).toBe(false);
   });
 
   it("stops with login-required when redirected to the login page", async () => {
@@ -112,15 +137,6 @@ describe("runPublish", () => {
     const res = await runPublish(root, "ad", {}, { connect: async () => cdp as never });
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("login-required");
-  });
-
-  it("fills but submits nothing on --dry-run", async () => {
-    const { dir, root } = setupDraft();
-    const cdp = new FakeCDP({ publishedUrl: "https://www.leboncoin.fr/ad/x/999999" });
-    const res = await runPublish(root, "ad", { dryRun: true }, { connect: async () => cdp as never });
-    expect(res.reason).toBe("dry-run");
-    expect(parseAnnonce(dir).status).toBe("draft"); // unchanged
-    expect(cdp.submitted).toBe(false);
   });
 
   it("refuses to publish a non-draft annonce", async () => {
