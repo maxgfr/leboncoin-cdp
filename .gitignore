@@ -12,14 +12,8 @@ node_modules/
 # Optional npm cache directory
 .npm
 
-# Optional eslint cache
-.eslintcache
-
 # Misc
 .DS_Store
-
-# Transpiled files
-build/
 
 # .env you know
 .env
@@ -30,5 +24,12 @@ build/
 # .swc
 .swc/
 
-# assets
-assets/
+# Scrape output (assets/) is generated — keep only the committed example annonce.
+/assets/*
+!/assets/example-annonce/
+
+# Local listing store (your annonces + photos are yours, not committed).
+annonces/
+
+# semantic-release tarball
+*.tgz

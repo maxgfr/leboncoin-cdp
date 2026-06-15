@@ -6,11 +6,12 @@
  * This means zero automation flags — the browser is indistinguishable from
  * a manually launched instance.
  */
-import { spawn, execSync } from 'child_process';
-import { config, getBrowserAppName, saveCdpPort, loadCdpPort, clearCdpPort } from './config';
-import { logger } from './logger';
-import { delay } from './utils';
-import { CDPClient } from './cdp';
+import { spawn, execSync } from "child_process";
+import { config, getBrowserAppName, saveCdpPort, loadCdpPort, clearCdpPort } from "./config";
+import { logger } from "./logger";
+import { delay } from "./utils";
+import { CDPClient } from "./cdp";
+import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
 
 interface TabInfo {
   id: string;
@@ -28,14 +29,13 @@ function isBrowserRunning(): boolean {
   try {
     return (
       execSync(`pgrep -f "${config.browser.chromePath}"`, {
-        encoding: 'utf-8',
+        encoding: "utf-8",
       }).trim().length > 0
     );
   } catch {
     return false;
   }
 }
-
 
 async function getCdpInfo(port: number): Promise<{ wsUrl: string } | null> {
   try {
@@ -63,12 +63,9 @@ async function listTabs(port: number): Promise<TabInfo[]> {
  * older builds only accept GET. Try PUT first, then fall back to GET.
  */
 async function openNewTab(port: number): Promise<TabInfo | null> {
-  for (const method of ['PUT', 'GET'] as const) {
+  for (const method of ["PUT", "GET"] as const) {
     try {
-      const res = await fetch(
-        `http://127.0.0.1:${port}/json/new?about:blank`,
-        { method },
-      );
+      const res = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method });
       if (!res.ok) continue;
       const data = (await res.json()) as TabInfo;
       if (data?.webSocketDebuggerUrl) return data;
@@ -89,8 +86,8 @@ async function openNewTab(port: number): Promise<TabInfo | null> {
  */
 export async function waitForPageReady(cdp: CDPClient): Promise<void> {
   await Promise.race([
-    cdp.once('Page.domContentEventFired', config.browser.timeout).catch(() => {}),
-    cdp.once('Page.loadEventFired', config.browser.timeout).catch(() => {}),
+    cdp.once("Page.domContentEventFired", config.browser.timeout).catch(() => {}),
+    cdp.once("Page.loadEventFired", config.browser.timeout).catch(() => {}),
   ]);
 }
 
@@ -100,84 +97,50 @@ export async function waitForPageReady(cdp: CDPClient): Promise<void> {
  */
 async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
   // Always open a new tab so we never clobber an existing page's data
-  logger.info('Opening a new tab…');
+  logger.info("Opening a new tab…");
   let target: TabInfo | null = await openNewTab(port);
 
   if (!target) {
     // Fallback: reuse an existing blank tab
     const tabs = await listTabs(port);
-    target =
-      tabs.find(
-        (t) =>
-          t.type === 'page' &&
-          (t.url === 'about:blank' || t.url === 'chrome://newtab/'),
-      ) ??
-      tabs.find((t) => t.type === 'page') ??
-      null;
+    target = tabs.find((t) => t.type === "page" && (t.url === "about:blank" || t.url === "chrome://newtab/")) ?? tabs.find((t) => t.type === "page") ?? null;
   }
 
   if (!target) {
-    throw new Error('Could not open or find a usable browser tab');
+    throw new Error("Could not open or find a usable browser tab");
   }
 
-  logger.info(`Connecting to tab: ${target.url || 'about:blank'}`);
+  logger.info(`Connecting to tab: ${target.url || "about:blank"}`);
   let cdp = await CDPClient.connect(target.webSocketDebuggerUrl);
 
   // Try to enable Page domain — might fail on stale/restored tabs
   try {
-    await cdp.send('Page.enable', {}, 10_000);
+    await cdp.send("Page.enable", {}, 10_000);
   } catch {
-    logger.warn('Tab not responding — opening a fresh tab…');
+    logger.warn("Tab not responding — opening a fresh tab…");
     cdp.disconnect();
     const freshTab = await openNewTab(port);
     if (!freshTab) {
-      throw new Error('Could not open a fresh browser tab');
+      throw new Error("Could not open a fresh browser tab");
     }
     cdp = await CDPClient.connect(freshTab.webSocketDebuggerUrl);
-    await cdp.send('Page.enable', {}, 15_000);
+    await cdp.send("Page.enable", {}, 15_000);
   }
 
   // Navigate to the required URL
   logger.info(`Navigating to ${targetUrl}`);
-  await cdp.send('Page.navigate', { url: targetUrl });
+  await cdp.send("Page.navigate", { url: targetUrl });
 
   // Wait until the DOM is ready (don't block on the slow/never-firing `load`)
   await waitForPageReady(cdp);
   await delay(2_000); // Extra time for JS hydration + DataDome init
 
-  // Check if we landed on a CAPTCHA
-  const onCaptcha = await cdp
-    .evaluate<boolean>(
-      `document.body.innerHTML.includes('geo.captcha-delivery') || ` +
-        `!!document.querySelector('iframe[src*="datadome"]')`,
-      false,
-    )
-    .catch(() => false);
-
-  if (onCaptcha) {
-    logger.warn('CAPTCHA detected after navigation — solve it in the browser');
-    logger.info('Waiting up to 5 minutes…');
-    const start = Date.now();
-    while (Date.now() - start < 5 * 60 * 1_000) {
-      await delay(3_000);
-      const clear = await cdp
-        .evaluate<boolean>(
-          `window.location.hostname.includes('leboncoin.fr') && ` +
-            `!document.querySelector('iframe[src*="captcha"]') && ` +
-            `!document.querySelector('iframe[src*="datadome"]') && ` +
-            `!document.body.innerHTML.includes('geo.captcha-delivery')`,
-          false,
-        )
-        .catch(() => false);
-      if (clear) {
-        logger.success('CAPTCHA resolved');
-        await delay(1_500);
-        break;
-      }
-    }
+  // Check if we landed on a CAPTCHA and wait for the user to solve it.
+  if (await isOnCaptcha(cdp)) {
+    await waitForCaptchaResolution(cdp);
   }
 
-  logger.success('Page loaded');
+  logger.success("Page loaded");
   return cdp;
 }
 
@@ -190,9 +153,7 @@ async function openTab(port: number, targetUrl: string): Promise<CDPClient> {
  *   2. Try the saved port from a previous scraper session
  *   3. Launch a SEPARATE browser instance with the scraper profile
  */
-export async function connectAndNavigate(
-  targetUrl: string,
-): Promise<CDPClient> {
+export async function connectAndNavigate(targetUrl: string): Promise<CDPClient> {
   const browserName = getBrowserAppName(config.browser.chromePath);
 
   // 1. Try the explicitly-configured port (CLI --port or env)
@@ -237,12 +198,12 @@ export async function connectAndNavigate(
     [
       `--remote-debugging-port=${newPort}`,
       `--user-data-dir=${config.browser.userDataDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-session-crashed-bubble',
-      '--hide-crash-restore-bubble',
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-session-crashed-bubble",
+      "--hide-crash-restore-bubble",
     ],
-    { detached: true, stdio: 'ignore' },
+    { detached: true, stdio: "ignore" },
   );
   child.unref();
 
@@ -257,13 +218,11 @@ export async function connectAndNavigate(
   }
 
   if (!cdpReady) {
-    throw new Error(
-      `${browserName} did not expose CDP on port ${newPort} within 15s`,
-    );
+    throw new Error(`${browserName} did not expose CDP on port ${newPort} within 15s`);
   }
 
   // Save port so the next run can reconnect without new launch
   saveCdpPort(newPort);
-  logger.success('Scraper browser launched and ready');
+  logger.success("Scraper browser launched and ready");
   return openTab(newPort, targetUrl);
 }

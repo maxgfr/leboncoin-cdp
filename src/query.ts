@@ -21,7 +21,7 @@
  */
 
 /** Map-view-only query keys that the /recherche endpoint does not understand. */
-const MAP_ONLY_KEYS = ['lat', 'lng', 'city', 'defaultRadius', 'radius', 'zoom'];
+const MAP_ONLY_KEYS = ["lat", "lng", "city", "defaultRadius", "radius", "zoom"];
 
 export interface NormalizedSearch {
   /** Where to navigate for the first page (real navigation → sets cookies). */
@@ -41,13 +41,10 @@ export interface NormalizedSearch {
  *   - Path+query: recherche?category=9&...  /  carte/voitures?lat=...
  *   - Raw query:  category=9&locations=...&price=...
  */
-export function normalizeSearchInput(
-  input: string,
-  baseUrl: string,
-): NormalizedSearch {
+export function normalizeSearchInput(input: string, baseUrl: string): NormalizedSearch {
   const trimmed = input.trim();
 
-  let pathname = '/recherche';
+  let pathname = "/recherche";
   let params: URLSearchParams;
   let originalUrl: string | null = null;
 
@@ -57,10 +54,10 @@ export function normalizeSearchInput(
     params = url.searchParams;
     originalUrl = trimmed;
   } else {
-    const qIndex = trimmed.indexOf('?');
+    const qIndex = trimmed.indexOf("?");
     if (qIndex >= 0) {
       // "recherche?..." | "/carte/voitures?..."
-      pathname = '/' + trimmed.slice(0, qIndex).replace(/^\/+/, '');
+      pathname = "/" + trimmed.slice(0, qIndex).replace(/^\/+/, "");
       params = new URLSearchParams(trimmed.slice(qIndex + 1));
     } else {
       // Bare query string: "a=b&c=d"
@@ -68,19 +65,18 @@ export function normalizeSearchInput(
     }
   }
 
-  const isMap =
-    /\/carte\//.test(pathname) || (params.has('lat') && params.has('lng'));
+  const isMap = /\/carte\//.test(pathname) || (params.has("lat") && params.has("lng"));
 
   if (isMap) {
-    const lat = params.get('lat');
-    const lng = params.get('lng');
-    const city = params.get('city') ?? '';
-    const radius = params.get('defaultRadius') ?? params.get('radius');
+    const lat = params.get("lat");
+    const lng = params.get("lng");
+    const city = params.get("city") ?? "";
+    const radius = params.get("defaultRadius") ?? params.get("radius");
 
     // Translate the map's geo params into the /recherche `locations` encoding:
     //   "<city label>__<lat>_<lng>_<radius>"
-    if (lat && lng && radius && !params.has('locations')) {
-      params.set('locations', `${city}__${lat}_${lng}_${radius}`);
+    if (lat && lng && radius && !params.has("locations")) {
+      params.set("locations", `${city}__${lat}_${lng}_${radius}`);
     }
     for (const key of MAP_ONLY_KEYS) params.delete(key);
   }
@@ -98,11 +94,8 @@ export function normalizeSearchInput(
  * injecting the numeric category id (read from the first loaded page) when the
  * params don't already carry one (e.g. a /carte URL where it was path-encoded).
  */
-export function buildQueryString(
-  params: URLSearchParams,
-  categoryId?: string | null,
-): string {
+export function buildQueryString(params: URLSearchParams, categoryId?: string | null): string {
   const out = new URLSearchParams(params);
-  if (categoryId && !out.get('category')) out.set('category', categoryId);
+  if (categoryId && !out.get("category")) out.set("category", categoryId);
   return out.toString();
 }
