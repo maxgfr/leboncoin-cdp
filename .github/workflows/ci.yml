@@ -1,33 +1,62 @@
 name: CI
 
-on: push
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 jobs:
-  ci:
+  build-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24]
+    name: build-test (node ${{ matrix.node-version }})
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
         with:
-          node-version: '24'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Type check
-        run: pnpm typecheck
+      - name: Typecheck
+        run: pnpm run typecheck
 
-      - name: Lint
-        run: pnpm lint
-
-      - name: Build
-        run: pnpm build:swc
+      - name: Build is reproducible (committed bundle up to date)
+        run: pnpm run check:build # tsup && git diff --exit-code -- scripts/leboncoin.mjs
 
       - name: Test
-        run: pnpm test -- --run
+        run: pnpm test
+
+      - name: Smoke-run the committed bundle (offline, no CDP)
+        run: pnpm run demo # node scripts/leboncoin.mjs validate example-annonce ...
+
+  # The shipped scripts/leboncoin.mjs is a dependency-free bundle declaring
+  # engines.node ">=18". This job runs ONLY the committed bundle on Node 18, with
+  # no install, to guarantee the published ">=18" promise holds (a Node 20+ API
+  # sneaking into src/ would build green on Node 24 yet break real users on 18).
+  runtime-node-floor:
+    runs-on: ubuntu-latest
+    name: runtime (Node 18 floor, zero-dep bundle)
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 18
+
+      - name: Scaffold + list run on Node 18 (zero install)
+        run: |
+          node scripts/leboncoin.mjs new ci-smoke --title "Smoke test" --category "informatique" --annonces-dir "$RUNNER_TEMP/lbc" --force
+          test -f "$RUNNER_TEMP/lbc/ci-smoke/annonce.md"
+          node scripts/leboncoin.mjs list --annonces-dir "$RUNNER_TEMP/lbc"
+
+      - name: Validate the committed example annonce on Node 18
+        run: node scripts/leboncoin.mjs validate example-annonce --annonces-dir assets

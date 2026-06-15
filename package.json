@@ -3,7 +3,8 @@
   "version": "2.0.0",
   "author": "maxgfr",
   "license": "MIT",
-  "description": "Leboncoin scraper using CDP + in-page fetch (zero bot detection)",
+  "type": "module",
+  "description": "Manage your Leboncoin listings from local markdown + photos and publish/delete them on your own account via the Chrome DevTools Protocol — built on the original zero-bot-detection CDP scraper. A skills.sh agent skill.",
   "repository": {
     "type": "git",
     "url": "https://github.com/maxgfr/leboncoin-cdp-scraper.git"
@@ -12,47 +13,58 @@
     "url": "https://github.com/maxgfr/leboncoin-cdp-scraper/issues"
   },
   "homepage": "https://github.com/maxgfr/leboncoin-cdp-scraper#readme",
-  "packageManager": "pnpm@10.0.0",
+  "packageManager": "pnpm@10.33.0",
+  "bin": {
+    "leboncoin": "scripts/leboncoin.mjs"
+  },
   "files": [
-    "build"
+    "SKILL.md",
+    "scripts",
+    "references",
+    "assets",
+    "src"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "keywords": [
     "leboncoin",
     "scraper",
     "cdp",
-    "chrome-devtools-protocol"
+    "chrome-devtools-protocol",
+    "skill",
+    "agent-skill",
+    "skills.sh",
+    "classifieds",
+    "annonces"
   ],
   "scripts": {
-    "start": "rm -rf build && pnpm build:swc && node build/index.js",
-    "dev": "nodemon",
-    "develop": "mkdirp assets && swc src -d build --strip-leading-paths && node build/index.js",
-    "test": "mkdirp assets && vitest",
-    "clean": "rimraf build",
-    "build": "mkdirp assets && tsc -p tsconfig.json",
-    "build:watch": "tsc -w -p tsconfig.json",
-    "build:swc": "mkdirp assets && swc src -d build --strip-leading-paths",
-    "build:swc:watch": "swc src -d build --strip-leading-paths -w",
-    "lint": "eslint src/",
-    "format": "prettier --write './src/**/*.{ts,js,json}'",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "ws": "^8.19.0"
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome ci .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "check:build": "tsup && git diff --exit-code -- scripts/leboncoin.mjs",
+    "demo": "node scripts/leboncoin.mjs validate example-annonce --annonces-dir assets",
+    "release": "semantic-release"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.2",
-    "@swc/cli": "^0.5.2",
-    "@swc/core": "^1.15.11",
+    "@biomejs/biome": "^2.4.16",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/exec": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
     "@types/node": "^22.19.9",
     "@types/ws": "^8.18.1",
-    "eslint": "^9.39.2",
-    "eslint-config-prettier": "^10.1.8",
-    "mkdirp": "^3.0.1",
-    "nodemon": "^3.1.11",
-    "prettier": "^3.8.1",
-    "rimraf": "^6.1.2",
+    "semantic-release": "^24.2.0",
+    "tsup": "^8.3.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.54.0",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "ws": "^8.19.0",
+    "yaml": "^2.9.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }
