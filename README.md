@@ -1,4 +1,4 @@
-# leboncoin-cdp-scraper
+# leboncoin-cdp
 
 Manage your Leboncoin listings from **local markdown + photos**, then **publish and
 delete** them on your own account via the **Chrome DevTools Protocol** — built on the
@@ -6,7 +6,7 @@ original zero-bot-detection CDP scraper. Shipped as a [skills.sh](https://skills
 skill (a thick `SKILL.md` playbook + a single zero-dependency CLI bundle).
 
 ```bash
-npx skills add maxgfr/leboncoin-cdp-scraper
+npx skills add maxgfr/leboncoin-cdp
 ```
 
 Markdown is the source of truth. You (or your agent) write and enrich the description —
