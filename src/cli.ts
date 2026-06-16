@@ -12,25 +12,43 @@ them on your own account via the Chrome DevTools Protocol. Markdown is the sourc
 of truth; you (or the agent) write the copy, the engine just drives the browser.
 
 Usage:
+  leboncoin login [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
   leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
                        [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
   leboncoin validate <slug>
-  leboncoin publish <slug> [--diagnostic] [--strict] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
+  leboncoin inspect <slug>
+  leboncoin publish <slug> [--diagnostic] [--strict] [--shots] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
   leboncoin delete <slug> [--yes]
-  leboncoin list [--status draft|published|deleted]
+  leboncoin edit <slug> [--no-screenshot] [--yes]
+  leboncoin renew|mark-sold|deactivate|reactivate <slug> [--yes]
+  leboncoin list [--status draft|published|deleted|sold|paused]
   leboncoin scrape --query "<query|url>" [scraper options]
 
 Commands:
+  login/auth    Open the account page, actively verify you're logged in (DOM probe, not just a
+                redirect), and save an auth-state screenshot. --cookies-file attaches an exported
+                cookies.json (best-effort escape hatch; always re-verified). If logged out, it
+                waits while you log in once in the browser. Run this before publish/delete.
   new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
+  inspect       READ-ONLY: open the live deposit form and write form-map.json (every field +
+                required/optional + select options) + initial.png/html. Submits nothing. Read it
+                to discover category-specific required fields, then fill annonce.md and publish.
   publish       Open the deposit form, fill it + upload photos via CDP, save a preview
                 screenshot (read it to verify). Semi-auto by default: review and click
                 « Déposer mon annonce » yourself. --diagnostic = fill + screenshot + HTML +
                 field report, no submit. --strict = refuse to submit while fields are missing.
-                --yes = auto-submit. --no-screenshot to skip the capture.
+                --yes = auto-submit. --shots = capture checkpoint + element + post-submit screenshots
+                into shots/. --no-screenshot to skip the capture. Writes push-readiness.json.
   delete        Remove a published ad (confirms unless --yes).
+  edit          Re-open the published ad's modify form, re-fill it from annonce.md, screenshot;
+                review and save « Enregistrer » yourself (or --yes to submit).
+  renew         Bump / "remettre en avant" a published ad (no status change).
+  mark-sold     Mark a published/paused ad as sold (status → sold).
+  deactivate    Pause a published ad without deleting it (status → paused).
+  reactivate    Put a paused ad back online (status → published).
   list/status   Show local annonces and their published state.
   scrape        The original read-only scraper (search results + ad details).
 
@@ -46,7 +64,24 @@ Publish/delete safety:
   fully headless. These actions hit your real account; see SKILL.md.
 `;
 
-export const COMMANDS = new Set(["new", "comparables", "validate", "publish", "delete", "list", "status", "scrape"]);
+export const COMMANDS = new Set([
+  "new",
+  "comparables",
+  "validate",
+  "publish",
+  "delete",
+  "list",
+  "status",
+  "scrape",
+  "login",
+  "auth",
+  "inspect",
+  "edit",
+  "renew",
+  "mark-sold",
+  "deactivate",
+  "reactivate",
+]);
 
 const VALUE_FLAGS = new Set([
   "query",
@@ -70,6 +105,9 @@ const VALUE_FLAGS = new Set([
   "attributes",
   "status",
   "timeout-submit",
+  "cookies-file",
+  "out",
+  "timeout-login",
 ]);
 
 const BOOL_FLAGS = new Set([
@@ -84,6 +122,7 @@ const BOOL_FLAGS = new Set([
   "diagnostic",
   "strict",
   "no-screenshot",
+  "shots",
   "force",
 ]);
 
@@ -292,6 +331,15 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "inspect": {
+      const slug = requireSlug(p);
+      const { runInspect } = await import("./inspect");
+      const r = await runInspect(annoncesDirOf(p), slug, {}, {});
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
+      return;
+    }
+
     case "publish": {
       const slug = requireSlug(p);
       const { runPublish } = await import("./publish");
@@ -301,6 +349,7 @@ async function main(): Promise<void> {
         diagnostic: p.bools.has("diagnostic"),
         strict: p.bools.has("strict"),
         screenshot: !p.bools.has("no-screenshot"),
+        shots: p.bools.has("shots"),
         timeoutSubmitMs: intOf(p.values["timeout-submit"]),
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
@@ -313,10 +362,46 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "login":
+    case "auth": {
+      const { runAuth } = await import("./auth");
+      const r = await runAuth({
+        cookiesFile: p.values["cookies-file"],
+        out: p.values.out,
+        timeoutMs: intOf(p.values["timeout-login"]),
+      });
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
+      return;
+    }
+
     case "delete": {
       const slug = requireSlug(p);
       const { runDelete } = await import("./delete");
       const r = await runDelete(annoncesDirOf(p), slug, { yes: p.bools.has("yes") });
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
+      return;
+    }
+
+    case "edit":
+    case "renew":
+    case "mark-sold":
+    case "deactivate":
+    case "reactivate": {
+      const slug = requireSlug(p);
+      const m = await import("./manage");
+      const actions = {
+        edit: m.runEdit,
+        renew: m.runRenew,
+        "mark-sold": m.runMarkSold,
+        deactivate: m.runDeactivate,
+        reactivate: m.runReactivate,
+      } as const;
+      const r = await actions[p.command as keyof typeof actions](annoncesDirOf(p), slug, {
+        yes: p.bools.has("yes"),
+        screenshot: !p.bools.has("no-screenshot"),
+      });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       if (!r.ok) process.exit(2);
       return;

@@ -21,7 +21,7 @@ export const PHOTOS_DIRNAME = "photos";
 export const PLACEHOLDER_BODY = "<!-- Décris ton article ici (état, détails, raison de la vente…). L'IA améliorera ce texte. -->";
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
-const STATUSES: AnnonceStatus[] = ["draft", "published", "deleted"];
+const STATUSES: AnnonceStatus[] = ["draft", "published", "deleted", "sold", "paused"];
 
 /* ───────────────────────────── parsing ───────────────────────────── */
 
@@ -142,6 +142,8 @@ export function parseAnnonce(dir: string): Annonce {
     leboncoin_url: optStr(f.leboncoin_url),
     published_at: optStr(f.published_at),
     deleted_at: optStr(f.deleted_at),
+    sold_at: optStr(f.sold_at),
+    paused_at: optStr(f.paused_at),
     description: body.trim(),
   };
 }
@@ -186,6 +188,8 @@ export function serializeAnnonce(a: Annonce): string {
   if (a.leboncoin_url) L.push(`leboncoin_url: ${q(a.leboncoin_url)}`);
   if (a.published_at) L.push(`published_at: ${q(a.published_at)}`);
   if (a.deleted_at) L.push(`deleted_at: ${q(a.deleted_at)}`);
+  if (a.sold_at) L.push(`sold_at: ${q(a.sold_at)}`);
+  if (a.paused_at) L.push(`paused_at: ${q(a.paused_at)}`);
   L.push("---");
   L.push("");
   L.push(a.description.trim());

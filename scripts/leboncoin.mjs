@@ -148,6 +148,8 @@ function parseAnnonce(dir) {
     leboncoin_url: optStr(f.leboncoin_url),
     published_at: optStr(f.published_at),
     deleted_at: optStr(f.deleted_at),
+    sold_at: optStr(f.sold_at),
+    paused_at: optStr(f.paused_at),
     description: body.trim()
   };
 }
@@ -184,6 +186,8 @@ function serializeAnnonce(a) {
   if (a.leboncoin_url) L.push(`leboncoin_url: ${q(a.leboncoin_url)}`);
   if (a.published_at) L.push(`published_at: ${q(a.published_at)}`);
   if (a.deleted_at) L.push(`deleted_at: ${q(a.deleted_at)}`);
+  if (a.sold_at) L.push(`sold_at: ${q(a.sold_at)}`);
+  if (a.paused_at) L.push(`paused_at: ${q(a.paused_at)}`);
   L.push("---");
   L.push("");
   L.push(a.description.trim());
@@ -251,11 +255,24 @@ var init_markdown = __esm({
     PHOTOS_DIRNAME = "photos";
     PLACEHOLDER_BODY = "<!-- D\xE9cris ton article ici (\xE9tat, d\xE9tails, raison de la vente\u2026). L'IA am\xE9liorera ce texte. -->";
     PHOTO_EXTS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".webp"]);
-    STATUSES = ["draft", "published", "deleted"];
+    STATUSES = ["draft", "published", "deleted", "sold", "paused"];
   }
 });
 
 // src/config.ts
+var config_exports = {};
+__export(config_exports, {
+  clearCdpPort: () => clearCdpPort,
+  config: () => config,
+  createWrapperDataDir: () => createWrapperDataDir,
+  detectUserDataDir: () => detectUserDataDir,
+  getAuthStatePath: () => getAuthStatePath,
+  getBrowserAppName: () => getBrowserAppName,
+  getBrowserPath: () => getBrowserPath,
+  loadCdpPort: () => loadCdpPort,
+  resetScraperProfile: () => resetScraperProfile,
+  saveCdpPort: () => saveCdpPort
+});
 import os from "os";
 import path4 from "path";
 import fs2 from "fs";
@@ -362,6 +379,9 @@ function getScraperHome() {
 }
 function getPortFile() {
   return path4.join(getScraperHome(), "port");
+}
+function getAuthStatePath() {
+  return path4.join(getScraperHome(), "auth-state.png");
 }
 function createWrapperDataDir(realDir) {
   const wrapper = path4.join(getScraperHome(), "profile");
@@ -5061,6 +5081,13 @@ async function currentUrl(cdp) {
 async function firstAdLink(cdp) {
   return cdp.evaluate(`(() => { const a = document.querySelector('a[href*="/ad/"]'); return a ? a.href : ''; })()`, false).catch(() => "");
 }
+async function probeLoggedIn(cdp, opts) {
+  const signals = [];
+  const domSel = await resolveSelector(cdp, opts.loggedInSelectors);
+  if (domSel) signals.push(`dom:${domSel}`);
+  if (await pageHasText(cdp, opts.loggedInTextMarkers)) signals.push("text");
+  return { loggedIn: signals.length > 0, signals };
+}
 async function pageHasText(cdp, markers) {
   const arr = JSON.stringify(markers.map((m) => m.toLowerCase()));
   return cdp.evaluate(`(() => { const t = (document.body.innerText || '').toLowerCase(); return ${arr}.some((m) => t.includes(m)); })()`, false).catch(() => false);
@@ -5088,16 +5115,46 @@ var init_deposit_form = __esm({
 });
 
 // src/screenshot.ts
-import { writeFileSync } from "fs";
-async function captureScreenshot(cdp, absPath) {
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
+async function captureScreenshot(cdp, absPath, opts = {}) {
   try {
     await cdp.send("Page.enable").catch(() => {
     });
-    const res = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+    const params = { format: "png", captureBeyondViewport: true };
+    if (opts.clip) params.clip = opts.clip;
+    const res = await cdp.send("Page.captureScreenshot", params);
     const data = res?.data;
     if (typeof data !== "string" || !data) return false;
     writeFileSync(absPath, Buffer.from(data, "base64"));
     return true;
+  } catch {
+    return false;
+  }
+}
+async function captureElement(cdp, candidates, absPath) {
+  try {
+    const sel = await resolveSelector(cdp, candidates);
+    if (!sel) return false;
+    await cdp.send("DOM.enable").catch(() => {
+    });
+    const doc = await cdp.send("DOM.getDocument", { depth: -1, pierce: true });
+    const rootId = doc?.root?.nodeId;
+    if (!rootId) return false;
+    const found = await cdp.send("DOM.querySelector", { nodeId: rootId, selector: sel }).catch(() => null);
+    const nodeId = found?.nodeId;
+    if (!nodeId) return false;
+    const box = await cdp.send("DOM.getBoxModel", { nodeId }).catch(() => null);
+    const quad = box?.model?.border;
+    if (!quad || quad.length < 8) return false;
+    const xs = [quad[0], quad[2], quad[4], quad[6]];
+    const ys = [quad[1], quad[3], quad[5], quad[7]];
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    const width = Math.max(...xs) - x;
+    const height = Math.max(...ys) - y;
+    if (width <= 0 || height <= 0) return false;
+    return captureScreenshot(cdp, absPath, { clip: { x, y, width, height, scale: 1 } });
   } catch {
     return false;
   }
@@ -5112,14 +5169,32 @@ async function savePageHtml(cdp, absPath) {
     return false;
   }
 }
+var ShotLog;
 var init_screenshot = __esm({
   "src/screenshot.ts"() {
     "use strict";
+    init_deposit_form();
+    ShotLog = class {
+      constructor(slugDir) {
+        this.slugDir = slugDir;
+      }
+      slugDir;
+      shots = [];
+      async shot(cdp, name) {
+        const dir = join(this.slugDir, "shots");
+        mkdirSync(dir, { recursive: true });
+        const p = join(dir, `${name}.png`);
+        if (await captureScreenshot(cdp, p)) this.shots.push({ name, path: p });
+      }
+      entries() {
+        return this.shots;
+      }
+    };
   }
 });
 
 // src/selectors.ts
-var BASE_URL, DEPOSIT, MANAGE;
+var BASE_URL, DEPOSIT, AUTH, ELEMENT_TARGETS, MANAGE;
 var init_selectors = __esm({
   "src/selectors.ts"() {
     "use strict";
@@ -5159,6 +5234,13 @@ var init_selectors = __esm({
         textCandidates: ["Ajouter des photos", "Ajouter une photo", "Ajoutez vos photos", "Ajouter"],
         css: ['[data-qa-id*="photo"] button', 'button[aria-label*="photo" i]']
       },
+      /** The photo thumbnail grid — an element-clip target for cheap verification. */
+      photoGrid: ['[data-qa-id*="photo" i]', '[class*="photo" i]', '[data-test*="photo" i]'],
+      /** Shipping/delivery toggle (only used when the annonce sets `shipping: true`). */
+      shippingToggle: {
+        textCandidates: ["Proposer la livraison", "Envoi possible", "Livraison", "Colis", "Envoi"],
+        css: ['input[name*="shipping" i]', 'input[name*="livraison" i]', '[data-qa-id*="shipping" i]']
+      },
       /** Category-specific attribute field, by form field name/id/data-attr. */
       attrByKey: (key) => [`[name="${key}"]`, `[data-qa-id="${key}"]`, `[data-attribute="${key}"]`, `select[name="${key}"]`, `[id="${key}"]`],
       publishButton: {
@@ -5169,6 +5251,30 @@ var init_selectors = __esm({
       publishedUrlPattern: [/\/ad\/[^/]+\/(\d{4,})/, /\/(\d{6,})\.htm/, /[?&]listing_id=(\d+)/],
       /** Reaching one of these means the deposit succeeded (id may need a follow-up). */
       confirmedUrlPattern: [/\/deposer-une-annonce\/(confirmation|merci|success)/i, /\/ad\//]
+    };
+    AUTH = {
+      /** Authenticated route; redirects to login when the session is dead. */
+      accountUrl: `${BASE_URL}/mes-annonces`,
+      loginUrl: `${BASE_URL}/connexion`,
+      /** DOM markers that only render for a logged-in user (ordered, best-effort). */
+      loggedInSelectors: [
+        '[data-qa-id="header-account"]',
+        '[data-qa-id*="account" i]',
+        'a[href*="/mes-annonces"]',
+        'a[href*="/account"]',
+        'a[href*="/mon-compte"]',
+        'a[href*="/deconnexion"]',
+        'button[aria-label*="compte" i]'
+      ],
+      /** Visible text that implies a logged-in session. */
+      loggedInTextMarkers: ["mes annonces", "se d\xE9connecter", "d\xE9connexion", "mon compte"],
+      /** Visible text that implies a logged-out session (used as a weak hint only). */
+      loginRequiredTextMarkers: ["se connecter", "identifiez-vous", "cr\xE9er un compte"]
+    };
+    ELEMENT_TARGETS = {
+      photos: DEPOSIT.photoGrid,
+      price: DEPOSIT.priceInput,
+      submit: DEPOSIT.publishButton.css
     };
     MANAGE = {
       listingUrl: `${BASE_URL}/mes-annonces`,
@@ -5181,22 +5287,340 @@ var init_selectors = __esm({
         textCandidates: ["Confirmer la suppression", "Confirmer", "Supprimer", "Oui", "Valider"],
         css: ['button[data-qa-id*="confirm"]', 'button[type="submit"]']
       },
+      /** Open the modify form for a published ad. */
+      editButton: {
+        textCandidates: ["Modifier l'annonce", "Modifier", "\xC9diter", "Modifier mon annonce"],
+        css: ['button[data-qa-id*="edit"]', 'a[href*="modifier"]', 'a[href*="edit"]', 'button[aria-label*="modifier" i]']
+      },
+      /** Save / update an edited ad (the edit form's submit). */
+      saveButton: {
+        textCandidates: ["Enregistrer les modifications", "Enregistrer", "Mettre \xE0 jour", "Valider les modifications", "Valider"],
+        css: ['button[type="submit"]', 'button[data-qa-id*="save"]', 'button[data-qa-id*="submit"]']
+      },
+      /** Renew / bump ("remettre en avant" / boost). No status change. */
+      renewButton: {
+        textCandidates: ["Remettre en avant", "Remonter l'annonce", "Booster", "Renouveler", "Remonter"],
+        css: ['button[data-qa-id*="renew"]', 'button[data-qa-id*="boost"]', 'a[href*="remonter"]']
+      },
+      /** Mark the ad as sold ("c'est vendu" / "vendu"). */
+      markSoldButton: {
+        textCandidates: ["Marquer comme vendu", "C'est vendu", "Vendu", "Marquer vendu"],
+        css: ['button[data-qa-id*="sold"]', 'button[data-qa-id*="vendu"]', 'button[aria-label*="vendu" i]']
+      },
+      /** Deactivate / pause without deleting. */
+      deactivateButton: {
+        textCandidates: ["D\xE9sactiver l'annonce", "D\xE9sactiver", "Mettre en pause", "Suspendre"],
+        css: ['button[data-qa-id*="deactivate"]', 'button[data-qa-id*="pause"]', 'button[aria-label*="d\xE9sactiver" i]']
+      },
+      /** Reactivate a paused ad. */
+      reactivateButton: {
+        textCandidates: ["R\xE9activer l'annonce", "R\xE9activer", "Remettre en ligne", "Activer"],
+        css: ['button[data-qa-id*="reactivate"]', 'button[data-qa-id*="activate"]', 'button[aria-label*="r\xE9activer" i]']
+      },
+      /** Generic confirmation for renew/sold/deactivate/reactivate flows. */
+      manageConfirmButton: {
+        textCandidates: ["Confirmer", "Oui", "Valider", "Continuer", "OK"],
+        css: ['button[data-qa-id*="confirm"]', 'button[type="submit"]']
+      },
       /** Page-text markers that confirm a delete succeeded. */
       deletedMarkers: ["annonce supprim\xE9e", "annonce a \xE9t\xE9 supprim\xE9e", "n'existe plus", "n'est plus en ligne"]
     };
   }
 });
 
-// src/publish.ts
-var publish_exports = {};
-__export(publish_exports, {
-  runPublish: () => runPublish
+// src/auth.ts
+var auth_exports = {};
+__export(auth_exports, {
+  attachCookies: () => attachCookies,
+  checkLogin: () => checkLogin,
+  ensureLoggedIn: () => ensureLoggedIn,
+  loadCookiesJson: () => loadCookiesJson,
+  runAuth: () => runAuth
 });
+import { mkdirSync as mkdirSync2, readFileSync } from "fs";
 import path6 from "path";
 async function defaultConnect(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
+async function checkLogin(cdp) {
+  const url = await currentUrl(cdp);
+  if (DEPOSIT.loginUrlPattern.test(url)) return { loggedIn: false, loggedOut: true, signals: ["url:login"], url };
+  let probe = await probeLoggedIn(cdp, AUTH);
+  if (!probe.loggedIn) {
+    await delay(REPROBE_DELAY_MS);
+    probe = await probeLoggedIn(cdp, AUTH);
+  }
+  if (probe.loggedIn) return { loggedIn: true, loggedOut: false, signals: probe.signals, url };
+  const loggedOut = await pageHasText(cdp, AUTH.loginRequiredTextMarkers);
+  return { loggedIn: false, loggedOut, signals: loggedOut ? ["text:login"] : [], url };
+}
+async function ensureLoggedIn(cdp) {
+  const state = await checkLogin(cdp);
+  return state.loggedOut ? { ok: false, reason: "login-required", state } : { ok: true, state };
+}
+function loadCookiesJson(absPath) {
+  const data = JSON.parse(readFileSync(absPath, "utf8"));
+  const arr = Array.isArray(data) ? data : Array.isArray(data?.cookies) ? data.cookies : [];
+  return arr.filter(
+    (c) => !!c && typeof c === "object" && typeof c.name === "string" && typeof c.value === "string"
+  ).map((c) => ({
+    name: c.name,
+    value: c.value,
+    domain: typeof c.domain === "string" ? c.domain : void 0,
+    path: typeof c.path === "string" ? c.path : void 0,
+    secure: typeof c.secure === "boolean" ? c.secure : void 0,
+    httpOnly: typeof c.httpOnly === "boolean" ? c.httpOnly : void 0,
+    expires: typeof c.expires === "number" ? c.expires : typeof c.expirationDate === "number" ? c.expirationDate : void 0,
+    sameSite: c.sameSite === "Strict" || c.sameSite === "Lax" || c.sameSite === "None" ? c.sameSite : void 0
+  }));
+}
+async function attachCookies(cdp, cookies) {
+  await cdp.send("Network.enable").catch(() => {
+  });
+  let applied = 0;
+  for (const c of cookies) {
+    const params = {
+      name: c.name,
+      value: c.value,
+      domain: c.domain ?? ".leboncoin.fr",
+      path: c.path ?? "/",
+      secure: c.secure ?? true,
+      httpOnly: c.httpOnly ?? false
+    };
+    if (typeof c.expires === "number") params.expires = c.expires;
+    if (c.sameSite) params.sameSite = c.sameSite;
+    const res = await cdp.send("Network.setCookie", params).catch(() => null);
+    if (res?.success === true) applied++;
+  }
+  return applied;
+}
+async function runAuth(opts = {}, deps = {}) {
+  const connect = deps.connect ?? defaultConnect;
+  const cdp = await connect(AUTH.accountUrl);
+  try {
+    if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
+    let cookiesAttached;
+    if (opts.cookiesFile) {
+      const cookies = loadCookiesJson(opts.cookiesFile);
+      cookiesAttached = await attachCookies(cdp, cookies);
+      logger.warn(`Attached ${cookiesAttached}/${cookies.length} cookie(s) \u2014 best-effort only; DataDome may still reject. Re-checking\u2026`);
+      await cdp.send("Page.navigate", { url: AUTH.accountUrl }).catch(() => {
+      });
+      await delay(REPROBE_DELAY_MS);
+    }
+    let state = await checkLogin(cdp);
+    if (!state.loggedIn) {
+      logger.warn("Not logged in to Leboncoin \u2014 log in once in the opened browser window.");
+      const timeout = opts.timeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS;
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        await delay(POLL_INTERVAL_MS);
+        state = await checkLogin(cdp);
+        if (state.loggedIn) break;
+      }
+    }
+    let outPath = opts.out;
+    if (!outPath) {
+      const { getAuthStatePath: getAuthStatePath2 } = await Promise.resolve().then(() => (init_config(), config_exports));
+      outPath = getAuthStatePath2();
+    }
+    mkdirSync2(path6.dirname(outPath), { recursive: true });
+    const screenshot = await captureScreenshot(cdp, outPath) ? outPath : void 0;
+    if (state.loggedIn) {
+      logger.success(`Logged in to Leboncoin${state.signals.length ? ` (${state.signals.join(", ")})` : ""}.`);
+      if (screenshot) logger.info(`Auth-state screenshot \u2192 ${screenshot} (read it to confirm the account is shown).`);
+    } else {
+      logger.error("Still not logged in. Log in once in the browser, then retry.");
+    }
+    return {
+      ok: state.loggedIn,
+      loggedIn: state.loggedIn,
+      reason: state.loggedIn ? void 0 : "login-required",
+      screenshot,
+      cookiesAttached
+    };
+  } finally {
+    cdp.disconnect();
+  }
+}
+var DEFAULT_LOGIN_TIMEOUT_MS, POLL_INTERVAL_MS, REPROBE_DELAY_MS;
+var init_auth = __esm({
+  "src/auth.ts"() {
+    "use strict";
+    init_captcha();
+    init_deposit_form();
+    init_logger();
+    init_screenshot();
+    init_selectors();
+    init_utils();
+    DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60 * 1e3;
+    POLL_INTERVAL_MS = 3e3;
+    REPROBE_DELAY_MS = 1500;
+  }
+});
+
+// src/form-introspect.ts
+import { writeFileSync as writeFileSync2 } from "fs";
+function slugify(s) {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+function buildFieldKey(d) {
+  return d.dataQaId || d.name || d.id || (d.label ? slugify(d.label) : "") || "field";
+}
+function summarizeFormMap(map) {
+  const required = map.fields.filter((f) => f.required).length;
+  return `${map.fields.length} field(s), ${required} required`;
+}
+function writeFormMap(absPath, map) {
+  try {
+    writeFileSync2(absPath, JSON.stringify(map, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function introspectForm(cdp) {
+  try {
+    const raw = await cdp.evaluate(INTROSPECT_JS, false);
+    if (!raw || !Array.isArray(raw.fields)) return { url: typeof raw?.url === "string" ? raw.url : "", fields: [] };
+    const seen = /* @__PURE__ */ new Map();
+    const fields = raw.fields.map((f) => {
+      const base = buildFieldKey(f);
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      return { ...f, key: n === 0 ? base : `${base}-${n}` };
+    });
+    return { url: raw.url ?? "", fields };
+  } catch {
+    return { url: "", fields: [] };
+  }
+}
+var INTROSPECT_JS;
+var init_form_introspect = __esm({
+  "src/form-introspect.ts"() {
+    "use strict";
+    INTROSPECT_JS = `(() => {
+  /* introspect-form */
+  const MAX = 80;
+  const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+  const text = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
+  function labelFor(el) {
+    const al = el.getAttribute && el.getAttribute('aria-label'); if (al) return al.trim();
+    const lb = el.getAttribute && el.getAttribute('aria-labelledby');
+    if (lb) { const t = lb.split(/\\s+/).map((id) => text(document.getElementById(id))).join(' ').trim(); if (t) return t; }
+    if (el.id) { try { const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (l) return text(l); } catch (e) {} }
+    const wrap = el.closest && el.closest('label'); if (wrap) return text(wrap);
+    if (el.placeholder) return el.placeholder.trim();
+    return (el.getAttribute && (el.getAttribute('name') || el.getAttribute('id'))) || '';
+  }
+  function requiredOf(el, label) {
+    if (el.required) return 'required-attr';
+    if (el.getAttribute && el.getAttribute('aria-required') === 'true') return 'aria-required';
+    if (label && label.indexOf('*') >= 0) return 'asterisk';
+    if (el.getAttribute && el.getAttribute('aria-invalid') === 'true') return 'aria-invalid';
+    return null;
+  }
+  function typeOf(el) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'textarea') return 'textarea';
+    if (tag === 'select') return 'select';
+    const role = (el.getAttribute && el.getAttribute('role')) || '';
+    if (role === 'combobox' || role === 'listbox') return 'combobox';
+    if (role === 'switch') return 'switch';
+    const t = (el.type || '').toLowerCase();
+    if (t === 'checkbox') return 'checkbox';
+    if (t === 'radio') return 'radio';
+    if (t === 'file') return 'file';
+    if (tag === 'input') return 'text';
+    return 'other';
+  }
+  function cssOf(el) {
+    const qa = el.getAttribute && el.getAttribute('data-qa-id'); if (qa) return '[data-qa-id="' + qa + '"]';
+    if (el.name) return el.tagName.toLowerCase() + '[name="' + el.name + '"]';
+    if (el.id) { try { return '#' + CSS.escape(el.id); } catch (e) {} }
+    return '';
+  }
+  const selector = 'input, textarea, select, [role="combobox"], [role="listbox"], [role="radiogroup"], [role="switch"], [contenteditable="true"]';
+  const out = [];
+  for (const el of Array.from(document.querySelectorAll(selector))) {
+    if (out.length >= MAX) break;
+    const t = (el.type || '').toLowerCase();
+    if (t === 'hidden') continue;
+    if (!visible(el)) continue;
+    const label = labelFor(el);
+    const reqSrc = requiredOf(el, label);
+    let options;
+    if (el.tagName.toLowerCase() === 'select') options = Array.from(el.options).slice(0, 50).map((o) => ({ label: text(o), value: o.value }));
+    out.push({
+      label: (label || '').slice(0, 120),
+      name: (el.getAttribute && el.getAttribute('name')) || undefined,
+      id: el.id || undefined,
+      dataQaId: (el.getAttribute && el.getAttribute('data-qa-id')) || undefined,
+      type: typeOf(el),
+      placeholder: el.placeholder || undefined,
+      value: (el.value != null ? String(el.value) : '').slice(0, 200),
+      checked: (t === 'checkbox' || t === 'radio') ? !!el.checked : undefined,
+      options,
+      required: !!reqSrc,
+      requiredSource: reqSrc || undefined,
+      selector: cssOf(el),
+    });
+  }
+  return { url: location.href, fields: out };
+})()`;
+  }
+});
+
+// src/inspect.ts
+var inspect_exports = {};
+__export(inspect_exports, {
+  runInspect: () => runInspect
+});
+import { mkdirSync as mkdirSync3 } from "fs";
+import path7 from "path";
+async function defaultConnect2(url) {
+  const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
+  return connectAndNavigate2(url);
+}
+async function runInspect(annoncesDir, slug, _opts = {}, deps = {}) {
+  const dir = path7.join(annoncesDir, slug);
+  const connect = deps.connect ?? defaultConnect2;
+  const cdp = await connect(DEPOSIT.startUrl);
+  try {
+    const auth = await ensureLoggedIn(cdp);
+    if (!auth.ok) {
+      logger.error("Not logged in to Leboncoin \u2014 run `login`, then retry.");
+      return { ok: false, reason: "login-required" };
+    }
+    if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
+    mkdirSync3(dir, { recursive: true });
+    const formMap = await introspectForm(cdp);
+    const formMapPath = path7.join(dir, "form-map.json");
+    const written = writeFormMap(formMapPath, formMap);
+    const previewPng = await captureScreenshot(cdp, path7.join(dir, "initial.png")) ? path7.join(dir, "initial.png") : void 0;
+    const previewHtml = await savePageHtml(cdp, path7.join(dir, "initial.html")) ? path7.join(dir, "initial.html") : void 0;
+    logger.success(`Live form: ${summarizeFormMap(formMap)}${written ? ` \u2192 ${formMapPath}` : ""}`);
+    logger.info("Read form-map.json + initial.png, fill any required field that is empty in annonce.md, then publish.");
+    return { ok: true, formMap, formMapPath: written ? formMapPath : void 0, previewPng, previewHtml };
+  } finally {
+    cdp.disconnect();
+  }
+}
+var init_inspect = __esm({
+  "src/inspect.ts"() {
+    "use strict";
+    init_auth();
+    init_captcha();
+    init_form_introspect();
+    init_logger();
+    init_screenshot();
+    init_selectors();
+  }
+});
+
+// src/readiness.ts
+import { writeFileSync as writeFileSync3 } from "fs";
 async function readFormError(cdp) {
   return cdp.evaluate(
     `(() => {
@@ -5210,7 +5634,76 @@ async function readFormError(cdp) {
     false
   ).catch(() => null);
 }
-async function fillForm(cdp, a, photos) {
+async function isSubmitEnabled(cdp) {
+  const texts = JSON.stringify(DEPOSIT.publishButton.textCandidates.map((t) => t.toLowerCase()));
+  const css = JSON.stringify(DEPOSIT.publishButton.css);
+  return cdp.evaluate(
+    `(() => {
+        /* submit-enabled probe */
+        const texts = ${texts}, css = ${css};
+        let btn = null;
+        const all = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
+        for (const el of all) {
+          const t = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
+          if (t && texts.some((w) => t === w || t.includes(w))) { btn = el; break; }
+        }
+        if (!btn) { for (const sel of css) { const el = document.querySelector(sel); if (el) { btn = el; break; } } }
+        if (!btn) return null;
+        return !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+      })()`,
+    false
+  ).catch(() => null);
+}
+async function buildReadiness(cdp, report, href) {
+  const checks = [];
+  const missingRequired = report.fields.filter((f) => f.required && (!f.hasValue || !f.filled)).map((f) => f.field);
+  checks.push({
+    name: "required-fields",
+    ok: missingRequired.length === 0,
+    detail: missingRequired.length ? `missing: ${missingRequired.join(", ")}` : "all required fields filled"
+  });
+  const photosOk = report.expectedPhotos > 0 && report.uploadedPhotos >= report.expectedPhotos;
+  checks.push({ name: "photos", ok: photosOk, detail: `${report.uploadedPhotos}/${report.expectedPhotos} uploaded` });
+  const loginOk = !DEPOSIT.loginUrlPattern.test(href);
+  checks.push({ name: "login", ok: loginOk, detail: loginOk ? "session active" : "redirected to login" });
+  const submit = await isSubmitEnabled(cdp);
+  checks.push({
+    name: "submit-enabled",
+    ok: submit === true,
+    detail: submit === null ? "submit button not found" : submit ? "enabled" : "disabled"
+  });
+  const err = await readFormError(cdp);
+  checks.push({ name: "no-form-error", ok: !err, detail: err ? `form error: ${err}` : "no visible error" });
+  const blockers = checks.filter((c) => !c.ok).map((c) => `${c.name} (${c.detail})`);
+  return { ready: blockers.length === 0, checks, blockers };
+}
+function writeReadiness(absPath, readiness) {
+  try {
+    writeFileSync3(absPath, JSON.stringify(readiness, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
+}
+var init_readiness = __esm({
+  "src/readiness.ts"() {
+    "use strict";
+    init_selectors();
+  }
+});
+
+// src/publish.ts
+var publish_exports = {};
+__export(publish_exports, {
+  fillForm: () => fillForm,
+  runPublish: () => runPublish
+});
+import path8 from "path";
+async function defaultConnect3(url) {
+  const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
+  return connectAndNavigate2(url);
+}
+async function fillForm(cdp, a, photos, shotLog) {
   const fields = [];
   let categoryFilled = false;
   if (a.category) {
@@ -5225,6 +5718,7 @@ async function fillForm(cdp, a, photos) {
     }
   }
   fields.push({ field: "category", required: true, hasValue: !!a.category, filled: categoryFilled });
+  await shotLog?.shot(cdp, "10-after-category");
   const fillText = async (field, required, value, candidates) => {
     if (!value) {
       fields.push({ field, required, hasValue: false, filled: false });
@@ -5250,6 +5744,10 @@ async function fillForm(cdp, a, photos) {
   for (const [key, value] of Object.entries(a.attributes ?? {})) {
     const ok = await setInputValue(cdp, DEPOSIT.attrByKey(key), String(value));
     if (!ok) logger.warn(`Attribute "${key}" could not be set automatically \u2014 set it manually if needed.`);
+  }
+  if (a.shipping === true) {
+    const ok = await clickButton(cdp, DEPOSIT.shippingToggle);
+    if (!ok) logger.warn("Could not toggle shipping/delivery \u2014 enable it manually if needed.");
   }
   let uploaded = await uploadPhotos(cdp, DEPOSIT.photoFileInput, photos);
   if (uploaded < photos.length) {
@@ -5310,32 +5808,65 @@ async function waitForPublished(cdp, timeoutMs) {
   return null;
 }
 async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
-  const dir = path6.join(annoncesDir, slug);
+  const dir = path8.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (a.status !== "draft") {
     throw new Error(`annonce "${slug}" is "${a.status}", not "draft" \u2014 only drafts can be published`);
   }
   const photos = resolvePhotoPaths(dir, a);
   if (photos.length === 0) throw new Error(`annonce "${slug}" has no photos in photos/ to upload`);
-  const connect = deps.connect ?? defaultConnect;
+  const connect = deps.connect ?? defaultConnect3;
   const cdp = await connect(DEPOSIT.startUrl);
   try {
-    const href = await currentUrl(cdp);
-    if (DEPOSIT.loginUrlPattern.test(href)) {
-      logger.error("Not logged in to Leboncoin \u2014 log in once in the opened browser, then retry.");
+    const auth = await ensureLoggedIn(cdp);
+    if (!auth.ok) {
+      logger.error("Not logged in to Leboncoin \u2014 run `login` (or log in once in the opened browser), then retry.");
+      if (opts.screenshot !== false) await captureScreenshot(cdp, path8.join(dir, "auth-state.png"));
       return { ok: false, reason: "login-required" };
     }
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
-    const report = await fillForm(cdp, a, photos);
+    const shotLog = new ShotLog(dir);
+    if (opts.shots) await shotLog.shot(cdp, "00-initial");
+    const report = await fillForm(cdp, a, photos, opts.shots ? shotLog : void 0);
     if (opts.screenshot !== false) {
-      const png = path6.join(dir, "publish-preview.png");
+      const png = path8.join(dir, "publish-preview.png");
       if (await captureScreenshot(cdp, png)) {
         report.previewPng = png;
         logger.info(`Saved form screenshot \u2192 ${png} (read it to verify before submitting)`);
       }
     }
+    if (opts.shots) {
+      await shotLog.shot(cdp, "20-prefilled");
+      const shotsDir = path8.join(dir, "shots");
+      await captureElement(cdp, ELEMENT_TARGETS.price, path8.join(shotsDir, "elem-price.png"));
+      await captureElement(cdp, ELEMENT_TARGETS.photos, path8.join(shotsDir, "elem-photos.png"));
+      await captureElement(cdp, ELEMENT_TARGETS.submit, path8.join(shotsDir, "elem-submit.png"));
+    }
+    const formMap = await introspectForm(cdp);
+    report.formMap = formMap;
+    const formMapPath = path8.join(dir, "form-map.json");
+    if (writeFormMap(formMapPath, formMap)) report.formMapPath = formMapPath;
+    for (const f of formMap.fields) {
+      if (!f.required || f.type === "file") continue;
+      const filledIn = String(f.value ?? "").trim() !== "" || f.checked === true;
+      if (filledIn) continue;
+      const label = f.label || f.key;
+      if (report.missing.some((m) => m.toLowerCase().includes(label.toLowerCase()))) continue;
+      report.fields.push({ field: label, required: true, hasValue: false, filled: false });
+      report.missing.push(`${label} (required on the live form \u2014 ${f.requiredSource ?? "required"})`);
+    }
+    const href = await currentUrl(cdp);
+    const readiness = await buildReadiness(cdp, report, href);
+    const readinessPath = path8.join(dir, "push-readiness.json");
+    if (writeReadiness(readinessPath, readiness)) {
+      report.readiness = readiness;
+      report.readinessPath = readinessPath;
+    }
+    logger.info(
+      `Push-readiness: ${readiness.ready ? "READY" : "NOT READY"}${readiness.blockers.length ? ` \u2014 ${readiness.blockers.join("; ")}` : ""} \u2192 ${readinessPath}`
+    );
     if (opts.diagnostic) {
-      const htmlPath = path6.join(dir, "publish-preview.html");
+      const htmlPath = path8.join(dir, "publish-preview.html");
       if (await savePageHtml(cdp, htmlPath)) report.previewHtml = htmlPath;
       logFillReport(report);
       logger.info("Diagnostic \u2014 nothing submitted.");
@@ -5353,7 +5884,10 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
     }
     if (opts.yes) {
       logger.info("Auto-submitting (--yes)\u2026");
-      await clickButton(cdp, DEPOSIT.publishButton);
+      if (!await clickButton(cdp, DEPOSIT.publishButton)) {
+        logger.error("Could not find/click the publish button \u2014 review the form and click \xAB D\xE9poser mon annonce \xBB yourself.");
+        return { ok: false, reason: "form-error", error: "publish button not found", report, missing: report.missing };
+      }
       await delay(1500);
       const err = await readFormError(cdp);
       if (err) {
@@ -5368,8 +5902,11 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
     const published = await waitForPublished(cdp, opts.timeoutSubmitMs ?? DEFAULT_SUBMIT_TIMEOUT_MS);
     if (!published) {
       logger.warn("Did not detect a published ad before the timeout.");
+      report.shots = shotLog.entries();
       return { ok: false, reason: "not-published", report, missing: report.missing };
     }
+    if (opts.screenshot !== false) await shotLog.shot(cdp, "30-confirmation");
+    report.shots = shotLog.entries();
     a.status = "published";
     a.leboncoin_url = published.url;
     if (published.id) a.leboncoin_id = published.id;
@@ -5385,10 +5922,13 @@ var DEFAULT_SUBMIT_TIMEOUT_MS;
 var init_publish = __esm({
   "src/publish.ts"() {
     "use strict";
+    init_auth();
     init_captcha();
     init_deposit_form();
+    init_form_introspect();
     init_logger();
     init_markdown();
+    init_readiness();
     init_screenshot();
     init_selectors();
     init_utils();
@@ -5401,9 +5941,9 @@ var delete_exports = {};
 __export(delete_exports, {
   runDelete: () => runDelete
 });
-import path7 from "path";
+import path9 from "path";
 import readline from "readline";
-async function defaultConnect2(url) {
+async function defaultConnect4(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
@@ -5417,7 +5957,7 @@ function promptYesNo(question) {
   });
 }
 async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
-  const dir = path7.join(annoncesDir, slug);
+  const dir = path9.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (a.status !== "published" || !a.leboncoin_id) {
     throw new Error(`annonce "${slug}" is not published (no leboncoin_id) \u2014 nothing to delete`);
@@ -5430,14 +5970,20 @@ async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
       return { ok: false, reason: "aborted" };
     }
   }
-  const connect = deps.connect ?? defaultConnect2;
+  const connect = deps.connect ?? defaultConnect4;
   const target = a.leboncoin_url || MANAGE.adUrl(a.leboncoin_id);
   const cdp = await connect(target);
   try {
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
+    const auth = await ensureLoggedIn(cdp);
+    if (!auth.ok) {
+      logger.error("Not logged in to Leboncoin \u2014 run `login`, then retry.");
+      return { ok: false, reason: "login-required" };
+    }
     const clickedDelete = await clickButton(cdp, MANAGE.deleteButton);
     if (!clickedDelete) {
-      logger.warn("Delete control not found on the ad page \u2014 open mes-annonces and delete it manually.");
+      logger.error("Delete control not found on the ad page \u2014 open mes-annonces and delete it manually.");
+      return { ok: false, reason: "control-not-found" };
     }
     await delay(1500);
     await clickButton(cdp, MANAGE.confirmButton);
@@ -5456,12 +6002,176 @@ async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
 var init_delete = __esm({
   "src/delete.ts"() {
     "use strict";
+    init_auth();
     init_captcha();
     init_deposit_form();
     init_logger();
     init_markdown();
     init_selectors();
     init_utils();
+  }
+});
+
+// src/manage.ts
+var manage_exports = {};
+__export(manage_exports, {
+  runDeactivate: () => runDeactivate,
+  runEdit: () => runEdit,
+  runMarkSold: () => runMarkSold,
+  runReactivate: () => runReactivate,
+  runRenew: () => runRenew
+});
+import path10 from "path";
+import readline2 from "readline";
+async function defaultConnect5(url) {
+  const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
+  return connectAndNavigate2(url);
+}
+function promptYesNo2(question) {
+  return new Promise((resolve2) => {
+    const rl = readline2.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve2(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
+}
+async function withAd(annoncesDir, slug, opts, deps, cfg, stage) {
+  const dir = path10.join(annoncesDir, slug);
+  const a = parseAnnonce(dir);
+  if (!a.leboncoin_id) throw new Error(`annonce "${slug}" has no leboncoin_id \u2014 it was never published`);
+  if (!cfg.allow.includes(a.status)) throw new Error(`annonce "${slug}" is "${a.status}" \u2014 expected ${cfg.allow.join(" or ")}`);
+  if (cfg.confirm && !opts.yes) {
+    const ask = deps.confirm ?? promptYesNo2;
+    if (!await ask(cfg.confirm(a))) {
+      logger.info("Aborted \u2014 nothing changed.");
+      return { ok: false, reason: "aborted" };
+    }
+  }
+  logger.warn(TOS_REMINDER);
+  const connect = deps.connect ?? defaultConnect5;
+  const cdp = await connect(a.leboncoin_url || MANAGE.adUrl(a.leboncoin_id));
+  try {
+    if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
+    const auth = await ensureLoggedIn(cdp);
+    if (!auth.ok) {
+      logger.error("Not logged in to Leboncoin \u2014 run `login`, then retry.");
+      return { ok: false, reason: "login-required" };
+    }
+    return await stage(cdp, a, dir);
+  } finally {
+    cdp.disconnect();
+  }
+}
+async function runMarkSold(annoncesDir, slug, opts = {}, deps = {}) {
+  return withAd(
+    annoncesDir,
+    slug,
+    opts,
+    deps,
+    { allow: ["published", "paused"], confirm: (a) => `Mark "${a.title}" as sold on Leboncoin? [y/N] ` },
+    async (cdp, a, dir) => {
+      if (!await clickButton(cdp, MANAGE.markSoldButton)) {
+        logger.error("Mark-sold control not found \u2014 do it manually in mes-annonces.");
+        return { ok: false, reason: "action-failed" };
+      }
+      await delay(1500);
+      await clickButton(cdp, MANAGE.manageConfirmButton);
+      await delay(1500);
+      a.status = "sold";
+      a.sold_at = (/* @__PURE__ */ new Date()).toISOString();
+      writeAnnonce(dir, a);
+      logger.success(`Marked "${slug}" as sold.`);
+      return { ok: true };
+    }
+  );
+}
+async function runRenew(annoncesDir, slug, opts = {}, deps = {}) {
+  return withAd(annoncesDir, slug, opts, deps, { allow: ["published"], confirm: (a) => `Renew / bump "${a.title}" on Leboncoin? [y/N] ` }, async (cdp) => {
+    if (!await clickButton(cdp, MANAGE.renewButton)) {
+      logger.warn("Renew control not found \u2014 bump it manually in mes-annonces.");
+      return { ok: false, reason: "action-failed" };
+    }
+    await delay(1500);
+    await clickButton(cdp, MANAGE.manageConfirmButton);
+    await delay(1e3);
+    logger.success(`Requested a bump for "${slug}" (status unchanged).`);
+    return { ok: true };
+  });
+}
+async function runDeactivate(annoncesDir, slug, opts = {}, deps = {}) {
+  return withAd(annoncesDir, slug, opts, deps, { allow: ["published"], confirm: (a) => `Deactivate (pause) "${a.title}"? [y/N] ` }, async (cdp, a, dir) => {
+    if (!await clickButton(cdp, MANAGE.deactivateButton)) {
+      logger.error("Deactivate control not found \u2014 pause it manually in mes-annonces.");
+      return { ok: false, reason: "action-failed" };
+    }
+    await delay(1500);
+    await clickButton(cdp, MANAGE.manageConfirmButton);
+    await delay(1e3);
+    a.status = "paused";
+    a.paused_at = (/* @__PURE__ */ new Date()).toISOString();
+    writeAnnonce(dir, a);
+    logger.success(`Paused "${slug}".`);
+    return { ok: true };
+  });
+}
+async function runReactivate(annoncesDir, slug, opts = {}, deps = {}) {
+  return withAd(annoncesDir, slug, opts, deps, { allow: ["paused"], confirm: (a) => `Reactivate "${a.title}"? [y/N] ` }, async (cdp, a, dir) => {
+    if (!await clickButton(cdp, MANAGE.reactivateButton)) {
+      logger.error("Reactivate control not found \u2014 reactivate it manually in mes-annonces.");
+      return { ok: false, reason: "action-failed" };
+    }
+    await delay(1500);
+    await clickButton(cdp, MANAGE.manageConfirmButton);
+    await delay(1e3);
+    a.status = "published";
+    a.paused_at = void 0;
+    writeAnnonce(dir, a);
+    logger.success(`Reactivated "${slug}".`);
+    return { ok: true };
+  });
+}
+async function runEdit(annoncesDir, slug, opts = {}, deps = {}) {
+  return withAd(annoncesDir, slug, opts, deps, { allow: ["published", "paused"] }, async (cdp, a, dir) => {
+    if (!await clickButton(cdp, MANAGE.editButton)) {
+      logger.error("Edit control not found \u2014 open the ad and click \xAB Modifier \xBB manually.");
+      return { ok: false, reason: "action-failed" };
+    }
+    await delay(2e3);
+    const photos = resolvePhotoPaths(dir, a);
+    const report = await fillForm(cdp, a, photos);
+    let previewPng;
+    if (opts.screenshot !== false) {
+      const png = path10.join(dir, "edit-preview.png");
+      if (await captureScreenshot(cdp, png)) previewPng = png;
+    }
+    if (report.missing.length) logger.warn(`Check before saving: ${report.missing.join(", ")}`);
+    if (opts.yes) {
+      if (!await clickButton(cdp, MANAGE.saveButton)) {
+        logger.error("Save control not found \u2014 review the prefilled form and click \xAB Enregistrer \xBB yourself.");
+        return { ok: false, reason: "action-failed", previewPng };
+      }
+      logger.success(`Submitted edits for "${slug}".`);
+    } else {
+      logger.warn("Edit form prefilled. Review it and click \xAB Enregistrer \xBB / \xAB Mettre \xE0 jour \xBB yourself.");
+    }
+    return { ok: true, previewPng };
+  });
+}
+var TOS_REMINDER;
+var init_manage = __esm({
+  "src/manage.ts"() {
+    "use strict";
+    init_auth();
+    init_captcha();
+    init_deposit_form();
+    init_logger();
+    init_markdown();
+    init_publish();
+    init_screenshot();
+    init_selectors();
+    init_utils();
+    TOS_REMINDER = "Reminder: automating a real account may breach Leboncoin's ToS \u2014 pace your actions and don't mass-post.";
   }
 });
 
@@ -5578,25 +6288,43 @@ them on your own account via the Chrome DevTools Protocol. Markdown is the sourc
 of truth; you (or the agent) write the copy, the engine just drives the browser.
 
 Usage:
+  leboncoin login [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
   leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
                        [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
   leboncoin validate <slug>
-  leboncoin publish <slug> [--diagnostic] [--strict] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
+  leboncoin inspect <slug>
+  leboncoin publish <slug> [--diagnostic] [--strict] [--shots] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
   leboncoin delete <slug> [--yes]
-  leboncoin list [--status draft|published|deleted]
+  leboncoin edit <slug> [--no-screenshot] [--yes]
+  leboncoin renew|mark-sold|deactivate|reactivate <slug> [--yes]
+  leboncoin list [--status draft|published|deleted|sold|paused]
   leboncoin scrape --query "<query|url>" [scraper options]
 
 Commands:
+  login/auth    Open the account page, actively verify you're logged in (DOM probe, not just a
+                redirect), and save an auth-state screenshot. --cookies-file attaches an exported
+                cookies.json (best-effort escape hatch; always re-verified). If logged out, it
+                waits while you log in once in the browser. Run this before publish/delete.
   new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
+  inspect       READ-ONLY: open the live deposit form and write form-map.json (every field +
+                required/optional + select options) + initial.png/html. Submits nothing. Read it
+                to discover category-specific required fields, then fill annonce.md and publish.
   publish       Open the deposit form, fill it + upload photos via CDP, save a preview
                 screenshot (read it to verify). Semi-auto by default: review and click
                 \xAB D\xE9poser mon annonce \xBB yourself. --diagnostic = fill + screenshot + HTML +
                 field report, no submit. --strict = refuse to submit while fields are missing.
-                --yes = auto-submit. --no-screenshot to skip the capture.
+                --yes = auto-submit. --shots = capture checkpoint + element + post-submit screenshots
+                into shots/. --no-screenshot to skip the capture. Writes push-readiness.json.
   delete        Remove a published ad (confirms unless --yes).
+  edit          Re-open the published ad's modify form, re-fill it from annonce.md, screenshot;
+                review and save \xAB Enregistrer \xBB yourself (or --yes to submit).
+  renew         Bump / "remettre en avant" a published ad (no status change).
+  mark-sold     Mark a published/paused ad as sold (status \u2192 sold).
+  deactivate    Pause a published ad without deleting it (status \u2192 paused).
+  reactivate    Put a paused ad back online (status \u2192 published).
   list/status   Show local annonces and their published state.
   scrape        The original read-only scraper (search results + ad details).
 
@@ -5611,7 +6339,24 @@ Publish/delete safety:
   you pass --yes. A DataDome captcha at submit always needs a human, so --yes is not
   fully headless. These actions hit your real account; see SKILL.md.
 `;
-var COMMANDS = /* @__PURE__ */ new Set(["new", "comparables", "validate", "publish", "delete", "list", "status", "scrape"]);
+var COMMANDS = /* @__PURE__ */ new Set([
+  "new",
+  "comparables",
+  "validate",
+  "publish",
+  "delete",
+  "list",
+  "status",
+  "scrape",
+  "login",
+  "auth",
+  "inspect",
+  "edit",
+  "renew",
+  "mark-sold",
+  "deactivate",
+  "reactivate"
+]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "query",
   "output",
@@ -5633,7 +6378,10 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "condition",
   "attributes",
   "status",
-  "timeout-submit"
+  "timeout-submit",
+  "cookies-file",
+  "out",
+  "timeout-login"
 ]);
 var BOOL_FLAGS = /* @__PURE__ */ new Set([
   "json",
@@ -5647,6 +6395,7 @@ var BOOL_FLAGS = /* @__PURE__ */ new Set([
   "diagnostic",
   "strict",
   "no-screenshot",
+  "shots",
   "force"
 ]);
 var SHORT = {
@@ -5829,6 +6578,14 @@ async function main() {
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       return;
     }
+    case "inspect": {
+      const slug = requireSlug(p);
+      const { runInspect: runInspect2 } = await Promise.resolve().then(() => (init_inspect(), inspect_exports));
+      const r = await runInspect2(annoncesDirOf(p), slug, {}, {});
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
+      return;
+    }
     case "publish": {
       const slug = requireSlug(p);
       const { runPublish: runPublish2 } = await Promise.resolve().then(() => (init_publish(), publish_exports));
@@ -5838,6 +6595,7 @@ async function main() {
         diagnostic: p.bools.has("diagnostic"),
         strict: p.bools.has("strict"),
         screenshot: !p.bools.has("no-screenshot"),
+        shots: p.bools.has("shots"),
         timeoutSubmitMs: intOf(p.values["timeout-submit"])
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
@@ -5850,10 +6608,44 @@ async function main() {
       }
       return;
     }
+    case "login":
+    case "auth": {
+      const { runAuth: runAuth2 } = await Promise.resolve().then(() => (init_auth(), auth_exports));
+      const r = await runAuth2({
+        cookiesFile: p.values["cookies-file"],
+        out: p.values.out,
+        timeoutMs: intOf(p.values["timeout-login"])
+      });
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
+      return;
+    }
     case "delete": {
       const slug = requireSlug(p);
       const { runDelete: runDelete2 } = await Promise.resolve().then(() => (init_delete(), delete_exports));
       const r = await runDelete2(annoncesDirOf(p), slug, { yes: p.bools.has("yes") });
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
+      return;
+    }
+    case "edit":
+    case "renew":
+    case "mark-sold":
+    case "deactivate":
+    case "reactivate": {
+      const slug = requireSlug(p);
+      const m = await Promise.resolve().then(() => (init_manage(), manage_exports));
+      const actions = {
+        edit: m.runEdit,
+        renew: m.runRenew,
+        "mark-sold": m.runMarkSold,
+        deactivate: m.runDeactivate,
+        reactivate: m.runReactivate
+      };
+      const r = await actions[p.command](annoncesDirOf(p), slug, {
+        yes: p.bools.has("yes"),
+        screenshot: !p.bools.has("no-screenshot")
+      });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       if (!r.ok) process.exit(2);
       return;

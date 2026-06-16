@@ -185,6 +185,14 @@ function getPortFile(): string {
 }
 
 /**
+ * Default path for the login-state screenshot written by the `login` command.
+ * Lives under the scraper home (honors LBC_SCRAPER_HOME so tests stay sandboxed).
+ */
+export function getAuthStatePath(): string {
+  return path.join(getScraperHome(), "auth-state.png");
+}
+
+/**
  * Create a PERSISTENT scraper profile by copying the real browser profile
  * ONCE. Subsequent runs reuse the existing profile so extensions, cookies,
  * and settings are preserved between sessions.

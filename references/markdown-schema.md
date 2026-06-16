@@ -31,25 +31,33 @@ lists beyond what is shown.
 | `shipping` | bool | no | Offer delivery. |
 | `attributes` | map | no | Category-specific fields, e.g. `brand: "Apple"`. Same vocabulary as the scraper's `Ad.attributes`. Unknown keys are skipped (logged) at publish, never fatal. |
 | `photos` | list | no | Explicit order (filenames under `photos/`). Empty list = every image in `photos/`, sorted. |
-| `status` | enum | — | `draft` \| `published` \| `deleted`. Must be `draft` to publish. |
+| `status` | enum | — | `draft` \| `published` \| `deleted` \| `sold` \| `paused`. Must be `draft` to publish. |
 | `leboncoin_id` | string | (set by publish) | Numeric ad id captured from the published URL. |
 | `leboncoin_url` | string | (set by publish) | The live ad URL. |
 | `published_at` | ISO string | (set by publish) | |
 | `deleted_at` | ISO string | (set by delete) | |
+| `sold_at` | ISO string | (set by mark-sold) | |
+| `paused_at` | ISO string | (set by deactivate; cleared on reactivate) | |
 
 The markdown **body** (everything after the closing `---`) is the description.
 
 ## Status state machine
 
 ```
-draft  --publish-->  published  --delete-->  deleted
+draft  --publish-->  published  --delete-->     deleted
+                     published  --mark-sold-->  sold        (also from paused)
+                     published  --deactivate--> paused
+                     paused     --reactivate--> published
+                     published  --edit-->       published   (re-fill, no status change)
 ```
 
 - `validate` requires `status: draft`.
 - `publish` refuses anything that is not a `draft`; on success it writes the
   `leboncoin_*` fields and flips `status` to `published`.
-- `delete` requires `status: published` and a `leboncoin_id`; it sets `status: deleted`
-  and `deleted_at`.
+- `delete` requires `status: published` and a `leboncoin_id`; it sets `status: deleted` and `deleted_at`.
+- `edit` re-opens the modify form for a `published`/`paused` ad and re-fills it (status unchanged).
+- `renew` bumps a `published` ad (no status change). `mark-sold` → `sold` (+`sold_at`),
+  `deactivate` → `paused` (+`paused_at`), `reactivate` → `published`. All require a `leboncoin_id`.
 
 ## Example (valid draft)
 

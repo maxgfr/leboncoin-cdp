@@ -20,7 +20,7 @@ export type SearchResults = {
 };
 
 /** Lifecycle of a locally-managed listing. */
-export type AnnonceStatus = "draft" | "published" | "deleted";
+export type AnnonceStatus = "draft" | "published" | "deleted" | "sold" | "paused";
 
 /**
  * A listing managed locally as markdown + photos (the source of truth).
@@ -53,6 +53,9 @@ export type Annonce = {
   leboncoin_url?: string;
   published_at?: string;
   deleted_at?: string;
+  /** Set when marked sold / paused via the manage commands. */
+  sold_at?: string;
+  paused_at?: string;
   /** The description (markdown body). */
   description: string;
 };

@@ -16,13 +16,16 @@
  * (importing ./browser, hence ./config, is deferred to the default path only).
  */
 import path from "node:path";
+import { ensureLoggedIn } from "./auth";
 import type { CDPClient } from "./cdp";
 import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
 import { clickButton, currentUrl, firstAdLink, pickSuggestion, resolveSelector, setInputValue, uploadPhotos } from "./deposit-form";
+import { type FormMap, introspectForm, writeFormMap } from "./form-introspect";
 import { logger } from "./logger";
 import { parseAnnonce, resolvePhotoPaths, writeAnnonce } from "./markdown";
-import { captureScreenshot, savePageHtml } from "./screenshot";
-import { DEPOSIT } from "./selectors";
+import { type PushReadiness, buildReadiness, readFormError, writeReadiness } from "./readiness";
+import { ShotLog, type ShotRef, captureElement, captureScreenshot, savePageHtml } from "./screenshot";
+import { DEPOSIT, ELEMENT_TARGETS } from "./selectors";
 import type { Annonce } from "./types";
 import { delay } from "./utils";
 
@@ -37,6 +40,8 @@ export interface PublishOptions {
   strict?: boolean;
   /** Capture a preview screenshot after filling (default true). */
   screenshot?: boolean;
+  /** Capture the full checkpoint set (00-initial/10-after-category/20-prefilled + element crops). */
+  shots?: boolean;
   /** Max wait for the published ad to appear (default 15 min). */
   timeoutSubmitMs?: number;
 }
@@ -63,6 +68,14 @@ export interface FillReport {
   /** Where the preview screenshot/HTML were saved (if any). */
   previewPng?: string;
   previewHtml?: string;
+  /** Machine-readable "can we push?" verdict + where it was written. */
+  readiness?: PushReadiness;
+  readinessPath?: string;
+  /** Checkpoint/element screenshots captured during the run. */
+  shots?: ShotRef[];
+  /** Live form map (every field + required + options) + where it was written. */
+  formMap?: FormMap;
+  formMapPath?: string;
 }
 
 export interface PublishResult {
@@ -83,25 +96,8 @@ async function defaultConnect(url: string): Promise<CDPClient> {
   return connectAndNavigate(url);
 }
 
-/** Read a visible form-error message off the page, if any (best-effort). */
-async function readFormError(cdp: CDPClient): Promise<string | null> {
-  return cdp
-    .evaluate<string | null>(
-      `(() => {
-        const els = Array.from(document.querySelectorAll('[role="alert"], [class*="error" i], [data-qa-id*="error" i]'));
-        for (const el of els) {
-          const t = (el.innerText || el.textContent || '').trim();
-          if (t && el.offsetParent !== null && t.length > 0 && t.length < 200) return t;
-        }
-        return null;
-      })()`,
-      false,
-    )
-    .catch(() => null);
-}
-
 /** Fill the entire deposit form from the annonce (best-effort, never throws). Returns a FillReport. */
-async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<FillReport> {
+export async function fillForm(cdp: CDPClient, a: Annonce, photos: string[], shotLog?: ShotLog): Promise<FillReport> {
   const fields: FieldFill[] = [];
 
   // 1. Category first — choosing it mutates the rest of the form, so later
@@ -119,6 +115,8 @@ async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<F
     }
   }
   fields.push({ field: "category", required: true, hasValue: !!a.category, filled: categoryFilled });
+  // Choosing the category mutates the rest of the form — snapshot that state.
+  await shotLog?.shot(cdp, "10-after-category");
 
   // 2. Core text fields.
   const fillText = async (field: string, required: boolean, value: string, candidates: string[]): Promise<void> => {
@@ -151,6 +149,12 @@ async function fillForm(cdp: CDPClient, a: Annonce, photos: string[]): Promise<F
   for (const [key, value] of Object.entries(a.attributes ?? {})) {
     const ok = await setInputValue(cdp, DEPOSIT.attrByKey(key), String(value));
     if (!ok) logger.warn(`Attribute "${key}" could not be set automatically — set it manually if needed.`);
+  }
+
+  // Shipping / delivery toggle (only when explicitly requested in the annonce).
+  if (a.shipping === true) {
+    const ok = await clickButton(cdp, DEPOSIT.shippingToggle);
+    if (!ok) logger.warn("Could not toggle shipping/delivery — enable it manually if needed.");
   }
 
   // 5. Photos (the one CDP DOM-domain operation).
@@ -230,14 +234,20 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
   const connect = deps.connect ?? defaultConnect;
   const cdp = await connect(DEPOSIT.startUrl);
   try {
-    const href = await currentUrl(cdp);
-    if (DEPOSIT.loginUrlPattern.test(href)) {
-      logger.error("Not logged in to Leboncoin — log in once in the opened browser, then retry.");
+    // Active pre-flight auth check (not just a URL match) so a dead session is an
+    // explicit, early signal instead of a mid-flow surprise.
+    const auth = await ensureLoggedIn(cdp);
+    if (!auth.ok) {
+      logger.error("Not logged in to Leboncoin — run `login` (or log in once in the opened browser), then retry.");
+      if (opts.screenshot !== false) await captureScreenshot(cdp, path.join(dir, "auth-state.png"));
       return { ok: false, reason: "login-required" };
     }
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
 
-    const report = await fillForm(cdp, a, photos);
+    const shotLog = new ShotLog(dir);
+    if (opts.shots) await shotLog.shot(cdp, "00-initial");
+
+    const report = await fillForm(cdp, a, photos, opts.shots ? shotLog : undefined);
 
     // Preview screenshot (default on) so the agent can SEE the prefilled form.
     if (opts.screenshot !== false) {
@@ -247,6 +257,43 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
         logger.info(`Saved form screenshot → ${png} (read it to verify before submitting)`);
       }
     }
+    // Extra checkpoint + cheap element crops the agent can verify field-by-field.
+    if (opts.shots) {
+      await shotLog.shot(cdp, "20-prefilled");
+      const shotsDir = path.join(dir, "shots");
+      await captureElement(cdp, ELEMENT_TARGETS.price, path.join(shotsDir, "elem-price.png"));
+      await captureElement(cdp, ELEMENT_TARGETS.photos, path.join(shotsDir, "elem-photos.png"));
+      await captureElement(cdp, ELEMENT_TARGETS.submit, path.join(shotsDir, "elem-submit.png"));
+    }
+
+    // Read-only form map: discover the live fields (incl. category-specific ones)
+    // and fold any required-but-empty field into missing[] ADDITIVELY — never a
+    // replacement, so the hardcoded core-required set can't silently drop out.
+    const formMap = await introspectForm(cdp);
+    report.formMap = formMap;
+    const formMapPath = path.join(dir, "form-map.json");
+    if (writeFormMap(formMapPath, formMap)) report.formMapPath = formMapPath;
+    for (const f of formMap.fields) {
+      if (!f.required || f.type === "file") continue;
+      const filledIn = String(f.value ?? "").trim() !== "" || f.checked === true;
+      if (filledIn) continue;
+      const label = f.label || f.key;
+      if (report.missing.some((m) => m.toLowerCase().includes(label.toLowerCase()))) continue;
+      report.fields.push({ field: label, required: true, hasValue: false, filled: false });
+      report.missing.push(`${label} (required on the live form — ${f.requiredSource ?? "required"})`);
+    }
+
+    // Push-readiness verdict — the machine-readable "can we push?" the agent reads first.
+    const href = await currentUrl(cdp);
+    const readiness = await buildReadiness(cdp, report, href);
+    const readinessPath = path.join(dir, "push-readiness.json");
+    if (writeReadiness(readinessPath, readiness)) {
+      report.readiness = readiness;
+      report.readinessPath = readinessPath;
+    }
+    logger.info(
+      `Push-readiness: ${readiness.ready ? "READY" : "NOT READY"}${readiness.blockers.length ? ` — ${readiness.blockers.join("; ")}` : ""} → ${readinessPath}`,
+    );
 
     if (opts.diagnostic) {
       const htmlPath = path.join(dir, "publish-preview.html");
@@ -270,7 +317,11 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
 
     if (opts.yes) {
       logger.info("Auto-submitting (--yes)…");
-      await clickButton(cdp, DEPOSIT.publishButton);
+      if (!(await clickButton(cdp, DEPOSIT.publishButton))) {
+        // Fail fast instead of waiting 15 min for an ad that was never submitted.
+        logger.error("Could not find/click the publish button — review the form and click « Déposer mon annonce » yourself.");
+        return { ok: false, reason: "form-error", error: "publish button not found", report, missing: report.missing };
+      }
       await delay(1_500);
       const err = await readFormError(cdp);
       if (err) {
@@ -286,8 +337,13 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
     const published = await waitForPublished(cdp, opts.timeoutSubmitMs ?? DEFAULT_SUBMIT_TIMEOUT_MS);
     if (!published) {
       logger.warn("Did not detect a published ad before the timeout.");
+      report.shots = shotLog.entries();
       return { ok: false, reason: "not-published", report, missing: report.missing };
     }
+
+    // Visual proof the ad is actually live (paired with the captured id/URL).
+    if (opts.screenshot !== false) await shotLog.shot(cdp, "30-confirmation");
+    report.shots = shotLog.entries();
 
     a.status = "published";
     a.leboncoin_url = published.url;

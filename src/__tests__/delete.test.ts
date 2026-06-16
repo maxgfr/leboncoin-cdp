@@ -15,14 +15,16 @@ import type { Annonce } from "../types";
 class FakeCDP {
   calls: { method: string }[] = [];
   clicks = 0;
+  constructor(private opts: { url?: string; clickFails?: boolean } = {}) {}
   async evaluate(expr: string): Promise<unknown> {
-    if (expr.includes("location.href")) return "https://www.leboncoin.fr/ad/123";
+    if (expr.includes("location.href")) return this.opts.url ?? "https://www.leboncoin.fr/ad/123";
     if (expr.includes("geo.captcha-delivery")) return expr.includes("hostname");
     if (expr.includes("querySelectorAll('button")) {
+      if (this.opts.clickFails) return false; // simulate a missing delete control
       this.clicks++;
       return true;
     }
-    if (expr.startsWith("!!document.querySelector")) return true;
+    if (expr.startsWith("!!document.querySelector")) return !this.opts.clickFails;
     if (expr.includes("body.innerText")) return true; // deleted marker present
     return null;
   }
@@ -91,6 +93,25 @@ describe("runDelete", () => {
     const res = await runDelete(root, "ad", { yes: true }, { connect: async () => cdp as never, confirm });
     expect(res.ok).toBe(true);
     expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("returns login-required (and deletes nothing) when the session is logged out", async () => {
+    const { dir, root } = setup();
+    const cdp = new FakeCDP({ url: "https://www.leboncoin.fr/connexion" });
+    const res = await runDelete(root, "ad", { yes: true }, { connect: async () => cdp as never });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe("login-required");
+    expect(cdp.clicks).toBe(0);
+    expect(parseAnnonce(dir).status).toBe("published");
+  });
+
+  it("returns control-not-found (and leaves it published) when the delete control is missing", async () => {
+    const { dir, root } = setup();
+    const cdp = new FakeCDP({ clickFails: true });
+    const res = await runDelete(root, "ad", { yes: true }, { connect: async () => cdp as never });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe("control-not-found");
+    expect(parseAnnonce(dir).status).toBe("published"); // not corrupted to "deleted"
   });
 
   it("refuses to delete an annonce that was never published", async () => {
