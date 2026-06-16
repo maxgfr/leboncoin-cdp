@@ -3,7 +3,7 @@ name: leboncoin
 description: "Use when the user wants to publish / déposer une annonce on Leboncoin, manage their classifieds listings, create or delete a Leboncoin ad, or scrape Leboncoin. Manages listings locally as markdown + photos (the source of truth): you (or the agent) write and enrich the description — grounded by comparable live listings — then the skill drives the « déposer une annonce » form via the Chrome DevTools Protocol on the user's own logged-in browser to publish, and deletes ads the same way. Triggers: 'publie mon annonce', 'déposer une annonce leboncoin', 'mets en ligne mon annonce', 'post my listing to leboncoin', 'create a leboncoin ad', 'supprime mon annonce', 'delete my leboncoin listing', 'gérer mes annonces leboncoin', 'manage my leboncoin listings', 'scrape leboncoin', 'prix comparables leboncoin', 'find comparable prices on leboncoin'. Semi-automatic and safe by default: it fills the form and uploads the photos via CDP, but you review on screen and click « Déposer mon annonce » yourself (a flag opts into full-auto). Built on the original zero-bot-detection CDP scraper."
 license: MIT
 metadata:
-  version: 1.2.0
+  version: 1.2.1
 ---
 
 # leboncoin — manage your listings, publish/delete via CDP
