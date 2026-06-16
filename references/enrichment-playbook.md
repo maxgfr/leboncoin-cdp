@@ -42,17 +42,23 @@ judgment in `comparables.md` whenever possible.
 ## 5. Ask the user for anything missing
 
 You don't always have every fact. If the annonce is missing a required field — zipcode,
-exact model/year, condition, price — **ask the user** and write the answer into `annonce.md`.
-Never invent it and never publish a blank field. Two signals tell you what's missing:
-- `validate <slug>` issues (hard requirements), and
-- `publish <slug> --diagnostic` → its `missing[]` (fields empty in the annonce or that didn't
-  resolve on the live form). In normal `publish`, the CLI also prints `ask the user about → …`.
+exact model/year, condition, price, or a **category-specific** one (mileage, surface, DPE…) —
+**ask the user** and write the answer into `annonce.md`. Never invent it and never publish a blank
+field. Three signals tell you what's missing:
+- `validate <slug>` issues (hard structural requirements),
+- `inspect <slug>` → `form-map.json`: every live field with `required` + `requiredSource` + select
+  `options` — the authoritative list of what THIS category's form demands (read it before filling),
+- `publish <slug> --diagnostic` → `missing[]` (annonce-empty + live-required fields, folded
+  together) and `push-readiness.json` (`ready` / `blockers[]`). In normal `publish`, the CLI also
+  prints `ask the user about → …`. Live required fields are authoritative over the hardcoded set.
 
 ## 6. Then validate → publish (verify with the screenshot)
 
 - `validate <slug>` and fix each issue (warnings are advisory).
-- `publish <slug>` fills the form and saves `annonces/<slug>/publish-preview.png` — **Read
-  that screenshot** to confirm the form looks right before anyone submits. For a deeper look
-  (which selector matched each field + the page HTML), use `publish <slug> --diagnostic`.
+- `publish <slug>` fills the form and writes `publish-preview.png` (Read it), `form-map.json`
+  (Read it for required/optional + options), and `push-readiness.json` (**Read it first** —
+  `ready` / `blockers[]`). For a deeper look (which selector matched + page HTML + element crops),
+  use `publish <slug> --diagnostic --shots`; after a real publish, `shots/30-confirmation.png` is
+  the proof the ad went live.
 - In semi-auto (default) tell the user to **review the prefilled form and click
   « Déposer mon annonce »**. Only use `--yes` if they explicitly asked for full-auto.

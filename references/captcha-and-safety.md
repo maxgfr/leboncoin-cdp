@@ -30,11 +30,26 @@ Never pass `--yes` on the user's behalf without an explicit request.
 - This preserves the logged-in Leboncoin session, cookies and extensions. `--reset-profile`
   re-copies from the real profile.
 
-## Login required
+## Login / session
 
-- `publish`/`delete` need that profile to already be **logged in** to Leboncoin. If the
-  deposit flow redirects to login, `publish` stops and returns `login-required`. Tell the
-  user to log in once in the opened browser, then retry.
+- **Active verification.** `login` (alias `auth`) opens the account page and checks the session
+  with a PASSIVE in-page probe — account/logout DOM markers + visible text + URL-not-on-login,
+  run as `cdp.evaluate` exactly like the captcha probe, so it is indistinguishable from the site's
+  own JavaScript. **It never fires a synthetic authenticated XHR.** It saves `auth-state.png` to
+  Read. `publish`/`delete`/`edit`/`renew`/`mark-sold`/`deactivate`/`reactivate` all pre-flight the
+  same check and stop early with `login-required` (an explicit, screenshot-backed signal instead of
+  a mid-flow surprise). The pre-flight only blocks when it is *confident* the session is logged out
+  (on the login page, or a login-required marker is visible) — an inconclusive probe is allowed
+  through, with the human review gate as the final guard.
+- **The reliable path** is the once-copied real-browser profile (it carries the valid session +
+  device fingerprint). If logged out, `login` waits while you log in once in the opened browser.
+- **Cookie attach is a best-effort escape hatch.** `login --cookies-file cookies.json` injects
+  cookies via CDP `Network.setCookie` (scoped to `.leboncoin.fr`). DataDome binds the session to
+  the device fingerprint and validates the token server-side, so an exported cookie often *sets*
+  yet still bounces to `/connexion`. The command therefore ALWAYS re-probes and reports the
+  **probe** result, never the set-count — never trust "N cookies attached" as "logged in". (The
+  live `Cookies` SQLite re-import / `--import-profile` is deliberately NOT implemented: it is
+  OS-keychain-locked while the source browser runs and adds little over the one-time profile copy.)
 
 ## Legal / Terms of Service
 

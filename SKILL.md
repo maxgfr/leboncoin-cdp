@@ -38,12 +38,16 @@ node scripts/leboncoin.mjs <command> [options]
 
 | Command | What it does |
 |---|---|
+| `login` (alias `auth`) | Open the account page, **actively verify** you're logged in (DOM probe, not just a redirect), save `auth-state.png`. `--cookies-file <p>` attaches an exported `cookies.json` (best-effort escape hatch, always re-verified); waits while you log in if needed. **Run before publish/delete.** |
 | `new <slug>` | Scaffold `annonces/<slug>/annonce.md` + `photos/`. `--notes`/`--price`/`--zipcode`/`--condition`/`--attributes` prefill it. |
 | `comparables <slug>` | Scrape similar live listings → `comparables.json` + `comparables.md` (price/keyword/attribute grounding). |
 | `validate <slug>` | Structural gate: required fields, ≥1 photo, real description, `status: draft`. Exit ≠ 0 if invalid (warnings are advisory). |
-| `publish <slug>` | Fill the deposit form + upload photos via CDP, save a preview screenshot. Semi-auto; `--diagnostic` (field report + HTML, no submit), `--strict`, `--yes`, `--no-screenshot`. |
+| `inspect <slug>` | **Read-only**: open the live deposit form and write `form-map.json` (every field + required/optional + select options) + `initial.png`/`html`. Submits nothing. Use it to discover category-specific required fields. |
+| `publish <slug>` | Fill the deposit form + upload photos via CDP, write `form-map.json` + `push-readiness.json` + a preview screenshot. Semi-auto; `--diagnostic` (field report + HTML, no submit), `--strict`, `--shots` (checkpoint + element + post-submit confirmation shots), `--yes`, `--no-screenshot`. |
+| `edit <slug>` | Re-open the published ad's modify form, re-fill from `annonce.md`, screenshot; review and click « Enregistrer » yourself (`--yes` submits). |
+| `renew` / `mark-sold` / `deactivate` / `reactivate` `<slug>` | Bump / mark sold (→ `sold`) / pause (→ `paused`) / put back online (→ `published`). Confirm unless `--yes`. |
 | `delete <slug>` | Remove a published ad (confirms unless `--yes`). |
-| `list` / `status` | Show local annonces and their published state. |
+| `list` / `status` | Show local annonces and their state (`draft`/`published`/`sold`/`paused`/`deleted`). |
 | `scrape` | The original read-only scraper (search results + ad details). |
 
 Common flags: `--annonces-dir <dir>` (default `./annonces`), `--json`, `-h`, `-v`.
@@ -51,6 +55,11 @@ Full reference: `references/cli.md`.
 
 ## Workflow
 
+0. **Check login** — `login` opens the account page, verifies the session (it Reads an account
+   marker, not just the URL), and saves `~/.lbc-scraper/auth-state.png`. **Read that PNG** to
+   confirm the account is shown before publishing/deleting. If logged out, log in once in the
+   opened browser (the command waits), then continue. `publish`/`delete`/`edit`/… also pre-flight
+   this and stop early with `login-required` if the session is dead.
 1. **Create** — `new <slug> --title "<t>" --category "<c>" --notes "<rough description>"`.
    `--notes` seeds the body; you can also pass `--price`, `--zipcode`, `--condition`,
    `--attributes "k=v,k2=v2"`. Drop the user's photos into `annonces/<slug>/photos/`.
@@ -63,13 +72,23 @@ Full reference: `references/cli.md`.
    `price`/`category`/`attributes` from what comparable ads show.
 5. **Validate** — `validate <slug>` until it passes (warnings are advisory).
 6. **Preview & publish** — `publish <slug>`. The engine fills the form, uploads the photos,
-   and saves `annonces/<slug>/publish-preview.png` — **Read that screenshot to verify the
-   form**. If fields are blank/unresolved (the CLI prints `ask the user about → …`, or run
-   `publish <slug> --diagnostic` for the full field report + saved HTML), ask the user, fix
-   `annonce.md`, and retry. Then tell the user: *review the prefilled form and click
-   « Déposer mon annonce »*. Use `--yes` only if they asked for full-auto. On success the ad
-   id/URL are written back and `status` becomes `published`.
-7. **Delete** when needed — `delete <slug>` (uses the stored id).
+   and writes three artifacts next to the annonce:
+   - `publish-preview.png` — **Read it** to verify the form visually.
+   - `form-map.json` — every live field with its **required/optional** status (and why) + select
+     options. **Read it** to find mandatory fields the annonce didn't cover — often
+     **category-specific** (e.g. `kilométrage`, `surface`). Live required fields are folded into
+     the `missing[]` / `ask the user about → …` list.
+   - `push-readiness.json` — the machine-readable *can-we-push?* verdict (`ready`, `blockers[]`).
+     **Read it first.**
+   For any required-but-empty field, **ask the user**, write the answer into `annonce.md`
+   (durable), and retry. (`publish --diagnostic` fills + saves everything without submitting;
+   `inspect <slug>` does the same read-only without filling.) Then tell the user: *review the
+   prefilled form and click « Déposer mon annonce »*. Use `--yes` only if they asked for full-auto.
+   On success the ad id/URL are written back, `status` becomes `published`, and (with `--shots`)
+   `shots/30-confirmation.png` is the visual proof it went live.
+7. **Manage** — `edit` (fix a typo / change price-photos; review + save), `renew` (bump),
+   `mark-sold`, `deactivate`/`reactivate` (pause/resume), `delete` (uses the stored id). All
+   pre-flight the login check and confirm unless `--yes`.
 
 ## Markdown schema
 
@@ -99,9 +118,13 @@ Full contract + state machine: `references/markdown-schema.md`.
 - **Never `--yes` without explicit user consent.** Default semi-auto is the guardrail.
 - **DataDome** is solved by the human in the browser; the engine waits up to 5 min.
   A captcha at submit means `--yes` still needs a human there.
-- **Login**: publish/delete need the `~/.lbc-scraper` profile already logged in. If the
-  flow redirects to login, `publish` stops with `login-required` — tell the user to log
-  in once in the opened browser, then retry.
+- **Login**: publish/delete/edit/manage need the `~/.lbc-scraper` profile already logged in.
+  Run `login` first to **verify** (it Reads an account marker and saves `auth-state.png`); every
+  write action also pre-flights it and stops early with `login-required`. The reliable session is
+  the once-copied real-browser profile. `--cookies-file` (attach an exported `cookies.json`) is a
+  **best-effort escape hatch only** — DataDome binds the session to the device fingerprint and
+  validates the token server-side, so injected cookies often set yet still bounce to login; the
+  command always re-verifies and reports the *probe* result, never the set-count.
 - **ToS**: automating posts/deletes on a real account may violate Leboncoin's terms and
   risks account action. The semi-auto default + explicit `--yes` opt-in are deliberate.
   Details: `references/captcha-and-safety.md`.

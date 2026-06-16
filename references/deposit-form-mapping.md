@@ -54,6 +54,39 @@ case-insensitive), then by CSS fallback. URL recognition uses regex lists:
    group 1 = the numeric id) and add a fixture URL to `selectors.test.ts`.
 5. `pnpm run build` (refresh the committed bundle) and `pnpm test`.
 
+## Dynamic discovery (the form map) — `form-introspect.ts`
+
+`selectors.ts` is the deterministic **fast path**; the form map is the **read-only aid** that makes
+the engine flexible. A single `cdp.evaluate` (`introspectForm`) walks every visible control
+(`input/textarea/select/[role=combobox|listbox|radiogroup|switch]`) into a `FormMap` of
+`FieldDescriptor`s: `label` (from `<label for>` / wrapping label / `aria-label`/`aria-labelledby` /
+placeholder / name), `name`/`id`/`data-qa-id`, `type`, current `value`, select `options`, a stable
+`selector`, and **`required` + `requiredSource`**. Required signals, by reliability:
+
+| source | confidence | note |
+|---|---|---|
+| `required` attribute | high | native HTML |
+| `aria-required="true"` | high | preferred on React forms |
+| `*` in the label | medium | visual marker only |
+| `aria-invalid="true"` | medium | appears only after validation fires |
+
+`inspect <slug>` writes `form-map.json` (read-only); `publish` writes it too and folds any
+live-required-but-empty field into `missing[]` **additively** (union with the hardcoded core — never
+a replacement, so core required fields can't silently drop out). This is how category-specific
+required fields (e.g. `kilométrage`, `surface`, `DPE`) surface for the agent to fill in `annonce.md`.
+The map is read-only: the engine never auto-fills arbitrary fields or auto-clicks "next" (that would
+be bot-like and risk an accidental submit); the human-review gate stays the guard.
+
+## Element clips for offline debugging — `screenshot.ts`
+
+`captureElement(cdp, candidates, path)` crops a single control: `resolveSelector` → `DOM.getDocument`
+→ `DOM.querySelector` → `DOM.getBoxModel` → `Page.captureScreenshot{ clip }`. It is **best-effort**:
+an off-screen/`display:none` element (empty box) or a missing selector returns `false` and degrades to
+the full-page checkpoint shot — never throws, never gates. Named targets live in `ELEMENT_TARGETS`
+(`DEPOSIT.photoGrid`, `priceInput`, `publishButton.css`) so no literal selector leaks out of
+`selectors.ts`. On HiDPI the clip rect may be slightly off — validate against a live page when
+maintaining; the full-page shots are the reliable proof.
+
 ## Why this is safe to ship imperfect
 
 The semi-auto default is the safety net: even if one selector drifts and a field is left

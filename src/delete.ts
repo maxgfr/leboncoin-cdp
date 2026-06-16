@@ -8,6 +8,7 @@
  */
 import path from "node:path";
 import readline from "node:readline";
+import { ensureLoggedIn } from "./auth";
 import type { CDPClient } from "./cdp";
 import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
 import { clickButton, pageHasText } from "./deposit-form";
@@ -27,7 +28,7 @@ export interface DeleteDeps {
 
 export interface DeleteResult {
   ok: boolean;
-  reason?: "aborted" | "not-published";
+  reason?: "aborted" | "not-published" | "login-required" | "control-not-found";
 }
 
 async function defaultConnect(url: string): Promise<CDPClient> {
@@ -67,9 +68,20 @@ export async function runDelete(annoncesDir: string, slug: string, opts: DeleteO
   try {
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
 
+    // Pre-flight auth check (delete previously did none): a dead session would
+    // otherwise just "fail to find the delete control" with no clear reason.
+    const auth = await ensureLoggedIn(cdp);
+    if (!auth.ok) {
+      logger.error("Not logged in to Leboncoin — run `login`, then retry.");
+      return { ok: false, reason: "login-required" };
+    }
+
     const clickedDelete = await clickButton(cdp, MANAGE.deleteButton);
     if (!clickedDelete) {
-      logger.warn("Delete control not found on the ad page — open mes-annonces and delete it manually.");
+      // Don't mark the ad deleted locally when we never even found the control —
+      // that would desync local state from a still-live ad.
+      logger.error("Delete control not found on the ad page — open mes-annonces and delete it manually.");
+      return { ok: false, reason: "control-not-found" };
     }
     await delay(1_500);
     await clickButton(cdp, MANAGE.confirmButton);

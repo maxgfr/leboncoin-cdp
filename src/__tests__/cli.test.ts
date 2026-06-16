@@ -56,6 +56,28 @@ describe("parseArgs", () => {
     expect(run(["new", "x", "--force=1"]).exitCode).toBe(1);
   });
 
+  it("recognizes login/auth and their value flags", () => {
+    const login = run(["login", "--cookies-file", "cookies.json", "--out", "auth.png", "--timeout-login", "1000"]);
+    expect(login.result?.command).toBe("login");
+    expect(login.result?.values["cookies-file"]).toBe("cookies.json");
+    expect(login.result?.values.out).toBe("auth.png");
+    expect(login.result?.values["timeout-login"]).toBe("1000");
+
+    expect(run(["auth"]).result?.command).toBe("auth");
+  });
+
+  it("recognizes inspect and publish --shots", () => {
+    expect(run(["inspect", "macbook"]).result?.command).toBe("inspect");
+    const pub = run(["publish", "macbook", "--shots"]);
+    expect(pub.result?.bools.has("shots")).toBe(true);
+  });
+
+  it("recognizes the lifecycle commands", () => {
+    for (const cmd of ["edit", "renew", "mark-sold", "deactivate", "reactivate"]) {
+      expect(run([cmd, "macbook", "--yes"]).result?.command).toBe(cmd);
+    }
+  });
+
   it("prints help (exit 0) for -h and version (exit 0) for -v", () => {
     expect(run(["-h"]).exitCode).toBe(0);
     expect(run(["-v"]).exitCode).toBe(0);

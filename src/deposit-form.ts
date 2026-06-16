@@ -124,6 +124,22 @@ export async function firstAdLink(cdp: CDPClient): Promise<string> {
   return cdp.evaluate<string>(`(() => { const a = document.querySelector('a[href*="/ad/"]'); return a ? a.href : ''; })()`, false).catch(() => "");
 }
 
+/**
+ * Passive logged-in probe: a DOM signal (one of `loggedInSelectors` resolves) OR
+ * a visible text marker. Literals are passed in (from selectors.ts AUTH.*), so
+ * this file stays free of hard-coded selectors. Returns the matched signals.
+ */
+export async function probeLoggedIn(
+  cdp: CDPClient,
+  opts: { loggedInSelectors: string[]; loggedInTextMarkers: string[] },
+): Promise<{ loggedIn: boolean; signals: string[] }> {
+  const signals: string[] = [];
+  const domSel = await resolveSelector(cdp, opts.loggedInSelectors);
+  if (domSel) signals.push(`dom:${domSel}`);
+  if (await pageHasText(cdp, opts.loggedInTextMarkers)) signals.push("text");
+  return { loggedIn: signals.length > 0, signals };
+}
+
 /** True if any of `markers` appears in the page text (delete confirmation). */
 export async function pageHasText(cdp: CDPClient, markers: string[]): Promise<boolean> {
   const arr = JSON.stringify(markers.map((m) => m.toLowerCase()));
