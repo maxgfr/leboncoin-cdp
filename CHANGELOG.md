@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+# [1.2.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.1.0...v1.2.0) (2026-06-16)
+
+
+### Features
+
+* login verification, push-readiness, dynamic form introspection, and listing lifecycle ([7e25305](https://github.com/maxgfr/leboncoin-cdp/commit/7e253059d5c8d3ac7bb2bf072dc2b0aca70ede38))
+
 # [1.1.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.0.0...v1.1.0) (2026-06-15)
 
 
