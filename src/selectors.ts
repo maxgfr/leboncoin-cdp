@@ -104,20 +104,29 @@ export const AUTH = {
   accountUrl: `${BASE_URL}/mes-annonces`,
   loginUrl: `${BASE_URL}/connexion`,
 
-  /** DOM markers that only render for a logged-in user (ordered, best-effort). */
+  /**
+   * Matches a leboncoin.fr URL (incl. subdomains). A live session STAYS on
+   * leboncoin.fr; being redirected off-domain (e.g. accounts.google.com for the
+   * "Sign in with Google" OAuth) means we are mid-auth, i.e. NOT logged in — and
+   * is also why the logged-in DOM markers below must never be trusted off-site
+   * (a Google page has its own /account links).
+   */
+  leboncoinHostPattern: /^https?:\/\/([^/]*\.)?leboncoin\.fr(?:[:/]|$)/i,
+
+  /** DOM markers that only render for a logged-in user, leboncoin-specific (ordered, best-effort). */
   loggedInSelectors: [
     '[data-qa-id="header-account"]',
     '[data-qa-id*="account" i]',
     'a[href*="/mes-annonces"]',
-    'a[href*="/account"]',
     'a[href*="/mon-compte"]',
+    'a[href*="/messagerie"]',
+    'a[href*="/favoris"]',
     'a[href*="/deconnexion"]',
-    'button[aria-label*="compte" i]',
   ],
   /** Visible text that implies a logged-in session. */
-  loggedInTextMarkers: ["mes annonces", "se déconnecter", "déconnexion", "mon compte"],
-  /** Visible text that implies a logged-out session (used as a weak hint only). */
-  loginRequiredTextMarkers: ["se connecter", "identifiez-vous", "créer un compte"],
+  loggedInTextMarkers: ["mes annonces", "se déconnecter", "déconnexion", "ma messagerie"],
+  /** Visible text that implies a logged-out / sign-in page. */
+  loginRequiredTextMarkers: ["se connecter", "identifiez-vous", "créer un compte", "connecte-toi", "sign in to leboncoin", "sign in with google"],
 };
 
 /**

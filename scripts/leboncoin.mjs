@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { createRequire as __lbcCreateRequire } from "node:module";
+const require = __lbcCreateRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -5256,20 +5258,28 @@ var init_selectors = __esm({
       /** Authenticated route; redirects to login when the session is dead. */
       accountUrl: `${BASE_URL}/mes-annonces`,
       loginUrl: `${BASE_URL}/connexion`,
-      /** DOM markers that only render for a logged-in user (ordered, best-effort). */
+      /**
+       * Matches a leboncoin.fr URL (incl. subdomains). A live session STAYS on
+       * leboncoin.fr; being redirected off-domain (e.g. accounts.google.com for the
+       * "Sign in with Google" OAuth) means we are mid-auth, i.e. NOT logged in — and
+       * is also why the logged-in DOM markers below must never be trusted off-site
+       * (a Google page has its own /account links).
+       */
+      leboncoinHostPattern: /^https?:\/\/([^/]*\.)?leboncoin\.fr(?:[:/]|$)/i,
+      /** DOM markers that only render for a logged-in user, leboncoin-specific (ordered, best-effort). */
       loggedInSelectors: [
         '[data-qa-id="header-account"]',
         '[data-qa-id*="account" i]',
         'a[href*="/mes-annonces"]',
-        'a[href*="/account"]',
         'a[href*="/mon-compte"]',
-        'a[href*="/deconnexion"]',
-        'button[aria-label*="compte" i]'
+        'a[href*="/messagerie"]',
+        'a[href*="/favoris"]',
+        'a[href*="/deconnexion"]'
       ],
       /** Visible text that implies a logged-in session. */
-      loggedInTextMarkers: ["mes annonces", "se d\xE9connecter", "d\xE9connexion", "mon compte"],
-      /** Visible text that implies a logged-out session (used as a weak hint only). */
-      loginRequiredTextMarkers: ["se connecter", "identifiez-vous", "cr\xE9er un compte"]
+      loggedInTextMarkers: ["mes annonces", "se d\xE9connecter", "d\xE9connexion", "ma messagerie"],
+      /** Visible text that implies a logged-out / sign-in page. */
+      loginRequiredTextMarkers: ["se connecter", "identifiez-vous", "cr\xE9er un compte", "connecte-toi", "sign in to leboncoin", "sign in with google"]
     };
     ELEMENT_TARGETS = {
       photos: DEPOSIT.photoGrid,
@@ -5345,7 +5355,10 @@ async function defaultConnect(url) {
 }
 async function checkLogin(cdp) {
   const url = await currentUrl(cdp);
-  if (DEPOSIT.loginUrlPattern.test(url)) return { loggedIn: false, loggedOut: true, signals: ["url:login"], url };
+  if (url) {
+    if (DEPOSIT.loginUrlPattern.test(url)) return { loggedIn: false, loggedOut: true, signals: ["url:login"], url };
+    if (!AUTH.leboncoinHostPattern.test(url)) return { loggedIn: false, loggedOut: true, signals: ["url:offsite-auth"], url };
+  }
   let probe = await probeLoggedIn(cdp, AUTH);
   if (!probe.loggedIn) {
     await delay(REPROBE_DELAY_MS);

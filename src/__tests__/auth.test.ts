@@ -73,6 +73,16 @@ describe("checkLogin", () => {
     const state = await checkLogin(cdp as never);
     expect(state.loggedIn).toBe(false);
   });
+
+  it("does NOT report logged-in when redirected off-site to OAuth, even if a generic /account link matches", async () => {
+    // Regression: the « Sign in to leboncoin » Google OAuth page has its own
+    // /account links — being off leboncoin.fr means mid-auth, not logged in.
+    const cdp = new FakeCDP({ url: "https://accounts.google.com/o/oauth2/v2/auth?client=leboncoin", loggedIn: true });
+    const state = await checkLogin(cdp as never);
+    expect(state.loggedIn).toBe(false);
+    expect(state.loggedOut).toBe(true);
+    expect(state.signals).toContain("url:offsite-auth");
+  });
 });
 
 describe("ensureLoggedIn", () => {

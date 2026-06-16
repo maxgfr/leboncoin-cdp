@@ -94,7 +94,14 @@ async function defaultConnect(url: string): Promise<CDPClient> {
  */
 export async function checkLogin(cdp: CDPClient): Promise<AuthState> {
   const url = await currentUrl(cdp);
-  if (DEPOSIT.loginUrlPattern.test(url)) return { loggedIn: false, loggedOut: true, signals: ["url:login"], url };
+  // Confident logged-out: on a login URL, OR redirected off leboncoin.fr to an
+  // auth provider (e.g. the Google "Sign in to leboncoin" OAuth page). A live
+  // session never leaves leboncoin.fr — and an off-site page's own /account
+  // links must not be mistaken for a logged-in leboncoin header.
+  if (url) {
+    if (DEPOSIT.loginUrlPattern.test(url)) return { loggedIn: false, loggedOut: true, signals: ["url:login"], url };
+    if (!AUTH.leboncoinHostPattern.test(url)) return { loggedIn: false, loggedOut: true, signals: ["url:offsite-auth"], url };
+  }
 
   let probe = await probeLoggedIn(cdp, AUTH);
   if (!probe.loggedIn) {

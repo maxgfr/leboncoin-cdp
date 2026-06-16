@@ -23,5 +23,17 @@ export default defineConfig({
   sourcemap: false,
   noExternal: [/^ws$/],
   external: ["bufferutil", "utf-8-validate"],
-  banner: { js: "#!/usr/bin/env node" },
+  // The output is ESM, but the bundled `ws` is CommonJS and does `require('events')`,
+  // `require('crypto')`, etc. for Node built-ins. Without an ambient `require`,
+  // esbuild's __require shim throws "Dynamic require of 'events' is not supported"
+  // at the first CDP connect (publish/delete/scrape/login). A createRequire shim
+  // gives those built-in requires a working resolver (the optional native addons
+  // bufferutil/utf-8-validate then require()-throw and ws falls back to pure JS).
+  banner: {
+    js: [
+      "#!/usr/bin/env node",
+      'import { createRequire as __lbcCreateRequire } from "node:module";',
+      "const require = __lbcCreateRequire(import.meta.url);",
+    ].join("\n"),
+  },
 });
