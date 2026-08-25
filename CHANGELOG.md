@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+## [1.2.2](https://github.com/maxgfr/leboncoin-cdp/compare/v1.2.1...v1.2.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* make leboncoin compatible with Codex ([18bcbae](https://github.com/maxgfr/leboncoin-cdp/commit/18bcbaeb03bb11b4af107d3e9126452b0bb794e4))
+
 ## [1.2.1](https://github.com/maxgfr/leboncoin-cdp/compare/v1.2.0...v1.2.1) (2026-06-16)
 
 

@@ -3,7 +3,7 @@ name: leboncoin
 description: "Use when the user wants to publish, edit, delete, or price a Leboncoin listing, manage classifieds from local markdown and photos, or scrape comparable Leboncoin ads. Triggers include 'publie mon annonce', 'déposer une annonce leboncoin', 'mets en ligne mon annonce', 'post my listing to leboncoin', 'supprime mon annonce', 'manage my leboncoin listings', 'scrape leboncoin', and 'prix comparables leboncoin'. The skill enriches copy from live comparables and drives the user's logged-in browser through CDP. Publishing stays semi-automatic by default: it fills the form and uploads photos, then the user reviews and submits; full automation requires explicit opt-in."
 license: MIT
 metadata:
-  version: 1.2.1
+  version: 1.2.2
 ---
 
 # leboncoin — manage your listings, publish/delete via CDP
