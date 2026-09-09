@@ -6292,7 +6292,7 @@ function formatValidationReport(r) {
 }
 
 // src/types.ts
-var VERSION = "1.2.2";
+var VERSION = "1.2.3";
 
 // src/cli.ts
 var HELP = `leboncoin v${VERSION}

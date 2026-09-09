@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+## [1.2.3](https://github.com/maxgfr/leboncoin-cdp/compare/v1.2.2...v1.2.3) (2026-09-09)
+
+
+### Bug Fixes
+
+* **skills:** preserve manual invocation across agent hosts ([e26d69e](https://github.com/maxgfr/leboncoin-cdp/commit/e26d69e59a94d59667396eab85193f7a01c263f5))
+
 ## [1.2.2](https://github.com/maxgfr/leboncoin-cdp/compare/v1.2.1...v1.2.2) (2026-08-25)
 
 
