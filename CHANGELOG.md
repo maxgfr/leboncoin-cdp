@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+# [1.3.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.2.3...v1.3.0) (2026-10-01)
+
+
+### Bug Fixes
+
+* **deposit:** fixes found by walking the live wizard (nothing submitted) ([87310f8](https://github.com/maxgfr/leboncoin-cdp/commit/87310f8dde10b328c8b73baa639364d71e60f9fe))
+* **scrape:** search bare keywords as text and find ad payloads by shape ([d8d9dac](https://github.com/maxgfr/leboncoin-cdp/commit/d8d9dac1076087299b4f2c67069990476ad1f789))
+
+
+### Features
+
+* **browser:** remember the browser and keep one lean profile per browser ([f2f8ac0](https://github.com/maxgfr/leboncoin-cdp/commit/f2f8ac0f50ca354b95bd1dc3ae0bf01d2f4cd70f))
+* **deposit:** drive the multi-step deposit wizard by field meaning ([8cbcfca](https://github.com/maxgfr/leboncoin-cdp/commit/8cbcfca9da673ec72af553305c44e1f27c761b49))
+* doctor command, site.json overrides and a structural final-step guard ([28f40a5](https://github.com/maxgfr/leboncoin-cdp/commit/28f40a5e88ff497dd76d855c19ed319aa96349a0))
+* **scrape:** survive a front-end migration and make --save-raw work ([2be2763](https://github.com/maxgfr/leboncoin-cdp/commit/2be2763bcae46270b0a805a1ec22c828a315c9f6))
+
 ## [1.2.3](https://github.com/maxgfr/leboncoin-cdp/compare/v1.2.2...v1.2.3) (2026-09-09)
 
 
