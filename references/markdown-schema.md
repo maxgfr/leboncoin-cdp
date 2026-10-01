@@ -23,7 +23,7 @@ lists beyond what is shown.
 | Field | Type | Required to publish | Notes |
 |---|---|---|---|
 | `title` | string | yes (≥5 chars) | The ad title. |
-| `category` | string | yes | Leboncoin category label you infer (e.g. `"Informatique"`). |
+| `category` | string | yes | The site's own category name, as shown in the deposit form (e.g. `"Ordinateurs"`); if it is not offered, the site's first suggestion is picked and reported as a `note`. |
 | `price` | number | yes (> 0) | Euros, integer. |
 | `zipcode` | string | yes (`\d{5}`) | French postal code; drives the location autocomplete. |
 | `city` | string | no | Resolved from the zipcode if blank. |
@@ -64,7 +64,7 @@ draft  --publish-->  published  --delete-->     deleted
 ```markdown
 ---
 title: "MacBook Air M1 2020 — 256 Go, très bon état"
-category: "Informatique"
+category: "Ordinateurs"
 price: 650
 zipcode: "75012"
 city: "Paris"

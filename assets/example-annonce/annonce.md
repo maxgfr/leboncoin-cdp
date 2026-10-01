@@ -1,6 +1,6 @@
 ---
 title: "MacBook Air M1 2020 — 256 Go, très bon état"
-category: "Informatique"
+category: "Ordinateurs"
 price: 650
 zipcode: "75012"
 city: "Paris"
@@ -8,8 +8,7 @@ condition: "Très bon état"
 shipping: true
 attributes:
   brand: "Apple"
-  model: "MacBook Air M1"
-  storage: "256 Go"
+  Taille d'écran: "12 à 14"
 photos:
   - macbook.jpg
 status: draft
