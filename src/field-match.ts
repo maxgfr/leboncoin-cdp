@@ -80,8 +80,9 @@ export function pickOption(options: string[], wanted: string): number {
   let best = -1;
   let bestScore = 0;
   norm.forEach((o, i) => {
-    const score = tokens(o).filter((t) => wt.has(t)).length;
-    if (score > bestScore) {
+    const score = [...new Set(tokens(o))].filter((t) => wt.has(t)).length;
+    // Ties go to the shortest label: « Paris (75012) » over « Avenue de Paris, Paris (75012) ».
+    if (score > bestScore || (score === bestScore && score > 0 && o.length < (norm[best] ?? "").length)) {
       best = i;
       bestScore = score;
     }
@@ -136,7 +137,10 @@ export function logicalValue(a: Annonce, name: LogicalFieldName): { value: strin
     case "price":
       return a.price > 0 ? { value: String(a.price) } : null;
     case "location":
-      return a.zipcode ? { value: a.zipcode, hint: a.city || a.zipcode } : a.city ? { value: a.city } : null;
+      // « 75012 Paris » makes the address autocomplete offer the city itself first
+      // (« Paris (75012) »); the zipcode alone yields streets.
+      if (a.zipcode) return { value: a.city ? `${a.zipcode} ${a.city}` : a.zipcode, hint: a.zipcode };
+      return a.city ? { value: a.city } : null;
     case "category":
       return a.category ? { value: a.category } : null;
     case "condition":

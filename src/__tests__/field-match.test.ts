@@ -54,8 +54,8 @@ describe("matchFields — by meaning, not by selector", () => {
     expect(targetOf(m, "location")).toBe("location");
     expect(m.matches.find((x) => x.field.key === "price_cents")?.value).toBe("650");
     const loc = m.matches.find((x) => x.field.key === "location");
-    expect(loc?.value).toBe("75012");
-    expect(loc?.hint).toBe("Paris");
+    expect(loc?.value).toBe("75012 Paris");
+    expect(loc?.hint).toBe("75012");
   });
 
   it("still resolves when every name= is renamed and only the visible label is left", () => {

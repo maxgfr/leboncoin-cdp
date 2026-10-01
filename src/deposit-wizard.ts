@@ -136,9 +136,15 @@ async function clickRef(cdp: CDPClient, ref: string): Promise<boolean> {
  * suggestion on screen, `allowTree` opens the category tree and picks a leaf the
  * same way. Returns the choice, or null when no category UI is shown.
  */
-async function chooseCategory(cdp: CDPClient, wanted: string, allowTree: boolean): Promise<{ picked: string; family?: string; guessed: boolean } | null> {
+async function chooseCategory(cdp: CDPClient, wanted: string, needed: boolean): Promise<{ picked: string; family?: string; guessed: boolean } | null> {
   let cards = await readCategoryCards(cdp);
-  if (cards.length === 0 && allowTree && (await clickButton(cdp, DEPOSIT.categoryTreeButton))) {
+  // Suggestions are computed server-side from the title and render a few seconds
+  // after it is typed (≈2–3 s live): when the step needs a category, wait for them.
+  for (let i = 0; needed && cards.length === 0 && i < 12; i++) {
+    await delay(750);
+    cards = await readCategoryCards(cdp);
+  }
+  if (cards.length === 0 && needed && (await clickButton(cdp, DEPOSIT.categoryTreeButton))) {
     await delay(800);
     cards = await readCategoryCards(cdp);
   }
@@ -181,6 +187,22 @@ export function looksLikeFinalReview(map: FormMap): boolean {
     .matches.map((m) => (m.target.kind === "logical" ? m.target.name : ""))
     .filter((n) => core.has(n));
   return new Set(onStep).size >= 3;
+}
+
+/** A paid upsell (« Pack Photos 5,70 € », « Remonter 2,99 € »…): never required, never ticked. */
+export function isPaidOption(f: FormMap["fields"][number]): boolean {
+  return [f.label, ...(f.altLabels ?? [])].some((l) => /\d\s*(?:[,.]\d{1,2})?\s*€|€\s*\d/.test(l ?? ""));
+}
+
+/**
+ * Does this empty control block the step? An unchecked checkbox/switch is a
+ * valid answer, so it only blocks with an explicit required / aria-required (an
+ * asterisk can be a price footnote); a paid option never blocks.
+ */
+export function blocksStep(f: FormMap["fields"][number]): boolean {
+  if (!f.required || isPaidOption(f)) return false;
+  if ((f.type === "checkbox" || f.type === "switch") && f.requiredSource === "asterisk") return false;
+  return true;
 }
 
 function describe(f: FormMap["fields"][number]): string {
@@ -230,6 +252,10 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
     for (const m of matches) {
       const target = m.target.kind === "logical" ? m.target.name : `attr:${m.target.key}`;
       if (target === "photos") continue;
+      if (isPaidOption(m.field)) {
+        logger.warn(`Skipped « ${describe(m.field)} »: a paid option is never set automatically.`);
+        continue;
+      }
       const label = describe(m.field);
       if (valueAlreadySet(m.field, m.value)) {
         fills.push({ target, field: label, value: m.value, ok: true, via: m.via, detail: "already" });
@@ -272,7 +298,7 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
 
     // Category cards (the site advances by itself once one is clicked).
     if (categoryAttempts < 2) {
-      // The tree is only opened when no category is set yet and the step cannot go on without one.
+      // Waits for suggestions / opens the tree only when no category is set yet and the step cannot go on without one.
       const allowTree = !written.has("category") && written.has("title") && !(await hasButton(cdp, nextButton));
       const chosen = await chooseCategory(cdp, a.category, allowTree);
       if (chosen) {
@@ -303,7 +329,7 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
     // A required photo input is satisfied by thumbnails on the page (ours, or the ad's existing ones on edit).
     const photosOk = result.uploadedPhotos > 0 || (await countElements(cdp, DEPOSIT.photoThumbnails)) > 0;
     const unresolvedRequired = filledMap.fields
-      .filter((f) => f.required && !(f.type === "file" ? photosOk : isFieldFilled(f)))
+      .filter((f) => blocksStep(f) && !(f.type === "file" ? photosOk : isFieldFilled(f)))
       .map((f) => `${describe(f)} (required on the live form — ${f.requiredSource ?? "required"})`);
     const final = looksLikeFinalReview(filledMap) || (await isFinalStep(cdp, finalMarkers, finalButtons));
     result.steps.push({ index, title: filledMap.step?.title ?? "", url, fills, unresolvedRequired, final, formMap: filledMap });

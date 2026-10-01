@@ -5,7 +5,7 @@ vi.mock("../utils", async (importOriginal) => {
   return { ...actual, delay: () => Promise.resolve() };
 });
 
-import { runWizard } from "../deposit-wizard";
+import { blocksStep, isPaidOption, runWizard } from "../deposit-wizard";
 import type { Annonce } from "../types";
 import { DomCDP, fixture } from "./helpers/dom-cdp";
 
@@ -126,6 +126,42 @@ describe("runWizard over the live deposit wizard", () => {
     const r = await runWizard(cdp as never, annonce, { photos: [] });
     expect(r.stop).toBe("final");
     expect(state.submitted).toBe(false);
+  });
+
+  it("never blocks on — nor ticks — a paid upsell flagged with an asterisk (seen live: Pack Photos 5,70 €)", async () => {
+    const paid = {
+      key: "pack",
+      label: "Acheter un Pack Photos supplémentaires 5,70 €*",
+      type: "checkbox" as const,
+      value: "",
+      checked: false,
+      required: true,
+      requiredSource: "asterisk",
+      selector: "",
+    };
+    expect(isPaidOption(paid)).toBe(true);
+    expect(blocksStep(paid)).toBe(false);
+    expect(blocksStep({ ...paid, label: "J'accepte les conditions*" })).toBe(false); // unchecked box + asterisk only
+    expect(blocksStep({ ...paid, label: "J'accepte les conditions", requiredSource: "required-attr" })).toBe(true);
+    expect(blocksStep({ ...paid, type: "text", label: "Kilométrage*" })).toBe(true);
+  });
+
+  it("survives a site rename: every name / id / data-rhf-name / data-qa-id changed, labels kept", async () => {
+    let n = 0;
+    const drifted = fixture("deposit-step-3-review.html")
+      .replace(/\b(name|data-rhf-name|data-qa-id)="[^"]*"/g, (_m, attr) => `${attr}="x${++n}"`)
+      .replace(/\bid="(?!step-title)[^"]*"/g, () => `id="id${++n}"`)
+      .replace(/\bfor="[^"]*"/g, () => `for="id${++n}"`); // labels no longer point at their input either
+    expect(drifted).not.toMatch(/name="(subject|body|price_cents|location)"/);
+    const cdp = new DomCDP(drifted);
+    const r = await runWizard(cdp as never, annonce, { photos: [] });
+    expect(r.stop).toBe("final");
+    expect(r.written).toEqual(expect.arrayContaining(["title", "description", "price", "location"]));
+    const val = (label: string) => {
+      const f = r.steps[0]?.fills.find((x) => x.target === label);
+      return f?.ok;
+    };
+    expect([val("title"), val("description"), val("price"), val("location")]).toEqual([true, true, true, true]);
   });
 
   it("is bounded by maxSteps", async () => {

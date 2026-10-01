@@ -261,226 +261,6 @@ var init_markdown = __esm({
   }
 });
 
-// src/config.ts
-var config_exports = {};
-__export(config_exports, {
-  clearCdpPort: () => clearCdpPort,
-  config: () => config,
-  createWrapperDataDir: () => createWrapperDataDir,
-  detectUserDataDir: () => detectUserDataDir,
-  getAuthStatePath: () => getAuthStatePath,
-  getBrowserAppName: () => getBrowserAppName,
-  getBrowserPath: () => getBrowserPath,
-  loadCdpPort: () => loadCdpPort,
-  resetScraperProfile: () => resetScraperProfile,
-  saveCdpPort: () => saveCdpPort
-});
-import os from "os";
-import path4 from "path";
-import fs2 from "fs";
-function getPlatform() {
-  const platform = os.platform();
-  if (platform === "darwin") return "macos";
-  if (platform === "linux") return "linux";
-  return "other";
-}
-function getBrowserPath(browser) {
-  const platform = getPlatform();
-  if (platform === "macos") {
-    const p = BROWSER_PATHS_MACOS[browser];
-    if (!p) throw new Error(`Unknown browser: ${browser}`);
-    try {
-      fs2.accessSync(p, fs2.constants.X_OK);
-      return p;
-    } catch {
-      throw new Error(`${browser} not found at ${p}. Install it or use --chrome-path to specify the binary.`);
-    }
-  } else if (platform === "linux") {
-    const candidates = BROWSER_PATHS_LINUX[browser];
-    if (!candidates) throw new Error(`Unknown browser: ${browser}`);
-    for (const p of candidates) {
-      try {
-        fs2.accessSync(p, fs2.constants.X_OK);
-        return p;
-      } catch {
-      }
-    }
-    throw new Error(`${browser} not found. Tried: ${candidates.join(", ")}. Install it or use --chrome-path to specify the binary.`);
-  } else {
-    throw new Error(`Unsupported platform: ${os.platform()}. Use --chrome-path to specify the browser binary.`);
-  }
-}
-function detectBrowserPath() {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-  const platform = getPlatform();
-  if (platform === "macos") {
-    const candidates = [
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-      "/Applications/Chromium.app/Contents/MacOS/Chromium"
-    ];
-    for (const p of candidates) {
-      try {
-        fs2.accessSync(p, fs2.constants.X_OK);
-        return p;
-      } catch {
-      }
-    }
-    return candidates[0];
-  } else if (platform === "linux") {
-    const candidates = [
-      // Chrome first (default)
-      "/usr/bin/google-chrome",
-      "/usr/bin/google-chrome-stable",
-      "/opt/google/chrome/chrome",
-      // Then Brave
-      "/usr/bin/brave-browser",
-      "/usr/bin/brave",
-      "/opt/brave.com/brave/brave-browser",
-      // Then Chromium
-      "/usr/bin/chromium",
-      "/usr/bin/chromium-browser",
-      "/snap/bin/chromium"
-    ];
-    for (const p of candidates) {
-      try {
-        fs2.accessSync(p, fs2.constants.X_OK);
-        return p;
-      } catch {
-      }
-    }
-    return "/usr/bin/google-chrome";
-  }
-  return "/usr/bin/google-chrome";
-}
-function getBrowserAppName(chromePath) {
-  if (chromePath.toLowerCase().includes("brave")) return "Brave Browser";
-  if (chromePath.toLowerCase().includes("opera")) return "Opera";
-  if (chromePath.toLowerCase().includes("chromium")) return "Chromium";
-  return "Google Chrome";
-}
-function detectUserDataDir(chromePath) {
-  const home = os.homedir();
-  const platform = getPlatform();
-  const lowerPath = chromePath.toLowerCase();
-  if (platform === "macos") {
-    if (lowerPath.includes("brave")) return path4.join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser");
-    if (lowerPath.includes("opera")) return path4.join(home, "Library", "Application Support", "com.operasoftware.Opera");
-    if (lowerPath.includes("chromium")) return path4.join(home, "Library", "Application Support", "Chromium");
-    return path4.join(home, "Library", "Application Support", "Google", "Chrome");
-  } else if (platform === "linux") {
-    if (lowerPath.includes("brave")) return path4.join(home, ".config", "BraveSoftware", "Brave-Browser");
-    if (lowerPath.includes("opera")) return path4.join(home, ".config", "opera");
-    if (lowerPath.includes("chromium")) return path4.join(home, ".config", "chromium");
-    return path4.join(home, ".config", "google-chrome");
-  }
-  return path4.join(home, ".config", "google-chrome");
-}
-function getScraperHome() {
-  return process.env.LBC_SCRAPER_HOME || path4.join(os.homedir(), ".lbc-scraper");
-}
-function getPortFile() {
-  return path4.join(getScraperHome(), "port");
-}
-function getAuthStatePath() {
-  return path4.join(getScraperHome(), "auth-state.png");
-}
-function createWrapperDataDir(realDir) {
-  const wrapper = path4.join(getScraperHome(), "profile");
-  if (fs2.existsSync(path4.join(wrapper, "Default")) || fs2.existsSync(path4.join(wrapper, "Local State"))) {
-    console.log(`\u2713 Reusing scraper profile at ${wrapper}`);
-    return wrapper;
-  }
-  fs2.mkdirSync(wrapper, { recursive: true });
-  try {
-    if (fs2.existsSync(realDir)) {
-      fs2.cpSync(realDir, wrapper, {
-        recursive: true,
-        // Skip lock files to avoid conflicts
-        filter: (src) => {
-          const basename = path4.basename(src);
-          return basename !== "SingletonLock" && basename !== "SingletonCookie" && basename !== "SingletonSocket" && basename !== "lockfile";
-        }
-      });
-      console.log(`\u2713 Profile copied from ${realDir} to ${wrapper}`);
-    } else {
-      const localState = {
-        browser: { enabled_labs_experiments: [] },
-        profile: { info_cache: {} }
-      };
-      fs2.writeFileSync(path4.join(wrapper, "Local State"), JSON.stringify(localState, null, 2));
-      console.log(`\u2713 Created new profile at ${wrapper}`);
-    }
-  } catch (error) {
-    console.warn(`\u26A0 Failed to copy profile, using minimal profile:`, error);
-  }
-  return wrapper;
-}
-function resetScraperProfile() {
-  const wrapper = path4.join(getScraperHome(), "profile");
-  if (fs2.existsSync(wrapper)) {
-    fs2.rmSync(wrapper, { recursive: true });
-    console.log("\u2713 Scraper profile deleted \u2014 will be re-created on next run");
-  }
-}
-function saveCdpPort(port) {
-  fs2.mkdirSync(getScraperHome(), { recursive: true });
-  fs2.writeFileSync(getPortFile(), String(port));
-}
-function loadCdpPort() {
-  try {
-    const raw = fs2.readFileSync(getPortFile(), "utf8").trim();
-    return parseInt(raw, 10) || 0;
-  } catch {
-    return 0;
-  }
-}
-function clearCdpPort() {
-  try {
-    fs2.unlinkSync(getPortFile());
-  } catch {
-  }
-}
-var BROWSER_PATHS_MACOS, BROWSER_PATHS_LINUX, config;
-var init_config = __esm({
-  "src/config.ts"() {
-    "use strict";
-    BROWSER_PATHS_MACOS = {
-      chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      brave: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-      opera: "/Applications/Opera.app/Contents/MacOS/Opera",
-      chromium: "/Applications/Chromium.app/Contents/MacOS/Chromium"
-    };
-    BROWSER_PATHS_LINUX = {
-      chrome: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/opt/google/chrome/chrome"],
-      brave: ["/usr/bin/brave-browser", "/usr/bin/brave", "/opt/brave.com/brave/brave-browser"],
-      chromium: ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium"],
-      opera: ["/usr/bin/opera", "/usr/bin/opera-stable"]
-    };
-    config = {
-      browser: {
-        chromePath: detectBrowserPath(),
-        userDataDir: createWrapperDataDir(detectUserDataDir(detectBrowserPath())),
-        timeout: parseInt(process.env.PAGE_TIMEOUT || "30000", 10),
-        debuggingPort: parseInt(process.env.DEBUGGING_PORT || "0", 10)
-      },
-      scraping: {
-        resultPerPage: 35,
-        maxRetries: parseInt(process.env.MAX_RETRIES || "5", 10),
-        rateLimit: parseInt(process.env.RATE_LIMIT || "1000", 10),
-        maxPages: process.env.MAX_PAGES ? parseInt(process.env.MAX_PAGES, 10) : void 0
-      },
-      output: {
-        directory: process.env.OUTPUT_DIR || "./assets",
-        saveRawJson: process.env.SAVE_RAW === "true"
-      },
-      api: {
-        baseUrl: "https://www.leboncoin.fr"
-      }
-    };
-  }
-});
-
 // src/logger.ts
 var Logger, logger;
 var init_logger = __esm({
@@ -539,6 +319,715 @@ var init_logger = __esm({
       }
     };
     logger = new Logger();
+  }
+});
+
+// src/selectors.ts
+var BASE_URL, DEPOSIT, TEXTISH, LOGICAL_FIELDS, AUTH, ELEMENT_TARGETS, MANAGE;
+var init_selectors = __esm({
+  "src/selectors.ts"() {
+    "use strict";
+    BASE_URL = "https://www.leboncoin.fr";
+    DEPOSIT = {
+      startUrl: `${BASE_URL}/deposer-une-annonce`,
+      /** A redirect to one of these means the session is logged out (auth.leboncoin.fr/login/… included). */
+      loginUrlPattern: /\/(connexion|login|authentification|account\/login)(?:[/?#]|$)/i,
+      categoryInput: [
+        'input[name="category"]',
+        'input[data-qa-id="adsubject_category"]',
+        'input[placeholder*="cat\xE9gorie" i]',
+        'input[aria-label*="cat\xE9gorie" i]',
+        '[data-qa-id="category"] input'
+      ],
+      /**
+       * Category pickers seen live (2026-10): after the title is typed, the site
+       * suggests categories as cards (`role=button`, aria-label « Choix 1 : catégorie
+       * Ordinateurs dans la famille Électronique »); a full two-level tree opens from
+       * « Choisissez » / the « Catégorie sélectionnée » button (leaf aria-label
+       * « Catégorie Ordinateurs dans la famille Électronique. … »).
+       */
+      categoryCards: ['[role="button"][aria-label*="cat\xE9gorie" i]', 'button[aria-label^="Cat\xE9gorie " i]', '[role="radio"][aria-label*="cat\xE9gorie" i]'],
+      /** Parses « …catégorie <name> dans la famille <family>… » out of an aria-label. */
+      categoryAriaPattern: /cat[ée]gorie\s+(.+?)\s+dans la famille\s+(.+?)(?:\.|$)/i,
+      /** Opens the full category tree when no suggestion fits. */
+      categoryTreeButton: {
+        textCandidates: ["Choisissez", "Choisir une cat\xE9gorie", "Toutes les cat\xE9gories", "Changer de cat\xE9gorie"],
+        css: ['[aria-label^="Cat\xE9gorie s\xE9lectionn\xE9e" i]', 'button[aria-label*="changez de cat\xE9gorie" i]']
+      },
+      titleInput: ['input[name="subject"]', 'input[data-qa-id="input_subject"]', "input#subject", 'input[aria-label*="titre" i]'],
+      descTextarea: ['textarea[name="body"]', 'textarea[data-qa-id="textarea_body"]', "textarea#body", 'textarea[aria-label*="description" i]'],
+      priceInput: [
+        'input[name="price_cents"]',
+        'input[name="price"]',
+        'input[data-qa-id="input_price"]',
+        "input#price",
+        'input[aria-label*="prix" i]',
+        'input[inputmode="numeric"][name*="price" i]'
+      ],
+      zipcodeInput: [
+        'input[name="location"]',
+        'input[name="zipcode"]',
+        'input[data-qa-id="input_location"]',
+        'input[placeholder*="code postal" i]',
+        'input[placeholder*="adresse" i]',
+        'input[placeholder*="ville" i]'
+      ],
+      /** Generic autocomplete option (category, zipcode→city). */
+      suggestionOption: ['[role="option"]', 'li[data-qa-id*="suggestion"]', 'ul[role="listbox"] li', '[data-qa-id="suggestion"]'],
+      /** The real <input type=file>; may be hidden behind photoAddButton. */
+      photoFileInput: ['input[type="file"][accept*="image"]', 'input[type="file"]'],
+      photoAddButton: {
+        textCandidates: ["Ajouter des photos", "Ajouter une photo", "Ajoutez vos photos"],
+        css: ['[aria-label^="Ajouter" i][aria-label*="photo" i]', '[data-qa-id*="photo"] button', 'button[aria-label*="photo" i]']
+      },
+      /**
+       * Uploaded-photo thumbnails. React clears the <input type=file> right after
+       * reading it, so `input.files.length` drops back to 0 even on success — the
+       * thumbnails are the only reliable proof an upload landed.
+       */
+      photoThumbnails: ['img[src^="blob:"]', '[data-rhf-name="images"] img', '[data-qa-id*="photo" i] img'],
+      /** The photo thumbnail grid — an element-clip target for cheap verification. */
+      photoGrid: ['[data-rhf-name="images"]', '[data-qa-id*="photo" i]', '[class*="photo" i]', '[data-test*="photo" i]'],
+      /** Shipping/delivery toggle (only used when the annonce sets `shipping: true`). */
+      shippingToggle: {
+        textCandidates: ["Proposer la livraison", "Activer la livraison", "Envoi possible"],
+        css: ['[data-rhf-name="shipping"] [role="checkbox"]', 'input[name*="shipping" i]', 'input[name*="livraison" i]', '[data-qa-id*="shipping" i]']
+      },
+      /** Category-specific attribute field, by form field name/id/data-attr. */
+      attrByKey: (key) => [
+        `[name="${key}"]`,
+        `[data-rhf-name="${key}"] input`,
+        `[data-qa-id="${key}"]`,
+        `[data-attribute="${key}"]`,
+        `select[name="${key}"]`,
+        `[id="${key}"]`
+      ],
+      /** The wizard's "go to the next step" control. */
+      nextButton: {
+        textCandidates: ["Continuer", "Suivant", "\xC9tape suivante", "Valider et continuer"],
+        css: ['form button[type="submit"]']
+      },
+      /**
+       * The explicit final publish control, when the site labels it as such. Live
+       * (2026-10) the final step's button is just « Continuer » — the FINAL STEP is
+       * recognised by finalStepMarkers, never by this label alone. No generic
+       * `button[type=submit]` fallback: every step's « Continuer » is one.
+       */
+      publishButton: {
+        textCandidates: ["D\xE9poser mon annonce", "D\xE9poser l'annonce", "Publier mon annonce", "Publier l'annonce", "Publier"],
+        css: ['button[data-qa-id="adsubmit"]']
+      },
+      /**
+       * Visible text proving we are on the LAST step, where the next click submits
+       * the ad (« Un dernier aperçu avant de publier… », « En cliquant sur
+       * "Continuer", je confirme l'exactitude… »). The wizard never clicks past it.
+       */
+      finalStepMarkers: ["avant de publier", "je confirme l'exactitude", "deposer mon annonce", "publier mon annonce"],
+      /** The current step's heading (step fingerprint). */
+      stepTitle: ["#step-title", "main h2", "form h2", "h2", "h1"],
+      /** A published ad URL carries the numeric list_id. */
+      publishedUrlPattern: [/\/ad\/[^/]+\/(\d{4,})/, /\/(\d{6,})\.htm/, /[?&]listing_id=(\d+)/],
+      /** Reaching one of these means the deposit succeeded (id may need a follow-up). */
+      confirmedUrlPattern: [/\/deposer-une-annonce\/(confirmation|merci|success)/i, /\/ad\//]
+    };
+    TEXTISH = ["text", "textarea", "combobox", "other"];
+    LOGICAL_FIELDS = {
+      title: { names: ["subject", "title"], labels: ["titre"], css: DEPOSIT.titleInput, types: TEXTISH, required: true },
+      description: { names: ["body", "description"], labels: ["description"], css: DEPOSIT.descTextarea, types: TEXTISH, required: true },
+      price: { names: ["price_cents", "price"], labels: ["prix"], css: DEPOSIT.priceInput, types: TEXTISH, required: true },
+      location: {
+        names: ["location", "zipcode", "city", "address"],
+        labels: ["adresse", "code postal", "ville", "localisation", "location"],
+        css: DEPOSIT.zipcodeInput,
+        types: TEXTISH,
+        required: true
+      },
+      category: { names: ["category", "category_id"], labels: ["categorie"], css: DEPOSIT.categoryInput, types: [...TEXTISH, "select"], required: true },
+      condition: { names: ["condition", "item_condition"], labels: ["etat"], css: [], types: [...TEXTISH, "select", "radiogroup"], required: false },
+      shipping: {
+        names: ["shipping", "shippable", "delivery"],
+        labels: ["livraison", "envoi"],
+        css: [],
+        types: ["checkbox", "switch", "radiogroup"],
+        required: false
+      },
+      photos: { names: ["images", "photos", "pictures"], labels: ["photo", "photos"], css: DEPOSIT.photoFileInput, types: ["file"], required: true }
+    };
+    AUTH = {
+      /** Authenticated route; redirects to auth.leboncoin.fr/login when the session is dead. */
+      accountUrl: `${BASE_URL}/account/private/home`,
+      loginUrl: `${BASE_URL}/connexion`,
+      /**
+       * Matches a leboncoin.fr URL (incl. subdomains). A live session STAYS on
+       * leboncoin.fr; being redirected off-domain (e.g. accounts.google.com for the
+       * "Sign in with Google" OAuth) means we are mid-auth, i.e. NOT logged in — and
+       * is also why the logged-in DOM markers below must never be trusted off-site
+       * (a Google page has its own /account links).
+       */
+      leboncoinHostPattern: /^https?:\/\/([^/]*\.)?leboncoin\.fr(?:[:/]|$)/i,
+      /**
+       * DOM markers that only render for a logged-in user (ordered). Live 2026-10 the
+       * header's account link is `a[href="/account/private/home"][aria-label="Mon
+       * compte"]`. NOT /favorites, /messages or /my-searches: those links are in the
+       * logged-out header too.
+       */
+      loggedInSelectors: [
+        'a[href^="/account/private"]',
+        'a[aria-label="Mon compte" i]',
+        'a[href*="/compte/part/"]',
+        '[data-qa-id="header-account"]',
+        'a[href*="/deconnexion"]',
+        'a[href*="/logout"]'
+      ],
+      /** DOM markers that only render for a logged-out user (the header's « Se connecter » button). */
+      loggedOutSelectors: ['button[aria-label="Se connecter" i]', 'a[aria-label="Se connecter" i]', 'a[href*="auth.leboncoin.fr/login"]'],
+      /** Visible text that implies a logged-in session. */
+      loggedInTextMarkers: ["se d\xE9connecter", "d\xE9connexion"],
+      /** Visible text that implies a logged-out / sign-in page. */
+      loginRequiredTextMarkers: ["identifiez-vous", "connecte-toi", "sign in to leboncoin", "sign in with google", "s\xE9curisons votre compte"]
+    };
+    ELEMENT_TARGETS = {
+      photos: DEPOSIT.photoGrid,
+      price: DEPOSIT.priceInput,
+      submit: [...DEPOSIT.publishButton.css, ...DEPOSIT.nextButton.css]
+    };
+    MANAGE = {
+      /** « Mes annonces » (moved from /mes-annonces, which now lands on /favorites). */
+      listingUrl: `${BASE_URL}/compte/part/mes-annonces`,
+      adUrl: (id) => `${BASE_URL}/ad/${id}`,
+      deleteButton: {
+        textCandidates: ["Supprimer l'annonce", "Supprimer mon annonce", "Supprimer"],
+        css: ['button[data-qa-id*="delete"]', 'button[aria-label*="supprimer" i]', 'a[href*="delete"]']
+      },
+      confirmButton: {
+        textCandidates: ["Confirmer la suppression", "Oui, supprimer", "Supprimer l'annonce", "Supprimer", "Confirmer", "Oui"],
+        css: ['[role="dialog"] button[data-qa-id*="confirm"]', 'button[data-qa-id*="confirm"]']
+      },
+      /** Open the modify form for a published ad. */
+      editButton: {
+        textCandidates: ["Modifier l'annonce", "Modifier mon annonce", "Modifier", "\xC9diter"],
+        css: ['button[data-qa-id*="edit"]', 'a[href*="modifier"]', 'a[href*="edit"]', 'button[aria-label*="modifier" i]']
+      },
+      /** Save / update an edited ad (the edit form's submit). */
+      saveButton: {
+        textCandidates: ["Enregistrer les modifications", "Valider les modifications", "Mettre \xE0 jour", "Enregistrer"],
+        css: ['button[data-qa-id*="save"]', 'button[data-qa-id*="submit"]']
+      },
+      /** Renew / bump ("remettre en avant" / boost). No status change. */
+      renewButton: {
+        textCandidates: ["Remettre en avant", "Remonter l'annonce", "Remonter", "Renouveler", "Booster"],
+        css: ['button[data-qa-id*="renew"]', 'button[data-qa-id*="boost"]', 'a[href*="remonter"]']
+      },
+      /** Mark the ad as sold ("c'est vendu" / "vendu"). */
+      markSoldButton: {
+        textCandidates: ["Marquer comme vendu", "C'est vendu", "Marquer vendu", "Vendu"],
+        css: ['button[data-qa-id*="sold"]', 'button[data-qa-id*="vendu"]', 'button[aria-label*="vendu" i]']
+      },
+      /** Deactivate / pause without deleting (live 2026-10: « Pause » in mes annonces). */
+      deactivateButton: {
+        textCandidates: ["Mettre en pause", "Pause", "D\xE9sactiver l'annonce", "D\xE9sactiver", "Suspendre"],
+        css: ['button[data-qa-id*="deactivate"]', 'button[data-qa-id*="pause"]', 'button[aria-label*="pause" i]', 'button[aria-label*="d\xE9sactiver" i]']
+      },
+      /** Reactivate a paused ad. */
+      reactivateButton: {
+        textCandidates: ["R\xE9activer l'annonce", "R\xE9activer", "Remettre en ligne", "Activer"],
+        css: ['button[data-qa-id*="reactivate"]', 'button[aria-label*="r\xE9activer" i]']
+      },
+      /** Generic confirmation for renew/sold/deactivate/reactivate flows. */
+      manageConfirmButton: {
+        textCandidates: ["Confirmer", "Oui", "Valider", "Continuer", "OK"],
+        css: ['[role="dialog"] button[data-qa-id*="confirm"]', 'button[data-qa-id*="confirm"]']
+      },
+      /** « … / Plus d'actions » menus that hide per-ad controls. */
+      overflowMenu: {
+        textCandidates: ["Plus d'actions", "Plus d'options", "Actions", "Options", "G\xE9rer", "G\xE9rer l'annonce", "\u2026", "..."],
+        css: ['[aria-haspopup="menu"]', '[aria-haspopup="true"]', 'button[aria-label*="plus" i]']
+      },
+      /*
+       * Outcome PROOF. A local status only changes when the site shows one of these
+       * (whole-phrase, accent-insensitive) — or, for pause/reactivate, when the
+       * opposite control appears. They are full sentences on purpose: a bare
+       * « vendu » or « en pause » would also match the buttons themselves.
+       */
+      /** Page-text markers that confirm a delete succeeded. */
+      deletedMarkers: [
+        "annonce supprim\xE9e",
+        "annonce a \xE9t\xE9 supprim\xE9e",
+        "annonce a bien \xE9t\xE9 supprim\xE9e",
+        "n'existe plus",
+        "n'est plus en ligne",
+        "n'est plus disponible"
+      ],
+      /** Text on the ad page once it is gone (404 / removed). */
+      goneMarkers: ["n'existe plus", "n'est plus disponible", "n'est plus en ligne", "page introuvable", "cette annonce a \xE9t\xE9 supprim\xE9e", "erreur 404"],
+      soldMarkers: ["annonce vendue", "marqu\xE9e comme vendue", "a \xE9t\xE9 marqu\xE9e comme vendue", "est vendue"],
+      pausedMarkers: ["annonce mise en pause", "a \xE9t\xE9 mise en pause", "est en pause", "annonce d\xE9sactiv\xE9e", "a \xE9t\xE9 d\xE9sactiv\xE9e", "annonce suspendue"],
+      reactivatedMarkers: ["annonce r\xE9activ\xE9e", "a \xE9t\xE9 r\xE9activ\xE9e", "est de nouveau en ligne", "a \xE9t\xE9 remise en ligne"]
+    };
+  }
+});
+
+// src/site-overrides.ts
+var site_overrides_exports = {};
+__export(site_overrides_exports, {
+  applySiteOverrides: () => applySiteOverrides,
+  mergeOverrides: () => mergeOverrides,
+  siteOverridesPath: () => siteOverridesPath
+});
+import { existsSync, readFileSync } from "fs";
+import os from "os";
+import path4 from "path";
+function siteOverridesPath() {
+  if (process.env.LBC_SITE_OVERRIDES) return process.env.LBC_SITE_OVERRIDES;
+  const home = process.env.LBC_SCRAPER_HOME || path4.join(os.homedir(), ".lbc-scraper");
+  return path4.join(home, "site.json");
+}
+function prependInPlace(target, patch) {
+  const merged = [...patch, ...target.filter((t) => !patch.some((p) => String(p) === String(t)))];
+  target.splice(0, target.length, ...merged);
+}
+function toRegExp(s, where, warn) {
+  try {
+    return new RegExp(s, "i");
+  } catch {
+    warn(`site overrides: ${where}: invalid regex "${s}" \u2014 skipped`);
+    return null;
+  }
+}
+function mergeValue(obj, key, patch, where, warn) {
+  const current = obj[key];
+  if (typeof current === "function") {
+    warn(`site overrides: ${where} is computed and cannot be overridden \u2014 skipped`);
+    return false;
+  }
+  if (current instanceof RegExp) {
+    if (typeof patch !== "string") return warnType(where, "a regex string", warn);
+    const re = toRegExp(patch, where, warn);
+    if (!re) return false;
+    obj[key] = re;
+    return true;
+  }
+  if (Array.isArray(current)) {
+    if (current.length > 0 && current.every((c) => c instanceof RegExp)) {
+      if (!isStringArray(patch)) return warnType(where, "an array of regex strings", warn);
+      const res = patch.map((p) => toRegExp(p, where, warn)).filter((r) => !!r);
+      prependInPlace(current, res);
+      return res.length > 0;
+    }
+    if (!isStringArray(patch)) return warnType(where, "an array of strings", warn);
+    prependInPlace(current, patch);
+    return true;
+  }
+  if (typeof current === "string") {
+    if (typeof patch !== "string") return warnType(where, "a string", warn);
+    obj[key] = patch;
+    return true;
+  }
+  if (typeof current === "boolean") {
+    if (typeof patch !== "boolean") return warnType(where, "a boolean", warn);
+    obj[key] = patch;
+    return true;
+  }
+  if (isPlainObject(current)) {
+    if (!isPlainObject(patch)) return warnType(where, "an object", warn);
+    let any = false;
+    for (const [k, v] of Object.entries(patch)) {
+      if (k.startsWith("$")) continue;
+      if (!(k in current)) {
+        warn(`site overrides: unknown key ${where}.${k} \u2014 skipped`);
+        continue;
+      }
+      any = mergeValue(current, k, v, `${where}.${k}`, warn) || any;
+    }
+    return any;
+  }
+  warn(`site overrides: ${where} is not overridable \u2014 skipped`);
+  return false;
+}
+function warnType(where, expected, warn) {
+  warn(`site overrides: ${where} must be ${expected} \u2014 skipped`);
+  return false;
+}
+function mergeOverrides(patch, warn = (m) => logger.warn(m), sections = SECTIONS) {
+  if (!isPlainObject(patch)) {
+    warn("site overrides: the file must contain a JSON object \u2014 ignored");
+    return [];
+  }
+  const applied = [];
+  for (const [section, value] of Object.entries(patch)) {
+    if (section.startsWith("$")) continue;
+    const target = sections[section];
+    if (!target) {
+      warn(`site overrides: unknown section "${section}" (expected ${Object.keys(sections).join(", ")}) \u2014 skipped`);
+      continue;
+    }
+    if (!isPlainObject(value)) {
+      warnType(section, "an object", warn);
+      continue;
+    }
+    for (const [key, v] of Object.entries(value)) {
+      if (key.startsWith("$")) continue;
+      if (!(key in target)) {
+        warn(`site overrides: unknown key ${section}.${key} \u2014 skipped`);
+        continue;
+      }
+      if (mergeValue(target, key, v, `${section}.${key}`, warn)) applied.push(`${section}.${key}`);
+    }
+  }
+  return applied;
+}
+function applySiteOverrides(file = siteOverridesPath(), warn = (m) => logger.warn(m)) {
+  if (loaded !== void 0) return loaded;
+  loaded = null;
+  if (!existsSync(file)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (e) {
+    warn(`site overrides: ${file} is not valid JSON (${e.message}) \u2014 ignored`);
+    return null;
+  }
+  const applied = mergeOverrides(parsed, warn);
+  if (applied.length) logger.info(`Site overrides from ${file}: ${applied.join(", ")}`);
+  loaded = { path: file, applied };
+  return loaded;
+}
+var SECTIONS, isStringArray, isPlainObject, loaded;
+var init_site_overrides = __esm({
+  "src/site-overrides.ts"() {
+    "use strict";
+    init_logger();
+    init_selectors();
+    SECTIONS = {
+      DEPOSIT,
+      AUTH,
+      MANAGE,
+      LOGICAL_FIELDS
+    };
+    isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === "string");
+    isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v) && !(v instanceof RegExp);
+  }
+});
+
+// src/config.ts
+var config_exports = {};
+__export(config_exports, {
+  browserKey: () => browserKey,
+  clearCdpPort: () => clearCdpPort,
+  config: () => config,
+  createWrapperDataDir: () => createWrapperDataDir,
+  detectBrowserPath: () => detectBrowserPath,
+  detectUserDataDir: () => detectUserDataDir,
+  ensureUserDataDir: () => ensureUserDataDir,
+  getAuthStatePath: () => getAuthStatePath,
+  getBrowserAppName: () => getBrowserAppName,
+  getBrowserPath: () => getBrowserPath,
+  getScraperHome: () => getScraperHome,
+  loadBrowserChoice: () => loadBrowserChoice,
+  loadCdpPort: () => loadCdpPort,
+  resetScraperProfile: () => resetScraperProfile,
+  saveBrowserChoice: () => saveBrowserChoice,
+  saveCdpPort: () => saveCdpPort,
+  selectBrowser: () => selectBrowser
+});
+import os2 from "os";
+import path5 from "path";
+import fs2 from "fs";
+function getPlatform() {
+  const platform = os2.platform();
+  if (platform === "darwin") return "macos";
+  if (platform === "linux") return "linux";
+  return "other";
+}
+function getBrowserPath(browser) {
+  const platform = getPlatform();
+  if (platform === "macos") {
+    const p = BROWSER_PATHS_MACOS[browser];
+    if (!p) throw new Error(`Unknown browser: ${browser}`);
+    try {
+      fs2.accessSync(p, fs2.constants.X_OK);
+      return p;
+    } catch {
+      throw new Error(`${browser} not found at ${p}. Install it or use --chrome-path to specify the binary.`);
+    }
+  } else if (platform === "linux") {
+    const candidates = BROWSER_PATHS_LINUX[browser];
+    if (!candidates) throw new Error(`Unknown browser: ${browser}`);
+    for (const p of candidates) {
+      try {
+        fs2.accessSync(p, fs2.constants.X_OK);
+        return p;
+      } catch {
+      }
+    }
+    throw new Error(`${browser} not found. Tried: ${candidates.join(", ")}. Install it or use --chrome-path to specify the binary.`);
+  } else {
+    throw new Error(`Unsupported platform: ${os2.platform()}. Use --chrome-path to specify the browser binary.`);
+  }
+}
+function isExecutable(p) {
+  try {
+    fs2.accessSync(p, fs2.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function detectBrowserPath() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const envBrowser = process.env.LBC_BROWSER;
+  if (envBrowser) {
+    try {
+      return getBrowserPath(envBrowser);
+    } catch {
+    }
+  }
+  const remembered = loadBrowserChoice();
+  if (remembered && isExecutable(remembered)) return remembered;
+  const platform = getPlatform();
+  if (platform === "macos") {
+    const candidates = [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium"
+    ];
+    for (const p of candidates) {
+      try {
+        fs2.accessSync(p, fs2.constants.X_OK);
+        return p;
+      } catch {
+      }
+    }
+    return candidates[0];
+  } else if (platform === "linux") {
+    const candidates = [
+      // Chrome first (default)
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      "/opt/google/chrome/chrome",
+      // Then Brave
+      "/usr/bin/brave-browser",
+      "/usr/bin/brave",
+      "/opt/brave.com/brave/brave-browser",
+      // Then Chromium
+      "/usr/bin/chromium",
+      "/usr/bin/chromium-browser",
+      "/snap/bin/chromium"
+    ];
+    for (const p of candidates) {
+      try {
+        fs2.accessSync(p, fs2.constants.X_OK);
+        return p;
+      } catch {
+      }
+    }
+    return "/usr/bin/google-chrome";
+  }
+  return "/usr/bin/google-chrome";
+}
+function getBrowserAppName(chromePath) {
+  if (chromePath.toLowerCase().includes("brave")) return "Brave Browser";
+  if (chromePath.toLowerCase().includes("opera")) return "Opera";
+  if (chromePath.toLowerCase().includes("chromium")) return "Chromium";
+  return "Google Chrome";
+}
+function detectUserDataDir(chromePath) {
+  const home = os2.homedir();
+  const platform = getPlatform();
+  const lowerPath = chromePath.toLowerCase();
+  if (platform === "macos") {
+    if (lowerPath.includes("brave")) return path5.join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser");
+    if (lowerPath.includes("opera")) return path5.join(home, "Library", "Application Support", "com.operasoftware.Opera");
+    if (lowerPath.includes("chromium")) return path5.join(home, "Library", "Application Support", "Chromium");
+    return path5.join(home, "Library", "Application Support", "Google", "Chrome");
+  } else if (platform === "linux") {
+    if (lowerPath.includes("brave")) return path5.join(home, ".config", "BraveSoftware", "Brave-Browser");
+    if (lowerPath.includes("opera")) return path5.join(home, ".config", "opera");
+    if (lowerPath.includes("chromium")) return path5.join(home, ".config", "chromium");
+    return path5.join(home, ".config", "google-chrome");
+  }
+  return path5.join(home, ".config", "google-chrome");
+}
+function getScraperHome() {
+  return process.env.LBC_SCRAPER_HOME || path5.join(os2.homedir(), ".lbc-scraper");
+}
+function browserKey(chromePath) {
+  const p = chromePath.toLowerCase();
+  if (p.includes("brave")) return "brave";
+  if (p.includes("opera")) return "opera";
+  if (p.includes("chromium")) return "chromium";
+  return "chrome";
+}
+function perBrowser(base, key) {
+  return key === "chrome" ? base : `${base}-${key}`;
+}
+function currentKey() {
+  try {
+    return browserKey(config.browser.chromePath);
+  } catch {
+    return "chrome";
+  }
+}
+function getPortFile() {
+  return path5.join(getScraperHome(), perBrowser("port", currentKey()));
+}
+function getBrowserChoiceFile() {
+  return path5.join(getScraperHome(), "browser");
+}
+function loadBrowserChoice() {
+  try {
+    const p = fs2.readFileSync(getBrowserChoiceFile(), "utf8").trim();
+    return p || null;
+  } catch {
+    return null;
+  }
+}
+function saveBrowserChoice(chromePath) {
+  fs2.mkdirSync(getScraperHome(), { recursive: true });
+  fs2.writeFileSync(getBrowserChoiceFile(), chromePath);
+}
+function getAuthStatePath() {
+  return path5.join(getScraperHome(), "auth-state.png");
+}
+function createWrapperDataDir(realDir, key = "chrome") {
+  const wrapper = path5.join(getScraperHome(), perBrowser("profile", key));
+  if (fs2.existsSync(path5.join(wrapper, "Default")) || fs2.existsSync(path5.join(wrapper, "Local State"))) {
+    console.log(`\u2713 Reusing scraper profile at ${wrapper}`);
+    return wrapper;
+  }
+  fs2.mkdirSync(wrapper, { recursive: true });
+  try {
+    if (fs2.existsSync(realDir)) {
+      fs2.cpSync(realDir, wrapper, {
+        recursive: true,
+        // Skip lock files (conflicts) and caches (GBs of nothing the session needs).
+        filter: (src) => !PROFILE_COPY_SKIP.has(path5.basename(src))
+      });
+      console.log(`\u2713 Profile copied from ${realDir} to ${wrapper}`);
+    } else {
+      const localState = {
+        browser: { enabled_labs_experiments: [] },
+        profile: { info_cache: {} }
+      };
+      fs2.writeFileSync(path5.join(wrapper, "Local State"), JSON.stringify(localState, null, 2));
+      console.log(`\u2713 Created new profile at ${wrapper}`);
+    }
+  } catch (error) {
+    console.warn(`\u26A0 Failed to copy profile, using minimal profile:`, error);
+  }
+  return wrapper;
+}
+function resetScraperProfile(key = currentKey()) {
+  const wrapper = path5.join(getScraperHome(), perBrowser("profile", key));
+  if (fs2.existsSync(wrapper)) {
+    fs2.rmSync(wrapper, { recursive: true });
+    console.log("\u2713 Scraper profile deleted \u2014 will be re-created on next run");
+  }
+}
+function saveCdpPort(port) {
+  fs2.mkdirSync(getScraperHome(), { recursive: true });
+  fs2.writeFileSync(getPortFile(), String(port));
+}
+function loadCdpPort() {
+  try {
+    const raw = fs2.readFileSync(getPortFile(), "utf8").trim();
+    return parseInt(raw, 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+function clearCdpPort() {
+  try {
+    fs2.unlinkSync(getPortFile());
+  } catch {
+  }
+}
+function ensureUserDataDir() {
+  if (!config.browser.userDataDir) {
+    const p = config.browser.chromePath;
+    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(p), browserKey(p));
+  }
+  return config.browser.userDataDir;
+}
+function selectBrowser(opts) {
+  const chromePath = opts.browser ? getBrowserPath(opts.browser) : opts.chromePath ?? config.browser.chromePath;
+  if (chromePath !== config.browser.chromePath) {
+    config.browser.chromePath = chromePath;
+    config.browser.userDataDir = "";
+    config.browser.debuggingPort = parseInt(process.env.DEBUGGING_PORT || "0", 10);
+  }
+  if (opts.resetProfile) {
+    resetScraperProfile(browserKey(chromePath));
+    config.browser.userDataDir = "";
+  }
+  if (opts.remember !== false && (opts.browser || opts.chromePath)) saveBrowserChoice(chromePath);
+  return chromePath;
+}
+var BROWSER_PATHS_MACOS, BROWSER_PATHS_LINUX, PROFILE_COPY_SKIP, config;
+var init_config = __esm({
+  "src/config.ts"() {
+    "use strict";
+    BROWSER_PATHS_MACOS = {
+      chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      brave: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      opera: "/Applications/Opera.app/Contents/MacOS/Opera",
+      chromium: "/Applications/Chromium.app/Contents/MacOS/Chromium"
+    };
+    BROWSER_PATHS_LINUX = {
+      chrome: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/opt/google/chrome/chrome"],
+      brave: ["/usr/bin/brave-browser", "/usr/bin/brave", "/opt/brave.com/brave/brave-browser"],
+      chromium: ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium"],
+      opera: ["/usr/bin/opera", "/usr/bin/opera-stable"]
+    };
+    PROFILE_COPY_SKIP = /* @__PURE__ */ new Set([
+      "SingletonLock",
+      "SingletonCookie",
+      "SingletonSocket",
+      "lockfile",
+      "Cache",
+      "Code Cache",
+      "GPUCache",
+      "DawnCache",
+      "DawnGraphiteCache",
+      "DawnWebGPUCache",
+      "GrShaderCache",
+      "GraphiteDawnCache",
+      "ShaderCache",
+      "GPUPersistentCache",
+      "CacheStorage",
+      "ScriptCache",
+      "component_crx_cache",
+      "extensions_crx_cache",
+      "Crashpad",
+      "Crash Reports",
+      "optimization_guide_model_store",
+      "OnDeviceHeadSuggestModel",
+      "Safe Browsing",
+      "BrowserMetrics"
+    ]);
+    config = {
+      browser: {
+        chromePath: detectBrowserPath(),
+        // Resolved lazily by ensureUserDataDir(): importing this module must not copy a
+        // multi-GB profile for a browser the command will not even use.
+        userDataDir: "",
+        timeout: parseInt(process.env.PAGE_TIMEOUT || "30000", 10),
+        debuggingPort: parseInt(process.env.DEBUGGING_PORT || "0", 10)
+      },
+      scraping: {
+        resultPerPage: 35,
+        maxRetries: parseInt(process.env.MAX_RETRIES || "5", 10),
+        rateLimit: parseInt(process.env.RATE_LIMIT || "1000", 10),
+        maxPages: process.env.MAX_PAGES ? parseInt(process.env.MAX_PAGES, 10) : void 0
+      },
+      output: {
+        directory: process.env.OUTPUT_DIR || "./assets",
+        saveRawJson: process.env.SAVE_RAW === "true"
+      },
+      api: {
+        baseUrl: "https://www.leboncoin.fr"
+      }
+    };
   }
 });
 
@@ -4479,7 +4968,8 @@ async function connectAndNavigate(targetUrl) {
   config.browser.debuggingPort = newPort;
   logger.info(`Launching a dedicated scraper ${browserName} on port ${newPort}`);
   logger.info(`  Binary  : ${config.browser.chromePath}`);
-  logger.info(`  Profile : ${config.browser.userDataDir}`);
+  const userDataDir = ensureUserDataDir();
+  logger.info(`  Profile : ${userDataDir}`);
   if (isBrowserRunning()) {
     logger.info(`  (your existing ${browserName} will NOT be affected)`);
   }
@@ -4487,7 +4977,7 @@ async function connectAndNavigate(targetUrl) {
     config.browser.chromePath,
     [
       `--remote-debugging-port=${newPort}`,
-      `--user-data-dir=${config.browser.userDataDir}`,
+      `--user-data-dir=${userDataDir}`,
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-session-crashed-bubble",
@@ -4524,39 +5014,205 @@ var init_browser = __esm({
 
 // src/exploit.ts
 function mapAttributes(attributes) {
+  if (!Array.isArray(attributes)) return {};
   return attributes.reduce((acc, attr) => {
+    if (!attr || typeof attr.key !== "string") return acc;
     const value = attr.value_label ?? attr.value;
     return value !== void 0 ? { ...acc, [attr.key]: value } : acc;
   }, {});
 }
+function parseDate(raw) {
+  if (!raw) return /* @__PURE__ */ new Date(0);
+  const d = raw.includes("T") ? new Date(raw) : /* @__PURE__ */ new Date(raw.replace(" ", "T") + "Z");
+  return Number.isNaN(d.getTime()) ? /* @__PURE__ */ new Date(0) : d;
+}
+function priceOf(ad) {
+  if (Array.isArray(ad.price)) return typeof ad.price[0] === "number" ? ad.price[0] : 0;
+  if (typeof ad.price === "number") return ad.price;
+  if (typeof ad.price_cents === "number") return Math.round(ad.price_cents / 100);
+  return 0;
+}
 function mapAd(ad) {
-  const dateUTC = ad.index_date.includes("T") ? new Date(ad.index_date) : /* @__PURE__ */ new Date(ad.index_date.replace(" ", "T") + "Z");
   return {
     list_id: ad.list_id,
-    title: ad.subject,
-    description: ad.body,
-    url: ad.url,
-    price: ad.price?.length ? ad.price[0] : 0,
-    date: dateUTC,
-    city: ad.location.city_label,
-    user_id: ad.owner.user_id,
-    has_phone: ad.has_phone,
+    title: ad.subject ?? "",
+    description: ad.body ?? "",
+    url: ad.url ?? "",
+    price: priceOf(ad),
+    date: parseDate(ad.index_date ?? ad.first_publication_date),
+    city: ad.location?.city_label ?? ad.location?.city ?? "",
+    user_id: ad.owner?.user_id ?? "",
+    has_phone: ad.has_phone === true,
     attributes: mapAttributes(ad.attributes)
   };
 }
+function isAd(x) {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  const id = x.list_id;
+  return typeof id === "number" || typeof id === "string" && /^\d+$/.test(id);
+}
+function isAdList(x) {
+  return Array.isArray(x) && x.length > 0 && isAd(x[0]) && x.every((e) => isAd(e));
+}
+function numberOf(o, keys) {
+  for (const k of keys) if (typeof o[k] === "number") return o[k];
+  return void 0;
+}
+function* walk(root) {
+  const seen = /* @__PURE__ */ new Set();
+  const queue = [{ node: root, parent: null }];
+  while (queue.length && seen.size < MAX_NODES) {
+    const item = queue.shift();
+    const { node } = item;
+    if (!node || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    yield item;
+    if (Array.isArray(node)) {
+      if (isAdList(node)) continue;
+      for (const child of node) queue.push({ node: child, parent: null });
+    } else {
+      for (const child of Object.values(node)) queue.push({ node: child, parent: node });
+    }
+  }
+}
+function findSearchPayload(root) {
+  let best = null;
+  for (const { node, parent } of walk(root)) {
+    if (!isAdList(node)) continue;
+    if (best && best.ads.length >= node.length) continue;
+    const total = parent ? numberOf(parent, ["total", "total_count", "totalCount", "total_all", "nbResults", "count"]) : void 0;
+    const maxPages = parent ? numberOf(parent, ["max_pages", "maxPages", "total_pages", "totalPages"]) : void 0;
+    best = { ads: node, total: total ?? node.length, ...maxPages !== void 0 ? { max_pages: maxPages } : {} };
+  }
+  return best;
+}
+function findAdPayload(root) {
+  let fallback = null;
+  for (const { node, parent } of walk(root)) {
+    if (!isAd(node)) continue;
+    if (parent && parent.ad === node) return node;
+    if (!fallback && parent) fallback = node;
+  }
+  return fallback;
+}
 function processSearchData(data) {
+  const ads = Array.isArray(data?.ads) ? data.ads : [];
   return {
-    total: data.total,
-    results: data.ads.map(mapAd)
+    total: typeof data?.total === "number" ? data.total : ads.length,
+    results: ads.filter(isAd).map(mapAd)
   };
 }
 function processAdData(ad) {
   return mapAd(ad);
 }
+var MAX_NODES;
 var init_exploit = __esm({
   "src/exploit.ts"() {
     "use strict";
     init_utils();
+    MAX_NODES = 5e4;
+  }
+});
+
+// src/page-payload.ts
+async function readPageSnapshot(cdp) {
+  const s = await cdp.evaluate(SNAPSHOT_JS, false).catch(() => null);
+  return s && typeof s === "object" ? { ...s, jsonScripts: s.jsonScripts ?? [], adLinks: s.adLinks ?? [] } : { url: "", jsonScripts: [], adLinks: [] };
+}
+function adsFromLinks(links) {
+  const ads = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const l of links) {
+    const id = l.href.match(/\/(\d{6,})(?:\.htm)?(?:[/?#]|$)/)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ads.push({ list_id: Number(id), subject: l.text.split(" \xB7 ")[0]?.trim() ?? l.text, url: l.href });
+  }
+  return ads;
+}
+function searchFromSnapshot(s, sniffed = []) {
+  const fromNext = s.nextData ? findSearchPayload(s.nextData) : null;
+  if (fromNext) return { payload: fromNext, source: "next-data" };
+  const fromScripts = findSearchPayload(s.jsonScripts);
+  if (fromScripts) return { payload: fromScripts, source: "json-script" };
+  const fromNetwork = findSearchPayload(sniffed);
+  if (fromNetwork) return { payload: fromNetwork, source: "network" };
+  const ads = adsFromLinks(s.adLinks);
+  if (ads.length) return { payload: { ads, total: ads.length }, source: "dom-links" };
+  return null;
+}
+function adFromSnapshot(s, sniffed = []) {
+  const fromNext = s.nextData ? findAdPayload(s.nextData) : null;
+  if (fromNext) return { ad: fromNext, source: "next-data" };
+  const fromScripts = findAdPayload(s.jsonScripts);
+  if (fromScripts) return { ad: fromScripts, source: "json-script" };
+  const fromNetwork = findAdPayload(sniffed);
+  if (fromNetwork) return { ad: fromNetwork, source: "network" };
+  return null;
+}
+function categoryIdFromSnapshot(s) {
+  const nd = s.nextData;
+  const id = nd?.props?.pageProps?.categoryId ?? nd?.query?.category;
+  return id === void 0 || id === null ? null : String(id);
+}
+var MAX_SCRIPT_CHARS, SNAPSHOT_JS, JsonSniffer;
+var init_page_payload = __esm({
+  "src/page-payload.ts"() {
+    "use strict";
+    init_exploit();
+    MAX_SCRIPT_CHARS = 5e6;
+    SNAPSHOT_JS = `(() => {
+  /* page-snapshot */
+  const out = { url: location.href, jsonScripts: [], adLinks: [] };
+  const nd = document.getElementById('__NEXT_DATA__');
+  if (nd && nd.textContent) { try { const d = JSON.parse(nd.textContent); out.nextData = d; out.buildId = d.buildId; } catch (e) {} }
+  for (const s of Array.from(document.querySelectorAll('script[type="application/json"], script[type="application/ld+json"]'))) {
+    if (s === nd || !s.textContent || s.textContent.length > ${MAX_SCRIPT_CHARS}) continue;
+    try { out.jsonScripts.push(JSON.parse(s.textContent)); } catch (e) {}
+    if (out.jsonScripts.length >= 30) break;
+  }
+  const seen = new Set();
+  for (const a of Array.from(document.querySelectorAll('a[href*="/ad/"]'))) {
+    const href = a.href;
+    if (!href || seen.has(href)) continue;
+    seen.add(href);
+    out.adLinks.push({ href, text: ((a.innerText || a.textContent || '').replace(/\\s+/g, ' ').trim()).slice(0, 200) });
+    if (out.adLinks.length >= 200) break;
+  }
+  return out;
+})()`;
+    JsonSniffer = class {
+      constructor(cdp, maxBodies = 40) {
+        this.cdp = cdp;
+        this.maxBodies = maxBodies;
+      }
+      cdp;
+      maxBodies;
+      bodies = [];
+      pending = /* @__PURE__ */ new Map();
+      started = false;
+      async start() {
+        if (this.started) return;
+        this.started = true;
+        await this.cdp.send("Network.enable").catch(() => {
+        });
+        this.cdp.on("Network.responseReceived", (p) => {
+          if (/json/i.test(p.response?.mimeType ?? "")) this.pending.set(p.requestId, true);
+        });
+        this.cdp.on("Network.loadingFinished", (p) => {
+          if (!this.pending.delete(p.requestId) || this.bodies.length >= this.maxBodies) return;
+          this.cdp.send("Network.getResponseBody", { requestId: p.requestId }).then((r) => {
+            if (!r?.body) return;
+            const text = r.base64Encoded ? Buffer.from(r.body, "base64").toString("utf8") : r.body;
+            try {
+              this.bodies.push(JSON.parse(text));
+            } catch {
+            }
+          }).catch(() => {
+          });
+        });
+      }
+    };
   }
 });
 
@@ -4576,8 +5232,11 @@ function normalizeSearchInput(input, baseUrl) {
     if (qIndex >= 0) {
       pathname = "/" + trimmed.slice(0, qIndex).replace(/^\/+/, "");
       params = new URLSearchParams(trimmed.slice(qIndex + 1));
-    } else {
+    } else if (trimmed.includes("=")) {
       params = new URLSearchParams(trimmed);
+    } else {
+      params = new URLSearchParams();
+      if (trimmed) params.set("text", trimmed.replace(/\s+/g, " "));
     }
   }
   const isMap = /\/carte\//.test(pathname) || params.has("lat") && params.has("lng");
@@ -4608,65 +5267,42 @@ var init_query = __esm({
 });
 
 // src/scraper.ts
-async function extractNextDataFromDOM(cdp) {
-  const result = await cdp.evaluate(
-    `(() => {
-      const el = document.getElementById('__NEXT_DATA__');
-      if (!el || !el.textContent) return null;
-      const data = JSON.parse(el.textContent);
-      const pp = data.props && data.props.pageProps;
-      const searchData = pp ? (pp.searchData || pp.searchResult || null) : null;
-      const categoryId =
-        (pp && pp.categoryId) || (data.query && data.query.category) || null;
-      return { buildId: data.buildId, searchData, categoryId };
-    })()`
-  );
-  if (!result) {
-    throw new Error("Could not read __NEXT_DATA__ from the page. The page may not have loaded correctly or a CAPTCHA may be blocking.");
+async function readSearchPage(cdp, sniffer) {
+  const snap = await readPageSnapshot(cdp);
+  const found = searchFromSnapshot(snap, sniffer?.bodies ?? []);
+  if (!found) {
+    throw new Error(
+      "No search results found on the page (no __NEXT_DATA__, inline JSON, network JSON or /ad/ links). The page may not have loaded, a CAPTCHA may be blocking, or the site changed \u2014 run `leboncoin doctor`."
+    );
   }
-  if (!result.searchData) {
-    throw new Error("No searchData/searchResult in __NEXT_DATA__ \u2014 the page may not be a search results page.");
-  }
-  return result;
+  if (found.source !== "next-data") logger.warn(`Search results read from ${found.source} (no __NEXT_DATA__ payload) \u2014 the site may have changed.`);
+  return { ...found, buildId: snap.buildId ?? "", categoryId: categoryIdFromSnapshot(snap) };
 }
 async function fetchNextDataRoute(cdp, buildId, query, page) {
-  const escapedBuildId = JSON.stringify(buildId);
-  const escapedQuery = JSON.stringify(query);
-  const result = await cdp.evaluate(`(async () => {
-    const url = '/_next/data/' + ${escapedBuildId} + '/recherche.json?' + ${escapedQuery} + '&page=' + ${page};
-    const res = await fetch(url, {
-      credentials: 'same-origin',
-      headers: { 'Accept': 'application/json' },
-    });
+  const json = await cdp.evaluate(`(async () => {
+    const url = '/_next/data/' + ${JSON.stringify(buildId)} + '/recherche.json?' + ${JSON.stringify(query)} + '&page=' + ${page};
+    const res = await fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
     if (!res.ok) {
       if (res.status === 403) throw new Error('BLOCKED:403');
       throw new Error('HTTP_' + res.status);
     }
-    const data = await res.json();
-    if (data.pageProps && data.pageProps.searchData) return data.pageProps.searchData;
-    throw new Error('NO_SEARCH_DATA');
+    return await res.json();
   })()`);
-  return result;
+  const payload = findSearchPayload(json);
+  if (!payload) throw new Error("NO_SEARCH_DATA");
+  return payload;
 }
 async function fetchAdDataRoute(cdp, buildId, adPath) {
-  const escapedBuildId = JSON.stringify(buildId);
-  const jsonPath = adPath.replace(/\.htm$/, "") + ".json";
-  const escapedPath = JSON.stringify(jsonPath);
-  const result = await cdp.evaluate(`(async () => {
-    const url = '/_next/data/' + ${escapedBuildId} + ${escapedPath};
-    const res = await fetch(url, {
-      credentials: 'same-origin',
-      headers: { 'Accept': 'application/json' },
-    });
+  const jsonPath = adPath.replace(/\.htm$/, "").replace(/[?#].*$/, "") + ".json";
+  return cdp.evaluate(`(async () => {
+    const url = '/_next/data/' + ${JSON.stringify(buildId)} + ${JSON.stringify(jsonPath)};
+    const res = await fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
     if (!res.ok) {
       if (res.status === 403) throw new Error('BLOCKED:403');
       throw new Error('HTTP_' + res.status);
     }
-    const data = await res.json();
-    if (data.pageProps && data.pageProps.ad) return data.pageProps.ad;
-    throw new Error('NO_AD_DATA');
+    return await res.json();
   })()`);
-  return result;
 }
 async function navigateWithCaptchaHandling(cdp, url) {
   await cdp.send("Page.enable");
@@ -4680,41 +5316,54 @@ async function navigateWithCaptchaHandling(cdp, url) {
 }
 async function scrapeAllSearchPages(cdp, search) {
   logger.startTask("Scraping search results");
-  let firstPage;
+  let first;
   try {
-    firstPage = await extractNextDataFromDOM(cdp);
+    first = await readSearchPage(cdp);
   } catch (error) {
     logger.warn(`First extraction failed: ${error.message}`);
-    logger.info("Re-navigating to search URL\u2026");
+    logger.info("Re-navigating to search URL (capturing network JSON)\u2026");
+    const sniffer = new JsonSniffer(cdp);
+    await sniffer.start();
     await navigateWithCaptchaHandling(cdp, search.navigateUrl);
-    firstPage = await extractNextDataFromDOM(cdp);
+    first = await readSearchPage(cdp, sniffer);
   }
-  const { buildId, searchData, categoryId } = firstPage;
+  const { buildId, payload, categoryId } = first;
   const query = buildQueryString(search.params, categoryId);
-  const first = processSearchData(searchData);
-  const allAds = [...first.results];
-  const totalPages = Math.ceil(first.total / config.scraping.resultPerPage);
-  const siteCap = typeof searchData.max_pages === "number" && searchData.max_pages > 0 ? searchData.max_pages : FALLBACK_MAX_PAGES;
+  const firstPage = processSearchData(payload);
+  const allAds = [...firstPage.results];
+  const perPage = firstPage.results.length > 0 ? Math.max(firstPage.results.length, config.scraping.resultPerPage) : config.scraping.resultPerPage;
+  const totalPages = Math.max(1, Math.ceil(firstPage.total / perPage));
+  const siteCap = typeof payload.max_pages === "number" && payload.max_pages > 0 ? payload.max_pages : FALLBACK_MAX_PAGES;
   const userCap = config.scraping.maxPages && config.scraping.maxPages > 0 ? config.scraping.maxPages : Infinity;
   const nbPages = Math.min(totalPages, siteCap, userCap);
-  logger.info(`Found ${first.total} results across ${totalPages} pages (buildId: ${buildId})`);
+  logger.info(`Found ${firstPage.total} results across ${totalPages} pages (source: ${first.source}${buildId ? `, buildId: ${buildId}` : ""})`);
   logger.info(`Pagination query: ${query}`);
   if (nbPages < totalPages) {
     const reason = userCap <= siteCap && userCap < totalPages ? `limited to ${nbPages} page(s) via --max-pages` : `Leboncoin caps pagination at ${nbPages} of ${totalPages} pages`;
     logger.warn(`Scraping the first ${nbPages} page(s) \u2014 ${reason}.`);
   }
+  let useDataRoute = !!buildId;
   for (let i = 2; i <= nbPages; i++) {
     await delay(config.scraping.rateLimit + Math.floor(Math.random() * 2e3));
     logger.progress(i - 1, nbPages, `Page ${i}/${nbPages}`);
+    const pageUrl = `${config.api.baseUrl}/recherche?${query}&page=${i}`;
     try {
-      const pageData = await fetchNextDataRoute(cdp, buildId, query, i);
-      const page = processSearchData(pageData);
-      allAds.push(...page.results);
+      if (useDataRoute) {
+        try {
+          allAds.push(...processSearchData(await fetchNextDataRoute(cdp, buildId, query, i)).results);
+          continue;
+        } catch (error) {
+          if (error.message?.includes("BLOCKED") || error.message?.includes("CAPTCHA")) throw error;
+          logger.warn(`Data route failed (${error.message}) \u2014 switching to page navigation.`);
+          useDataRoute = false;
+        }
+      }
+      await navigateWithCaptchaHandling(cdp, pageUrl);
+      allAds.push(...processSearchData((await readSearchPage(cdp)).payload).results);
     } catch (error) {
       if (error.message?.includes("BLOCKED") || error.message?.includes("CAPTCHA")) {
-        await navigateWithCaptchaHandling(cdp, `${config.api.baseUrl}/recherche?${query}&page=${i}`);
-        const retryData = await extractNextDataFromDOM(cdp);
-        allAds.push(...processSearchData(retryData.searchData).results);
+        await navigateWithCaptchaHandling(cdp, pageUrl);
+        allAds.push(...processSearchData((await readSearchPage(cdp)).payload).results);
       } else {
         logger.error(`Failed page ${i}: ${error.message}`);
       }
@@ -4722,42 +5371,36 @@ async function scrapeAllSearchPages(cdp, search) {
   }
   if (nbPages > 1) logger.progress(nbPages, nbPages);
   logger.endTask();
-  return { ads: allAds, buildId, query };
+  return { ads: allAds, buildId, query, source: first.source, rawFirstPage: payload };
 }
 async function scrapeAdDetails(cdp, urls, buildId) {
   logger.startTask(`Scraping ${urls.length} ad details`);
   const result = { success: [], failed: [] };
+  const retried = /* @__PURE__ */ new Set();
   for (let i = 0; i < urls.length; i++) {
     logger.progress(i + 1, urls.length);
+    const url = urls[i];
     try {
-      const urlPath = urls[i].replace(/^https?:\/\/[^/]+/, "");
-      const adData = await fetchAdDataRoute(cdp, buildId, urlPath);
-      result.success.push(processAdData(adData));
+      const urlPath = url.replace(/^https?:\/\/[^/]+/, "");
+      const raw = buildId ? findAdPayload(await fetchAdDataRoute(cdp, buildId, urlPath)) : null;
+      if (raw) {
+        result.success.push(processAdData(raw));
+      } else {
+        await navigateWithCaptchaHandling(cdp, url);
+        const found = adFromSnapshot(await readPageSnapshot(cdp));
+        if (!found) throw new Error("NO_AD_DATA");
+        result.success.push(processAdData(found.ad));
+      }
     } catch (error) {
-      if (error.message?.includes("BLOCKED") || error.message?.includes("CAPTCHA")) {
-        await navigateWithCaptchaHandling(cdp, urls[i]);
-        try {
-          const dom = await cdp.evaluate(
-            `(() => {
-              const el = document.getElementById('__NEXT_DATA__');
-              if (!el) return null;
-              return JSON.parse(el.textContent).props.pageProps.ad;
-            })()`
-          );
-          if (dom) {
-            result.success.push(processAdData(dom));
-            continue;
-          }
-        } catch {
-        }
+      if ((error.message?.includes("BLOCKED") || error.message?.includes("CAPTCHA")) && !retried.has(i)) {
+        retried.add(i);
+        await navigateWithCaptchaHandling(cdp, url).catch(() => {
+        });
         i--;
         continue;
       }
-      result.failed.push({
-        url: urls[i],
-        error: error instanceof Error ? error.message : String(error)
-      });
-      logger.error(`Failed: ${urls[i]}`);
+      result.failed.push({ url, error: error instanceof Error ? error.message : String(error) });
+      logger.error(`Failed: ${url}`);
     }
     if (i < urls.length - 1) {
       await delay(config.scraping.rateLimit + Math.floor(Math.random() * 1500));
@@ -4771,12 +5414,13 @@ var init_scraper = __esm({
   "src/scraper.ts"() {
     "use strict";
     init_browser();
-    init_exploit();
-    init_config();
-    init_logger();
-    init_utils();
     init_captcha();
+    init_config();
+    init_exploit();
+    init_logger();
+    init_page_payload();
     init_query();
+    init_utils();
     FALLBACK_MAX_PAGES = 100;
   }
 });
@@ -4796,16 +5440,7 @@ async function loadConfigFile(configPath) {
   }
 }
 async function runScrape(args) {
-  if (args.resetProfile) {
-    resetScraperProfile();
-  }
-  if (args.browser) {
-    config.browser.chromePath = getBrowserPath(args.browser);
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(config.browser.chromePath));
-  } else if (args.chromePath) {
-    config.browser.chromePath = args.chromePath;
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(args.chromePath));
-  }
+  selectBrowser({ browser: args.browser, chromePath: args.chromePath, resetProfile: args.resetProfile });
   if (args.debuggingPort) config.browser.debuggingPort = args.debuggingPort;
   if (args.pageTimeout) config.browser.timeout = args.pageTimeout;
   if (args.maxRetries) config.scraping.maxRetries = args.maxRetries;
@@ -4834,7 +5469,12 @@ async function runScrape(args) {
       fs3.mkdirSync(config.output.directory, { recursive: true });
       const outputPath = `${config.output.directory}/${outputName}.json`;
       fs3.writeFileSync(outputPath, JSON.stringify(searchResult.ads, null, 2));
-      logger.success(`Saved ${searchResult.ads.length} results to ${outputPath}`);
+      logger.success(`Saved ${searchResult.ads.length} results to ${outputPath} (source: ${searchResult.source})`);
+      if (config.output.saveRawJson) {
+        const rawPath = `${config.output.directory}/raw_${outputName}.json`;
+        fs3.writeFileSync(rawPath, JSON.stringify(searchResult.rawFirstPage, null, 2));
+        logger.info(`Saved the raw first-page payload to ${rawPath}`);
+      }
     }
     if (args.withDetails || args.detailsOnly) {
       const resultsPath = `${config.output.directory}/${outputName}.json`;
@@ -4843,35 +5483,10 @@ async function runScrape(args) {
         process.exit(1);
       }
       const results = JSON.parse(fs3.readFileSync(resultsPath, "utf8"));
-      const urls = results.map((ad) => ad.url);
+      const urls = results.map((ad) => ad.url).filter(Boolean);
       if (urls.length > 0) {
-        if (!buildId) {
-          const nextData = await cdp.evaluate(
-            `(() => {
-              const el = document.getElementById('__NEXT_DATA__');
-              return el ? JSON.parse(el.textContent).buildId : null;
-            })()`
-          ).catch(() => null);
-          buildId = nextData?.buildId || "";
-          if (!buildId) {
-            logger.warn("Could not get buildId \u2014 navigating to get one\u2026");
-            await cdp.send("Page.enable");
-            await cdp.send("Page.navigate", { url: urls[0] });
-            await waitForPageReady(cdp);
-            await new Promise((r) => setTimeout(r, 2e3));
-            const nd = await cdp.evaluate(
-              `(() => {
-                const el = document.getElementById('__NEXT_DATA__');
-                return el ? { buildId: JSON.parse(el.textContent).buildId } : null;
-              })()`
-            ).catch(() => null);
-            buildId = nd?.buildId || "";
-          }
-        }
-        if (!buildId) {
-          logger.error("Cannot determine buildId \u2014 ad detail scraping requires it.");
-          process.exit(1);
-        }
+        if (!buildId) buildId = (await readPageSnapshot(cdp)).buildId ?? "";
+        if (!buildId) logger.warn("No Next.js buildId on the page \u2014 reading each ad page directly.");
         const details = await scrapeAdDetails(cdp, urls, buildId);
         const detailsPath = `${config.output.directory}/details_${outputName}.json`;
         fs3.writeFileSync(detailsPath, JSON.stringify(details.success, null, 2));
@@ -4894,6 +5509,7 @@ var init_scrape = __esm({
   "src/scrape.ts"() {
     "use strict";
     init_browser();
+    init_page_payload();
     init_scraper();
     init_utils();
     init_query();
@@ -4949,21 +5565,15 @@ __export(comparables_exports, {
   runComparables: () => runComparables
 });
 import fs4 from "fs";
-import path5 from "path";
+import path6 from "path";
 async function runComparables(annoncesDir, slug, opts = {}) {
-  const dir = path5.join(annoncesDir, slug);
+  const dir = path6.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   const rawQuery = opts.query ?? buildQueryFromAnnonce(a);
   if (!rawQuery) {
     throw new Error(`cannot build a comparables query for "${slug}" \u2014 add a title/zipcode or pass --query`);
   }
-  if (opts.browser) {
-    config.browser.chromePath = getBrowserPath(opts.browser);
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(config.browser.chromePath));
-  } else if (opts.chromePath) {
-    config.browser.chromePath = opts.chromePath;
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(opts.chromePath));
-  }
+  selectBrowser({ browser: opts.browser, chromePath: opts.chromePath });
   if (opts.debuggingPort) config.browser.debuggingPort = opts.debuggingPort;
   if (opts.pageTimeout) config.browser.timeout = opts.pageTimeout;
   config.scraping.maxPages = opts.maxPages && opts.maxPages > 0 ? opts.maxPages : 1;
@@ -4981,8 +5591,8 @@ async function runComparables(annoncesDir, slug, opts = {}) {
       );
       if (detail.success.length) enriched = detail.success;
     }
-    const jsonPath = path5.join(dir, "comparables.json");
-    const mdPath = path5.join(dir, "comparables.md");
+    const jsonPath = path6.join(dir, "comparables.json");
+    const mdPath = path6.join(dir, "comparables.md");
     fs4.writeFileSync(jsonPath, JSON.stringify(enriched, null, 2));
     fs4.writeFileSync(mdPath, digest(a, enriched));
     logger.success(`Wrote ${enriched.length} comparable(s) to ${mdPath}`);
@@ -5012,70 +5622,166 @@ async function resolveSelector(cdp, candidates) {
   }
   return null;
 }
-async function setInputValue(cdp, candidates, value) {
-  const sel = await resolveSelector(cdp, candidates);
-  if (!sel) return false;
+async function clickSelector(cdp, candidates, opts = {}) {
   return cdp.evaluate(
     `(() => {
-        const el = document.querySelector(${JSON.stringify(sel)});
-        if (!el) return false;
-        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (desc && desc.set) desc.set.call(el, ${JSON.stringify(value)});
-        else el.value = ${JSON.stringify(value)};
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new Event('blur', { bubbles: true }));
-        return true;
-      })()`,
-    false
-  ).catch(() => false);
-}
-async function clickSelector(cdp, candidates) {
-  const sel = await resolveSelector(cdp, candidates);
-  if (!sel) return false;
-  return cdp.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.click(); return true; })()`, false).catch(() => false);
-}
-async function clickByText(cdp, texts, cssFallback = []) {
-  const wanted = JSON.stringify(texts.map((t) => t.toLowerCase()));
-  const ok = await cdp.evaluate(
-    `(() => {
-        const wanted = ${wanted};
-        const els = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"], input[type="button"]'));
-        for (const el of els) {
-          if (el.disabled) continue;
-          const txt = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
-          if (txt && wanted.some((w) => txt === w || txt.includes(w))) { el.click(); return true; }
+        const visible = ${VISIBLE_JS};
+        for (const sel of ${JSON.stringify(candidates)}) {
+          let els = [];
+          try { els = Array.from(document.querySelectorAll(sel)); } catch (e) { continue; }
+          const el = els.find((e) => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true');
+          if (el) { if (!${opts.dryRun === true}) el.click(); return true; }
         }
         return false;
       })()`,
     false
   ).catch(() => false);
-  if (ok) return true;
-  return cssFallback.length ? clickSelector(cdp, cssFallback) : false;
 }
-async function clickButton(cdp, button) {
-  return clickByText(cdp, button.textCandidates, button.css);
-}
-async function pickSuggestion(cdp, candidates, label) {
-  const sel = await resolveSelector(cdp, candidates);
-  if (!sel) return false;
-  const wanted = label ? JSON.stringify(label.toLowerCase()) : "null";
-  return cdp.evaluate(
+async function clickByText(cdp, texts, cssFallback = [], opts = {}) {
+  const ok = await cdp.evaluate(
     `(() => {
-        const opts = Array.from(document.querySelectorAll(${JSON.stringify(sel)}));
-        if (!opts.length) return false;
-        const w = ${wanted};
-        let target = opts[0];
-        if (w) {
-          const hit = opts.find((o) => (o.innerText || o.textContent || '').trim().toLowerCase().includes(w));
-          if (hit) target = hit;
+        /* click-by-text */
+        const norm = ${NORM_JS};
+        const visible = ${VISIBLE_JS};
+        const wanted = ${JSON.stringify(texts)}.map(norm).filter(Boolean);
+        const els = Array.from(document.querySelectorAll('button, a, [role="button"], [role="menuitem"], [role="tab"], input[type="submit"], input[type="button"]'));
+        const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open]')).filter(visible);
+        let best = null, bestScore = 0;
+        for (const el of els) {
+          if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+          const names = [norm(el.innerText || el.textContent || el.value || ''), norm(el.getAttribute('aria-label'))].filter(Boolean);
+          let score = 0;
+          wanted.forEach((w, wi) => {
+            for (const t of names) {
+              let tier = 0;
+              if (t === w) tier = 3;
+              else if (t.startsWith(w + ' ')) tier = 2;
+              else if (w.length >= 4 && t.length <= w.length * 3 + 20 && (' ' + t + ' ').includes(' ' + w + ' ')) tier = 1;
+              if (tier) score = Math.max(score, tier * 1000 - wi * 10);
+            }
+          });
+          if (!score) continue;
+          if (dialogs.some((d) => d.contains(el))) score += 500;
+          else if (el.closest('form, main, [role="main"]')) score += 5;
+          if (score > bestScore) { best = el; bestScore = score; }
         }
-        target.click();
+        if (!best) return false;
+        if (!${opts.dryRun === true}) best.click();
         return true;
       })()`,
     false
   ).catch(() => false);
+  if (ok) return true;
+  return cssFallback.length ? clickSelector(cdp, cssFallback, opts) : false;
+}
+async function clickButton(cdp, button, opts = {}) {
+  return clickByText(cdp, button.textCandidates, button.css, opts);
+}
+async function hasButton(cdp, button) {
+  return clickButton(cdp, button, { dryRun: true });
+}
+async function clickButtonOrMenu(cdp, button, menu, waitMs = 600) {
+  if (await clickButton(cdp, button)) return true;
+  if (!await clickButton(cdp, menu)) return false;
+  await delay(waitMs);
+  return clickButton(cdp, button);
+}
+async function fillField(cdp, d, value, hint, opts = {}) {
+  const sel = d.ref ? `[data-lbc-ref="${d.ref}"]` : d.selector;
+  if (!sel) return { ok: false, reason: "gone" };
+  if (d.type === "file") return { ok: false, reason: "unsupported" };
+  return cdp.evaluate(
+    `(async () => {
+        /* fill-field */
+        const norm = ${NORM_JS};
+        const pick = ${PICK_JS};
+        const visible = ${VISIBLE_JS};
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const TYPE = ${JSON.stringify(d.type)}, VALUE = ${JSON.stringify(value)}, HINT = ${JSON.stringify(hint ?? "")};
+        const el = document.querySelector(${JSON.stringify(sel)});
+        if (!el) return { ok: false, reason: 'gone' };
+        const txt = (e) => ((e && (e.innerText || e.textContent)) || '').replace(/\\s+/g, ' ').trim();
+        const setVal = (input, v) => {
+          const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (desc && desc.set) desc.set.call(input, v); else input.value = v;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const truthy = /^(true|1|oui|yes|on)$/i.test(VALUE.trim());
+        if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+        if (TYPE === 'text' || TYPE === 'textarea') {
+          if (el.focus) el.focus();
+          setVal(el, VALUE);
+          el.dispatchEvent(new Event('blur', { bubbles: true }));
+          return norm(el.value) === norm(VALUE) ? { ok: true, detail: el.value } : { ok: false, reason: 'not-applied', detail: el.value };
+        }
+        if (TYPE === 'select') {
+          const opts = Array.from(el.options);
+          const i = pick(opts.map((o) => o.textContent || o.value), VALUE);
+          if (i < 0) return { ok: false, reason: 'no-option' };
+          el.value = opts[i].value;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true, detail: txt(opts[i]) };
+        }
+        if (TYPE === 'combobox') {
+          const input = el.matches('input, textarea') ? el : (el.querySelector('input') || el);
+          if (input.focus) input.focus();
+          input.click();
+          await sleep(150);
+          if (input.matches('input, textarea')) setVal(input, VALUE);
+          // Options can load asynchronously (address geocoding, \u22481\u20133 s live) and the
+          // list first shows STALE entries: poll until an option MATCHES (~6 s max).
+          let options = [], labels = [], i = -1;
+          for (let t = 0; t < ${Math.max(1, Math.ceil((opts.optionWaitMs ?? 6e3) / 200))}; t++) {
+            const lb = document.getElementById(input.getAttribute('aria-controls') || el.getAttribute('aria-controls') || '');
+            options = Array.from((lb || document).querySelectorAll('[role="option"]')).filter((o) => visible(o) && o.getAttribute('aria-disabled') !== 'true');
+            labels = options.map(txt);
+            i = pick(labels, VALUE);
+            if (i < 0 && HINT) i = pick(labels, HINT);
+            if (i >= 0) break;
+            await sleep(200);
+          }
+          if (!options.length) {
+            // Free-text combobox: the typed value stands.
+            return input.value ? { ok: true, detail: input.value } : { ok: false, reason: 'no-option' };
+          }
+          if (i < 0) return { ok: false, reason: 'no-option', detail: labels.slice(0, 8).join(' | ') };
+          options[i].click();
+          await sleep(300);
+          return { ok: true, detail: labels[i] };
+        }
+        if (TYPE === 'radiogroup' || TYPE === 'radio') {
+          const group = TYPE === 'radio' ? (el.closest('[role="radiogroup"]') || el.parentElement) : el;
+          const radios = Array.from(group.querySelectorAll('[role="radio"], input[type="radio"]')).filter((o) => o.getAttribute('aria-hidden') !== 'true');
+          const labelOf = (o) => {
+            const lb = o.getAttribute('aria-labelledby');
+            const viaFor = o.id ? document.querySelector('label[for="' + o.id.replace(/([^\\w-])/g, '\\\\$1') + '"]') : null;
+            return o.getAttribute('aria-label') || (lb ? lb.split(/\\s+/).map((id) => txt(document.getElementById(id))).join(' ') : '') || txt(o) || txt(viaFor) || o.value || '';
+          };
+          const labels = radios.map(labelOf);
+          const i = pick(labels, VALUE);
+          if (i < 0) return { ok: false, reason: 'no-option', detail: labels.join(' | ') };
+          radios[i].click();
+          return { ok: true, detail: labels[i] };
+        }
+        if (TYPE === 'checkbox' || TYPE === 'switch') {
+          const isOn = () => (el.getAttribute('role') ? el.getAttribute('aria-checked') === 'true' : !!el.checked);
+          if (isOn() !== truthy) el.click();
+          await sleep(150);
+          return isOn() === truthy ? { ok: true, detail: String(truthy) } : { ok: false, reason: 'not-applied' };
+        }
+        if (el.getAttribute('contenteditable') === 'true') {
+          el.focus();
+          el.textContent = VALUE;
+          el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+          return { ok: true, detail: VALUE };
+        }
+        return { ok: false, reason: 'unsupported' };
+      })()`,
+    true
+  ).then((r) => r ?? { ok: false, reason: "error" }).catch(() => ({ ok: false, reason: "error" }));
 }
 async function currentUrl(cdp) {
   return cdp.evaluate("location.href", false).catch(() => "");
@@ -5088,18 +5794,32 @@ async function probeLoggedIn(cdp, opts) {
   const domSel = await resolveSelector(cdp, opts.loggedInSelectors);
   if (domSel) signals.push(`dom:${domSel}`);
   if (await pageHasText(cdp, opts.loggedInTextMarkers)) signals.push("text");
-  return { loggedIn: signals.length > 0, signals };
+  const loggedOutSignals = [];
+  if (!signals.length && opts.loggedOutSelectors?.length) {
+    const out = await resolveSelector(cdp, opts.loggedOutSelectors);
+    if (out) loggedOutSignals.push(`dom:${out}`);
+  }
+  return { loggedIn: signals.length > 0, signals, loggedOutSignals };
 }
 async function pageHasText(cdp, markers) {
-  const arr = JSON.stringify(markers.map((m) => m.toLowerCase()));
-  return cdp.evaluate(`(() => { const t = (document.body.innerText || '').toLowerCase(); return ${arr}.some((m) => t.includes(m)); })()`, false).catch(() => false);
+  return cdp.evaluate(
+    `(() => { const n = ${NORM_JS}; const t = ' ' + n(document.body.innerText || document.body.textContent || '') + ' '; return ${JSON.stringify(markers)}.map(n).filter(Boolean).some((m) => t.includes(' ' + m + ' ')); })()`,
+    false
+  ).catch(() => false);
 }
-async function uploadPhotos(cdp, fileInputCandidates, absPaths) {
+async function countElements(cdp, candidates) {
+  return cdp.evaluate(
+    `(() => { const s = new Set(); for (const c of ${JSON.stringify(candidates)}) { try { document.querySelectorAll(c).forEach((e) => s.add(e)); } catch (e) {} } return s.size; })()`,
+    false
+  ).catch(() => 0);
+}
+async function uploadPhotos(cdp, fileInputCandidates, absPaths, thumbnailCandidates = []) {
   const sel = await resolveSelector(cdp, fileInputCandidates);
-  if (!sel) return 0;
+  if (!sel || absPaths.length === 0) return 0;
+  const before = thumbnailCandidates.length ? await countElements(cdp, thumbnailCandidates) : 0;
   await cdp.send("DOM.enable").catch(() => {
   });
-  const doc = await cdp.send("DOM.getDocument", { depth: -1, pierce: true });
+  const doc = await cdp.send("DOM.getDocument", { depth: -1, pierce: true }).catch(() => null);
   const rootId = doc?.root?.nodeId;
   if (!rootId) return 0;
   const found = await cdp.send("DOM.querySelector", { nodeId: rootId, selector: sel }).catch(() => null);
@@ -5107,12 +5827,35 @@ async function uploadPhotos(cdp, fileInputCandidates, absPaths) {
   if (!nodeId) return 0;
   await cdp.send("DOM.setFileInputFiles", { nodeId, files: absPaths }).catch(() => {
   });
-  const count = await cdp.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); return el && el.files ? el.files.length : 0; })()`, false).catch(() => 0);
-  return count;
+  let landed = 0;
+  for (let i = 0; i < 10; i++) {
+    const inInput = await cdp.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); return el && el.files ? el.files.length : 0; })()`, false).catch(() => 0);
+    const thumbs = thumbnailCandidates.length ? await countElements(cdp, thumbnailCandidates) - before : 0;
+    landed = Math.min(absPaths.length, Math.max(inInput, thumbs));
+    if (landed >= absPaths.length) break;
+    await delay(500);
+  }
+  return landed;
 }
+var NORM_JS, VISIBLE_JS, PICK_JS;
 var init_deposit_form = __esm({
   "src/deposit-form.ts"() {
     "use strict";
+    init_utils();
+    NORM_JS = `(s) => String(s == null ? '' : s).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()`;
+    VISIBLE_JS = `(el) => !!el && el.getAttribute('aria-hidden') !== 'true' && !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length))`;
+    PICK_JS = `(labels, wanted) => {
+  const n = ${NORM_JS};
+  const w = n(wanted);
+  if (!w || !labels.length) return -1;
+  const L = labels.map(n);
+  const tiers = [(o) => o === w, (o) => o.startsWith(w) || (o.length > 2 && w.startsWith(o)), (o) => o.includes(w) || (o.length > 2 && w.includes(o))];
+  for (const t of tiers) { const i = L.findIndex((o) => o && t(o)); if (i >= 0) return i; }
+  const wt = new Set(w.split(' ').filter((x) => x.length > 1));
+  let best = -1, bs = 0;
+  L.forEach((o, i) => { const s = Array.from(new Set(o.split(' '))).filter((x) => wt.has(x)).length; if (s > bs || (s === bs && s > 0 && o.length < L[best].length)) { best = i; bs = s; } });
+  return best;
+}`;
   }
 });
 
@@ -5195,149 +5938,6 @@ var init_screenshot = __esm({
   }
 });
 
-// src/selectors.ts
-var BASE_URL, DEPOSIT, AUTH, ELEMENT_TARGETS, MANAGE;
-var init_selectors = __esm({
-  "src/selectors.ts"() {
-    "use strict";
-    BASE_URL = "https://www.leboncoin.fr";
-    DEPOSIT = {
-      startUrl: `${BASE_URL}/deposer-une-annonce`,
-      /** A redirect to one of these means the session is logged out. */
-      loginUrlPattern: /\/(connexion|login|authentification|account\/login)/i,
-      categoryInput: [
-        'input[name="category"]',
-        'input[data-qa-id="adsubject_category"]',
-        'input[placeholder*="cat\xE9gorie" i]',
-        'input[aria-label*="cat\xE9gorie" i]',
-        '[data-qa-id="category"] input'
-      ],
-      titleInput: ['input[name="subject"]', 'input[data-qa-id="input_subject"]', "input#subject", 'input[aria-label*="titre" i]'],
-      descTextarea: ['textarea[name="body"]', 'textarea[data-qa-id="textarea_body"]', "textarea#body", 'textarea[aria-label*="description" i]'],
-      priceInput: [
-        'input[name="price"]',
-        'input[data-qa-id="input_price"]',
-        "input#price",
-        'input[aria-label*="prix" i]',
-        'input[inputmode="numeric"][name*="price" i]'
-      ],
-      zipcodeInput: [
-        'input[name="location"]',
-        'input[name="zipcode"]',
-        'input[data-qa-id="input_location"]',
-        'input[placeholder*="code postal" i]',
-        'input[placeholder*="ville" i]'
-      ],
-      /** Generic autocomplete option (category, zipcode→city). */
-      suggestionOption: ['[role="option"]', 'li[data-qa-id*="suggestion"]', 'ul[role="listbox"] li', '[data-qa-id="suggestion"]'],
-      /** The real <input type=file>; may be hidden behind photoAddButton. */
-      photoFileInput: ['input[type="file"][accept*="image"]', 'input[type="file"]'],
-      photoAddButton: {
-        textCandidates: ["Ajouter des photos", "Ajouter une photo", "Ajoutez vos photos", "Ajouter"],
-        css: ['[data-qa-id*="photo"] button', 'button[aria-label*="photo" i]']
-      },
-      /** The photo thumbnail grid — an element-clip target for cheap verification. */
-      photoGrid: ['[data-qa-id*="photo" i]', '[class*="photo" i]', '[data-test*="photo" i]'],
-      /** Shipping/delivery toggle (only used when the annonce sets `shipping: true`). */
-      shippingToggle: {
-        textCandidates: ["Proposer la livraison", "Envoi possible", "Livraison", "Colis", "Envoi"],
-        css: ['input[name*="shipping" i]', 'input[name*="livraison" i]', '[data-qa-id*="shipping" i]']
-      },
-      /** Category-specific attribute field, by form field name/id/data-attr. */
-      attrByKey: (key) => [`[name="${key}"]`, `[data-qa-id="${key}"]`, `[data-attribute="${key}"]`, `select[name="${key}"]`, `[id="${key}"]`],
-      publishButton: {
-        textCandidates: ["D\xE9poser mon annonce", "D\xE9poser l'annonce", "Publier mon annonce", "Publier", "Valider"],
-        css: ['button[type="submit"]', 'button[data-qa-id="adsubmit"]']
-      },
-      /** A published ad URL carries the numeric list_id. */
-      publishedUrlPattern: [/\/ad\/[^/]+\/(\d{4,})/, /\/(\d{6,})\.htm/, /[?&]listing_id=(\d+)/],
-      /** Reaching one of these means the deposit succeeded (id may need a follow-up). */
-      confirmedUrlPattern: [/\/deposer-une-annonce\/(confirmation|merci|success)/i, /\/ad\//]
-    };
-    AUTH = {
-      /** Authenticated route; redirects to login when the session is dead. */
-      accountUrl: `${BASE_URL}/mes-annonces`,
-      loginUrl: `${BASE_URL}/connexion`,
-      /**
-       * Matches a leboncoin.fr URL (incl. subdomains). A live session STAYS on
-       * leboncoin.fr; being redirected off-domain (e.g. accounts.google.com for the
-       * "Sign in with Google" OAuth) means we are mid-auth, i.e. NOT logged in — and
-       * is also why the logged-in DOM markers below must never be trusted off-site
-       * (a Google page has its own /account links).
-       */
-      leboncoinHostPattern: /^https?:\/\/([^/]*\.)?leboncoin\.fr(?:[:/]|$)/i,
-      /** DOM markers that only render for a logged-in user, leboncoin-specific (ordered, best-effort). */
-      loggedInSelectors: [
-        '[data-qa-id="header-account"]',
-        '[data-qa-id*="account" i]',
-        'a[href*="/mes-annonces"]',
-        'a[href*="/mon-compte"]',
-        'a[href*="/messagerie"]',
-        'a[href*="/favoris"]',
-        'a[href*="/deconnexion"]'
-      ],
-      /** Visible text that implies a logged-in session. */
-      loggedInTextMarkers: ["mes annonces", "se d\xE9connecter", "d\xE9connexion", "ma messagerie"],
-      /** Visible text that implies a logged-out / sign-in page. */
-      loginRequiredTextMarkers: ["se connecter", "identifiez-vous", "cr\xE9er un compte", "connecte-toi", "sign in to leboncoin", "sign in with google"]
-    };
-    ELEMENT_TARGETS = {
-      photos: DEPOSIT.photoGrid,
-      price: DEPOSIT.priceInput,
-      submit: DEPOSIT.publishButton.css
-    };
-    MANAGE = {
-      listingUrl: `${BASE_URL}/mes-annonces`,
-      adUrl: (id) => `${BASE_URL}/ad/${id}`,
-      deleteButton: {
-        textCandidates: ["Supprimer l'annonce", "Supprimer", "D\xE9sactiver l'annonce", "D\xE9sactiver"],
-        css: ['button[data-qa-id*="delete"]', 'a[href*="delete"]', 'button[aria-label*="supprimer" i]']
-      },
-      confirmButton: {
-        textCandidates: ["Confirmer la suppression", "Confirmer", "Supprimer", "Oui", "Valider"],
-        css: ['button[data-qa-id*="confirm"]', 'button[type="submit"]']
-      },
-      /** Open the modify form for a published ad. */
-      editButton: {
-        textCandidates: ["Modifier l'annonce", "Modifier", "\xC9diter", "Modifier mon annonce"],
-        css: ['button[data-qa-id*="edit"]', 'a[href*="modifier"]', 'a[href*="edit"]', 'button[aria-label*="modifier" i]']
-      },
-      /** Save / update an edited ad (the edit form's submit). */
-      saveButton: {
-        textCandidates: ["Enregistrer les modifications", "Enregistrer", "Mettre \xE0 jour", "Valider les modifications", "Valider"],
-        css: ['button[type="submit"]', 'button[data-qa-id*="save"]', 'button[data-qa-id*="submit"]']
-      },
-      /** Renew / bump ("remettre en avant" / boost). No status change. */
-      renewButton: {
-        textCandidates: ["Remettre en avant", "Remonter l'annonce", "Booster", "Renouveler", "Remonter"],
-        css: ['button[data-qa-id*="renew"]', 'button[data-qa-id*="boost"]', 'a[href*="remonter"]']
-      },
-      /** Mark the ad as sold ("c'est vendu" / "vendu"). */
-      markSoldButton: {
-        textCandidates: ["Marquer comme vendu", "C'est vendu", "Vendu", "Marquer vendu"],
-        css: ['button[data-qa-id*="sold"]', 'button[data-qa-id*="vendu"]', 'button[aria-label*="vendu" i]']
-      },
-      /** Deactivate / pause without deleting. */
-      deactivateButton: {
-        textCandidates: ["D\xE9sactiver l'annonce", "D\xE9sactiver", "Mettre en pause", "Suspendre"],
-        css: ['button[data-qa-id*="deactivate"]', 'button[data-qa-id*="pause"]', 'button[aria-label*="d\xE9sactiver" i]']
-      },
-      /** Reactivate a paused ad. */
-      reactivateButton: {
-        textCandidates: ["R\xE9activer l'annonce", "R\xE9activer", "Remettre en ligne", "Activer"],
-        css: ['button[data-qa-id*="reactivate"]', 'button[data-qa-id*="activate"]', 'button[aria-label*="r\xE9activer" i]']
-      },
-      /** Generic confirmation for renew/sold/deactivate/reactivate flows. */
-      manageConfirmButton: {
-        textCandidates: ["Confirmer", "Oui", "Valider", "Continuer", "OK"],
-        css: ['button[data-qa-id*="confirm"]', 'button[type="submit"]']
-      },
-      /** Page-text markers that confirm a delete succeeded. */
-      deletedMarkers: ["annonce supprim\xE9e", "annonce a \xE9t\xE9 supprim\xE9e", "n'existe plus", "n'est plus en ligne"]
-    };
-  }
-});
-
 // src/auth.ts
 var auth_exports = {};
 __export(auth_exports, {
@@ -5347,8 +5947,8 @@ __export(auth_exports, {
   loadCookiesJson: () => loadCookiesJson,
   runAuth: () => runAuth
 });
-import { mkdirSync as mkdirSync2, readFileSync } from "fs";
-import path6 from "path";
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync2 } from "fs";
+import path7 from "path";
 async function defaultConnect(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
@@ -5365,6 +5965,7 @@ async function checkLogin(cdp) {
     probe = await probeLoggedIn(cdp, AUTH);
   }
   if (probe.loggedIn) return { loggedIn: true, loggedOut: false, signals: probe.signals, url };
+  if (probe.loggedOutSignals.length) return { loggedIn: false, loggedOut: true, signals: probe.loggedOutSignals.map((s) => `logged-out:${s}`), url };
   const loggedOut = await pageHasText(cdp, AUTH.loginRequiredTextMarkers);
   return { loggedIn: false, loggedOut, signals: loggedOut ? ["text:login"] : [], url };
 }
@@ -5373,7 +5974,7 @@ async function ensureLoggedIn(cdp) {
   return state.loggedOut ? { ok: false, reason: "login-required", state } : { ok: true, state };
 }
 function loadCookiesJson(absPath) {
-  const data = JSON.parse(readFileSync(absPath, "utf8"));
+  const data = JSON.parse(readFileSync2(absPath, "utf8"));
   const arr = Array.isArray(data) ? data : Array.isArray(data?.cookies) ? data.cookies : [];
   return arr.filter(
     (c) => !!c && typeof c === "object" && typeof c.name === "string" && typeof c.value === "string"
@@ -5438,7 +6039,7 @@ async function runAuth(opts = {}, deps = {}) {
       const { getAuthStatePath: getAuthStatePath2 } = await Promise.resolve().then(() => (init_config(), config_exports));
       outPath = getAuthStatePath2();
     }
-    mkdirSync2(path6.dirname(outPath), { recursive: true });
+    mkdirSync2(path7.dirname(outPath), { recursive: true });
     const screenshot = await captureScreenshot(cdp, outPath) ? outPath : void 0;
     if (state.loggedIn) {
       logger.success(`Logged in to Leboncoin${state.signals.length ? ` (${state.signals.join(", ")})` : ""}.`);
@@ -5478,12 +6079,17 @@ import { writeFileSync as writeFileSync2 } from "fs";
 function slugify(s) {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 }
+function isGeneratedId(id) {
+  return /^:|_r_|^base-ui|^radix|^react-/i.test(id);
+}
 function buildFieldKey(d) {
-  return d.dataQaId || d.name || d.id || (d.label ? slugify(d.label) : "") || "field";
+  const stableId = d.id && !isGeneratedId(d.id) ? d.id : "";
+  return d.dataQaId || d.name || d.rhfName || stableId || (d.label ? slugify(d.label) : "") || d.id || "field";
 }
 function summarizeFormMap(map) {
   const required = map.fields.filter((f) => f.required).length;
-  return `${map.fields.length} field(s), ${required} required`;
+  const step = map.step?.title ? ` on \xAB ${map.step.title} \xBB` : "";
+  return `${map.fields.length} field(s), ${required} required${step}`;
 }
 function writeFormMap(absPath, map) {
   try {
@@ -5493,9 +6099,161 @@ function writeFormMap(absPath, map) {
     return false;
   }
 }
-async function introspectForm(cdp) {
+function defaultProbes() {
+  return Object.entries(LOGICAL_FIELDS).filter(([, spec]) => spec.css.length > 0).map(([name, spec]) => ({ name, css: spec.css }));
+}
+function introspectScript(probes, stepTitle) {
+  return `(() => {
+  /* introspect-form */
+  const PROBES = ${JSON.stringify(probes)};
+  const STEP_TITLE = ${JSON.stringify(stepTitle)};
+  const MAX = 120;
+  const attr = (el, n) => (el && el.getAttribute && el.getAttribute(n)) || '';
+  const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+  const text = (el) => ((el && (el.innerText || el.textContent)) || '').replace(/\\s+/g, ' ').trim();
+  const byIds = (ids) => ids.split(/\\s+/).map((id) => text(document.getElementById(id))).join(' ').trim();
+  const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/([^\\w-])/g, '\\\\$1'));
+  function labelFor(el) {
+    const al = attr(el, 'aria-label'); if (al) return al.trim();
+    const lb = attr(el, 'aria-labelledby'); if (lb) { const t = byIds(lb); if (t) return t; }
+    if (el.id) { try { const l = document.querySelector('label[for="' + esc(el.id) + '"]'); if (l && text(l)) return text(l); } catch (e) {} }
+    const wrap = el.closest && el.closest('label'); if (wrap && text(wrap)) return text(wrap);
+    if (el.placeholder) return el.placeholder.trim();
+    return attr(el, 'name') || el.id || '';
+  }
+  function altLabelsFor(el, main) {
+    const box = el.closest('[data-rhf-name]') || el.closest('fieldset') || el.parentElement;
+    if (!box) return [];
+    const out = [];
+    for (const l of Array.from(box.querySelectorAll('label, legend')).slice(0, 6)) {
+      if (l.contains(el)) continue;
+      const t = text(l).slice(0, 120);
+      if (t && t !== main && out.indexOf(t) < 0) out.push(t);
+      if (out.length >= 3) break;
+    }
+    return out;
+  }
+  function requiredOf(el, labels) {
+    if (el.required) return 'required-attr';
+    if (attr(el, 'aria-required') === 'true') return 'aria-required';
+    if (labels.some((l) => l && l.indexOf('*') >= 0)) return 'asterisk';
+    if (attr(el, 'aria-invalid') === 'true') return 'aria-invalid';
+    return null;
+  }
+  function typeOf(el) {
+    const tag = el.tagName.toLowerCase();
+    const role = attr(el, 'role');
+    if (role === 'radiogroup') return 'radiogroup';
+    if (role === 'combobox' || role === 'listbox') return 'combobox';
+    if (role === 'switch') return 'switch';
+    if (role === 'checkbox') return 'checkbox';
+    if (tag === 'textarea') return 'textarea';
+    if (tag === 'select') return 'select';
+    const t = (el.type || '').toLowerCase();
+    if (t === 'checkbox') return 'checkbox';
+    if (t === 'radio') return 'radio';
+    if (t === 'file') return 'file';
+    if (tag === 'input') return 'text';
+    return 'other';
+  }
+  function optionLabel(o) {
+    const lb = attr(o, 'aria-labelledby');
+    const viaFor = o.id ? document.querySelector('label[for="' + esc(o.id) + '"]') : null;
+    return (attr(o, 'aria-label') || (lb && byIds(lb)) || text(o) || text(viaFor) || o.value || '').slice(0, 120);
+  }
+  function optionsOf(el, type) {
+    if (type === 'select') return Array.from(el.options).slice(0, 80).map((o) => ({ label: text(o), value: o.value }));
+    if (type === 'combobox') {
+      const lb = document.getElementById(attr(el, 'aria-controls')) || (attr(el, 'role') === 'listbox' ? el : null);
+      if (!lb) return undefined;
+      return Array.from(lb.querySelectorAll('[role="option"]')).slice(0, 80).map((o) => ({ label: text(o).slice(0, 120), value: attr(o, 'data-value') || attr(o, 'value') || text(o).slice(0, 120) }));
+    }
+    if (type === 'radiogroup') {
+      return Array.from(el.querySelectorAll('[role="radio"], input[type="radio"]'))
+        .filter((o) => attr(o, 'aria-hidden') !== 'true')
+        .slice(0, 40)
+        .map((o) => ({ label: optionLabel(o), value: o.value || attr(o, 'value') || optionLabel(o) }));
+    }
+    return undefined;
+  }
+  function valueOf(el, type) {
+    if (type === 'switch' || type === 'checkbox') return attr(el, 'role') ? attr(el, 'aria-checked') : (el.checked ? 'true' : 'false');
+    if (type === 'radiogroup') {
+      const on = Array.from(el.querySelectorAll('[role="radio"], input[type="radio"]')).find((o) => attr(o, 'aria-checked') === 'true' || o.checked);
+      return on ? optionLabel(on) : '';
+    }
+    if (attr(el, 'contenteditable') === 'true') return text(el);
+    return el.value != null ? String(el.value) : '';
+  }
+  function cssOf(el, ref) {
+    const qa = attr(el, 'data-qa-id'); if (qa) return '[data-qa-id="' + qa + '"]';
+    const name = attr(el, 'name');
+    if (name && document.querySelectorAll('[name="' + name + '"]').length === 1) return el.tagName.toLowerCase() + '[name="' + name + '"]';
+    return '[data-lbc-ref="' + ref + '"]';
+  }
+  const ROLE_TOGGLES = '[role="switch"], [role="checkbox"], [role="radio"]';
+  const sel = 'input, textarea, select, [role="combobox"], [role="listbox"], [role="radiogroup"], [role="switch"], [role="checkbox"], [contenteditable="true"]';
+  const out = [];
+  const seen = new Set();
+  window.__lbcRefSeq = window.__lbcRefSeq || 0;
+  for (const el of Array.from(document.querySelectorAll(sel))) {
+    if (out.length >= MAX) break;
+    if (seen.has(el)) continue;
+    seen.add(el);
+    const t = (el.type || '').toLowerCase();
+    const role = attr(el, 'role');
+    if (t === 'hidden' || (el.tagName === 'INPUT' && (t === 'submit' || t === 'button'))) continue;
+    if (t !== 'file' && !visible(el)) continue;
+    if (t !== 'file' && attr(el, 'aria-hidden') === 'true') continue;
+    // A radio inside a group is an OPTION of that group, not a field.
+    if ((t === 'radio' || role === 'radio') && el.closest('[role="radiogroup"]')) continue;
+    // A listbox driven by a combobox is that combobox's option list.
+    if (role === 'listbox' && el.id && document.querySelector('[aria-controls="' + esc(el.id) + '"]')) continue;
+    // A native checkbox shadowed by an ARIA switch/checkbox in the same container is a duplicate.
+    if ((t === 'checkbox' || t === 'radio') && !role) {
+      const box = el.closest('[data-rhf-name]') || el.parentElement;
+      if (box && box.querySelector(ROLE_TOGGLES)) continue;
+    }
+    const type = typeOf(el);
+    const label = labelFor(el);
+    const altLabels = altLabelsFor(el, label);
+    const reqSrc = requiredOf(el, [label].concat(altLabels));
+    const rhfBox = el.closest('[data-rhf-name]');
+    let ref = attr(el, 'data-lbc-ref');
+    if (!ref) { ref = 'r' + (++window.__lbcRefSeq); el.setAttribute('data-lbc-ref', ref); }
+    const cssHits = [];
+    for (const p of PROBES) { if (p.css.some((s) => { try { return el.matches(s); } catch (e) { return false; } })) cssHits.push(p.name); }
+    const value = valueOf(el, type);
+    out.push({
+      label: (label || '').slice(0, 120),
+      altLabels: altLabels.length ? altLabels : undefined,
+      name: attr(el, 'name') || (rhfBox && (type === 'switch' || type === 'checkbox') ? attr(rhfBox, 'data-rhf-name') : '') || undefined,
+      id: el.id || undefined,
+      dataQaId: attr(el, 'data-qa-id') || undefined,
+      rhfName: rhfBox ? attr(rhfBox, 'data-rhf-name') : undefined,
+      type,
+      placeholder: el.placeholder || undefined,
+      value: type === 'switch' || type === 'checkbox' ? '' : String(value).slice(0, 200),
+      checked: type === 'switch' || type === 'checkbox' || type === 'radio' ? value === 'true' || !!el.checked : undefined,
+      options: optionsOf(el, type),
+      required: !!reqSrc,
+      requiredSource: reqSrc || undefined,
+      selector: cssOf(el, ref),
+      ref,
+      cssHits: cssHits.length ? cssHits : undefined,
+    });
+  }
+  let stepTitle = '';
+  for (const s of STEP_TITLE) { const h = document.querySelector(s); if (h && text(h)) { stepTitle = text(h).slice(0, 160); break; } }
+  return { url: location.href, fields: out, stepTitle };
+})()`;
+}
+async function introspectForm(cdp, opts = {}) {
   try {
-    const raw = await cdp.evaluate(INTROSPECT_JS, false);
+    const raw = await cdp.evaluate(
+      introspectScript(opts.probes ?? defaultProbes(), opts.stepTitle ?? DEPOSIT.stepTitle),
+      false
+    );
     if (!raw || !Array.isArray(raw.fields)) return { url: typeof raw?.url === "string" ? raw.url : "", fields: [] };
     const seen = /* @__PURE__ */ new Map();
     const fields = raw.fields.map((f) => {
@@ -5504,84 +6262,22 @@ async function introspectForm(cdp) {
       seen.set(base, n + 1);
       return { ...f, key: n === 0 ? base : `${base}-${n}` };
     });
-    return { url: raw.url ?? "", fields };
+    const map = { url: raw.url ?? "", fields };
+    if (typeof raw.stepTitle === "string") {
+      map.step = { title: raw.stepTitle, fingerprint: stepFingerprint(raw.stepTitle, fields) };
+    }
+    return map;
   } catch {
     return { url: "", fields: [] };
   }
 }
-var INTROSPECT_JS;
+function stepFingerprint(title, fields) {
+  return `${title}|${fields.map((f) => f.key).sort().join(",")}`;
+}
 var init_form_introspect = __esm({
   "src/form-introspect.ts"() {
     "use strict";
-    INTROSPECT_JS = `(() => {
-  /* introspect-form */
-  const MAX = 80;
-  const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
-  const text = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
-  function labelFor(el) {
-    const al = el.getAttribute && el.getAttribute('aria-label'); if (al) return al.trim();
-    const lb = el.getAttribute && el.getAttribute('aria-labelledby');
-    if (lb) { const t = lb.split(/\\s+/).map((id) => text(document.getElementById(id))).join(' ').trim(); if (t) return t; }
-    if (el.id) { try { const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (l) return text(l); } catch (e) {} }
-    const wrap = el.closest && el.closest('label'); if (wrap) return text(wrap);
-    if (el.placeholder) return el.placeholder.trim();
-    return (el.getAttribute && (el.getAttribute('name') || el.getAttribute('id'))) || '';
-  }
-  function requiredOf(el, label) {
-    if (el.required) return 'required-attr';
-    if (el.getAttribute && el.getAttribute('aria-required') === 'true') return 'aria-required';
-    if (label && label.indexOf('*') >= 0) return 'asterisk';
-    if (el.getAttribute && el.getAttribute('aria-invalid') === 'true') return 'aria-invalid';
-    return null;
-  }
-  function typeOf(el) {
-    const tag = el.tagName.toLowerCase();
-    if (tag === 'textarea') return 'textarea';
-    if (tag === 'select') return 'select';
-    const role = (el.getAttribute && el.getAttribute('role')) || '';
-    if (role === 'combobox' || role === 'listbox') return 'combobox';
-    if (role === 'switch') return 'switch';
-    const t = (el.type || '').toLowerCase();
-    if (t === 'checkbox') return 'checkbox';
-    if (t === 'radio') return 'radio';
-    if (t === 'file') return 'file';
-    if (tag === 'input') return 'text';
-    return 'other';
-  }
-  function cssOf(el) {
-    const qa = el.getAttribute && el.getAttribute('data-qa-id'); if (qa) return '[data-qa-id="' + qa + '"]';
-    if (el.name) return el.tagName.toLowerCase() + '[name="' + el.name + '"]';
-    if (el.id) { try { return '#' + CSS.escape(el.id); } catch (e) {} }
-    return '';
-  }
-  const selector = 'input, textarea, select, [role="combobox"], [role="listbox"], [role="radiogroup"], [role="switch"], [contenteditable="true"]';
-  const out = [];
-  for (const el of Array.from(document.querySelectorAll(selector))) {
-    if (out.length >= MAX) break;
-    const t = (el.type || '').toLowerCase();
-    if (t === 'hidden') continue;
-    if (!visible(el)) continue;
-    const label = labelFor(el);
-    const reqSrc = requiredOf(el, label);
-    let options;
-    if (el.tagName.toLowerCase() === 'select') options = Array.from(el.options).slice(0, 50).map((o) => ({ label: text(o), value: o.value }));
-    out.push({
-      label: (label || '').slice(0, 120),
-      name: (el.getAttribute && el.getAttribute('name')) || undefined,
-      id: el.id || undefined,
-      dataQaId: (el.getAttribute && el.getAttribute('data-qa-id')) || undefined,
-      type: typeOf(el),
-      placeholder: el.placeholder || undefined,
-      value: (el.value != null ? String(el.value) : '').slice(0, 200),
-      checked: (t === 'checkbox' || t === 'radio') ? !!el.checked : undefined,
-      options,
-      required: !!reqSrc,
-      requiredSource: reqSrc || undefined,
-      selector: cssOf(el),
-    });
-  }
-  return { url: location.href, fields: out };
-})()`;
+    init_selectors();
   }
 });
 
@@ -5591,13 +6287,13 @@ __export(inspect_exports, {
   runInspect: () => runInspect
 });
 import { mkdirSync as mkdirSync3 } from "fs";
-import path7 from "path";
+import path8 from "path";
 async function defaultConnect2(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
 async function runInspect(annoncesDir, slug, _opts = {}, deps = {}) {
-  const dir = path7.join(annoncesDir, slug);
+  const dir = path8.join(annoncesDir, slug);
   const connect = deps.connect ?? defaultConnect2;
   const cdp = await connect(DEPOSIT.startUrl);
   try {
@@ -5609,12 +6305,14 @@ async function runInspect(annoncesDir, slug, _opts = {}, deps = {}) {
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
     mkdirSync3(dir, { recursive: true });
     const formMap = await introspectForm(cdp);
-    const formMapPath = path7.join(dir, "form-map.json");
-    const written = writeFormMap(formMapPath, formMap);
-    const previewPng = await captureScreenshot(cdp, path7.join(dir, "initial.png")) ? path7.join(dir, "initial.png") : void 0;
-    const previewHtml = await savePageHtml(cdp, path7.join(dir, "initial.html")) ? path7.join(dir, "initial.html") : void 0;
+    const formMapPath = path8.join(dir, "form-map.json");
+    const written = writeFormMap(formMapPath, { steps: [formMap] });
+    const previewPng = await captureScreenshot(cdp, path8.join(dir, "initial.png")) ? path8.join(dir, "initial.png") : void 0;
+    const previewHtml = await savePageHtml(cdp, path8.join(dir, "initial.html")) ? path8.join(dir, "initial.html") : void 0;
     logger.success(`Live form: ${summarizeFormMap(formMap)}${written ? ` \u2192 ${formMapPath}` : ""}`);
-    logger.info("Read form-map.json + initial.png, fill any required field that is empty in annonce.md, then publish.");
+    logger.info(
+      "Read form-map.json + initial.png. Later steps (photos, attributes, review) only appear once step 1 is filled: run `publish <slug> --diagnostic` to walk them all without submitting."
+    );
     return { ok: true, formMap, formMapPath: written ? formMapPath : void 0, previewPng, previewHtml };
   } finally {
     cdp.disconnect();
@@ -5632,15 +6330,172 @@ var init_inspect = __esm({
   }
 });
 
+// src/field-match.ts
+function normalizeText(s) {
+  return String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function hasWord(haystack, needle) {
+  if (!haystack || !needle) return false;
+  return ` ${haystack} `.includes(` ${needle} `);
+}
+function tokens(s) {
+  return normalizeText(s).split(" ").filter((t) => t.length > 1);
+}
+function pickOption(options, wanted) {
+  const w = normalizeText(wanted);
+  if (!w || options.length === 0) return -1;
+  const norm = options.map(normalizeText);
+  const tiers = [
+    (o) => o === w,
+    (o) => o.startsWith(w) || o.length > 2 && w.startsWith(o),
+    (o) => o.includes(w) || o.length > 2 && w.includes(o)
+  ];
+  for (const tier of tiers) {
+    const i = norm.findIndex((o) => o && tier(o));
+    if (i >= 0) return i;
+  }
+  const wt = new Set(tokens(wanted));
+  let best = -1;
+  let bestScore = 0;
+  norm.forEach((o, i) => {
+    const score = [...new Set(tokens(o))].filter((t) => wt.has(t)).length;
+    if (score > bestScore || score === bestScore && score > 0 && o.length < (norm[best] ?? "").length) {
+      best = i;
+      bestScore = score;
+    }
+  });
+  return best;
+}
+function pickCategoryCard(cards, wanted) {
+  if (cards.length === 0) return { index: -1, guessed: true };
+  const byName = pickOption(
+    cards.map((c) => c.name),
+    wanted
+  );
+  if (byName >= 0) return { index: byName, guessed: false };
+  const byFamily = pickOption(
+    cards.map((c) => c.family ?? ""),
+    wanted
+  );
+  if (byFamily >= 0) return { index: byFamily, guessed: false };
+  return { index: 0, guessed: true };
+}
+function isFieldFilled(f) {
+  if (f.type === "checkbox" || f.type === "switch" || f.type === "radio") return f.checked === true;
+  return String(f.value ?? "").trim() !== "";
+}
+function truthy(v) {
+  return /^(true|1|oui|yes|on)$/i.test(v.trim());
+}
+function valueAlreadySet(f, wanted) {
+  if (f.type === "checkbox" || f.type === "switch") return f.checked === true === truthy(wanted);
+  return normalizeText(f.value) !== "" && normalizeText(f.value) === normalizeText(wanted);
+}
+function logicalValue(a, name) {
+  switch (name) {
+    case "title":
+      return a.title ? { value: a.title } : null;
+    case "description":
+      return a.description ? { value: a.description } : null;
+    case "price":
+      return a.price > 0 ? { value: String(a.price) } : null;
+    case "location":
+      if (a.zipcode) return { value: a.city ? `${a.zipcode} ${a.city}` : a.zipcode, hint: a.zipcode };
+      return a.city ? { value: a.city } : null;
+    case "category":
+      return a.category ? { value: a.category } : null;
+    case "condition":
+      return a.condition ? { value: a.condition } : null;
+    case "shipping":
+      return typeof a.shipping === "boolean" ? { value: String(a.shipping) } : null;
+    case "photos":
+      return null;
+  }
+}
+function identities(f) {
+  return [f.name, f.rhfName, f.dataQaId, f.id].map(normalizeText).filter(Boolean);
+}
+function labelTexts(f) {
+  return [f.label, ...f.altLabels ?? []].map(normalizeText).filter(Boolean);
+}
+function scoreLogical(f, name, spec) {
+  if (!spec.types.includes(f.type)) return null;
+  if (f.cssHits?.includes(name)) return { confidence: 1, via: "selector" };
+  const ids = identities(f);
+  if (spec.names.some((n) => ids.includes(normalizeText(n)))) return { confidence: 0.95, via: "name" };
+  const labels = labelTexts(f);
+  if (spec.labels.some((l) => labels.some((t) => hasWord(t, normalizeText(l))))) return { confidence: 0.8, via: "label" };
+  const ph = normalizeText(f.placeholder);
+  if (spec.labels.some((l) => hasWord(ph, normalizeText(l)))) return { confidence: 0.6, via: "placeholder" };
+  if (spec.types.length === 1 && spec.types[0] === f.type && f.type === "file") return { confidence: 0.5, via: "type" };
+  return null;
+}
+function scoreAttribute(f, key) {
+  if (f.type === "file") return null;
+  const k = normalizeText(key);
+  if (!k) return null;
+  const ids = identities(f);
+  if (ids.includes(k)) return { confidence: 0.95, via: "name" };
+  const kSnake = k.replace(/ /g, "_");
+  const rawIds = [f.name, f.rhfName, f.dataQaId].filter(Boolean).map((s) => String(s).toLowerCase());
+  if (rawIds.some((id) => id.endsWith(`_${kSnake}`))) return { confidence: 0.85, via: "suffix" };
+  const labels = labelTexts(f);
+  if (labels.some((t) => t === k || t.startsWith(`${k} `))) return { confidence: 0.8, via: "label" };
+  if (normalizeText(f.placeholder) === k) return { confidence: 0.6, via: "placeholder" };
+  return null;
+}
+function matchFields(map, a, logical = LOGICAL_FIELDS) {
+  const candidates = [];
+  let order = 0;
+  for (const name of Object.keys(logical)) {
+    const value = name === "photos" ? { value: "" } : logicalValue(a, name);
+    if (!value) continue;
+    for (const field of map.fields) {
+      const s = scoreLogical(field, name, logical[name]);
+      if (s) candidates.push({ field, target: { kind: "logical", name }, ...value, ...s, order: order++ });
+    }
+  }
+  const attrs = Object.entries(a.attributes ?? {});
+  for (const [key, raw] of attrs) {
+    const value = String(raw ?? "");
+    if (!value) continue;
+    for (const field of map.fields) {
+      const s = scoreAttribute(field, key);
+      if (s) candidates.push({ field, target: { kind: "attribute", key }, value, ...s, confidence: s.confidence - 0.01, order: order++ });
+    }
+  }
+  candidates.sort((x, y) => y.confidence - x.confidence || x.order - y.order);
+  const usedFields = /* @__PURE__ */ new Set();
+  const usedTargets = /* @__PURE__ */ new Set();
+  const matches = [];
+  for (const c of candidates) {
+    const t = c.target.kind === "logical" ? `l:${c.target.name}` : `a:${c.target.key}`;
+    if (usedFields.has(c.field) || usedTargets.has(t)) continue;
+    usedFields.add(c.field);
+    usedTargets.add(t);
+    const { order: _o, ...m } = c;
+    matches.push(m);
+  }
+  const unmatchedAttributes = attrs.map(([k]) => k).filter((k) => !usedTargets.has(`a:${k}`));
+  return { matches, unmatchedAttributes };
+}
+var init_field_match = __esm({
+  "src/field-match.ts"() {
+    "use strict";
+    init_selectors();
+  }
+});
+
 // src/readiness.ts
 import { writeFileSync as writeFileSync3 } from "fs";
 async function readFormError(cdp) {
   return cdp.evaluate(
     `(() => {
-        const els = Array.from(document.querySelectorAll('[role="alert"], [class*="error" i], [data-qa-id*="error" i]'));
+        const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+        const els = Array.from(document.querySelectorAll('[role="alert"], [aria-live="assertive"], [class*="error" i], [data-qa-id*="error" i], [id$="-error"], [id*="error-message" i]'));
         for (const el of els) {
           const t = (el.innerText || el.textContent || '').trim();
-          if (t && el.offsetParent !== null && t.length > 0 && t.length < 200) return t;
+          if (t && visible(el) && t.length < 200) return t;
         }
         return null;
       })()`,
@@ -5648,19 +6503,22 @@ async function readFormError(cdp) {
   ).catch(() => null);
 }
 async function isSubmitEnabled(cdp) {
-  const texts = JSON.stringify(DEPOSIT.publishButton.textCandidates.map((t) => t.toLowerCase()));
-  const css = JSON.stringify(DEPOSIT.publishButton.css);
+  const norm = (t) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const texts = JSON.stringify([...DEPOSIT.publishButton.textCandidates, ...DEPOSIT.nextButton.textCandidates].map(norm));
+  const css = JSON.stringify([...DEPOSIT.publishButton.css, ...DEPOSIT.nextButton.css]);
   return cdp.evaluate(
     `(() => {
         /* submit-enabled probe */
         const texts = ${texts}, css = ${css};
         let btn = null;
-        const all = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
-        for (const el of all) {
-          const t = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
-          if (t && texts.some((w) => t === w || t.includes(w))) { btn = el; break; }
+        const n = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036F]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+        const all = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]')).filter(visible);
+        for (const w of texts) {
+          btn = all.find((el) => { const t = n(el.innerText || el.textContent || el.value); return t === w || t.startsWith(w + ' '); }) || null;
+          if (btn) break;
         }
-        if (!btn) { for (const sel of css) { const el = document.querySelector(sel); if (el) { btn = el; break; } } }
+        if (!btn) { for (const sel of css) { const el = Array.from(document.querySelectorAll(sel)).find(visible); if (el) { btn = el; break; } } }
         if (!btn) return null;
         return !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
       })()`,
@@ -5687,6 +6545,14 @@ async function buildReadiness(cdp, report, href) {
   });
   const err = await readFormError(cdp);
   checks.push({ name: "no-form-error", ok: !err, detail: err ? `form error: ${err}` : "no visible error" });
+  if (report.wizard) {
+    const final = report.wizard.stop === "final";
+    checks.push({
+      name: "final-step",
+      ok: final,
+      detail: final ? `reached the final review after ${report.wizard.steps} step(s)` : `wizard stopped early: ${report.wizard.stop}${report.wizard.error ? ` (${report.wizard.error})` : ""}`
+    });
+  }
   const blockers = checks.filter((c) => !c.ok).map((c) => `${c.name} (${c.detail})`);
   return { ready: blockers.length === 0, checks, blockers };
 }
@@ -5705,80 +6571,298 @@ var init_readiness = __esm({
   }
 });
 
+// src/deposit-wizard.ts
+async function readCategoryCards(cdp) {
+  const cards = await cdp.evaluate(
+    `(() => {
+        /* category-cards */
+        const re = new RegExp(${JSON.stringify(DEPOSIT.categoryAriaPattern.source)}, 'i');
+        const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+        const out = [];
+        const seen = new Set();
+        window.__lbcRefSeq = window.__lbcRefSeq || 0;
+        for (const sel of ${JSON.stringify(DEPOSIT.categoryCards)}) {
+          let els = [];
+          try { els = Array.from(document.querySelectorAll(sel)); } catch (e) { continue; }
+          for (const el of els) {
+            if (seen.has(el) || !visible(el)) continue;
+            seen.add(el);
+            const m = (el.getAttribute('aria-label') || '').match(re);
+            if (!m) continue;
+            let ref = el.getAttribute('data-lbc-ref');
+            if (!ref) { ref = 'c' + (++window.__lbcRefSeq); el.setAttribute('data-lbc-ref', ref); }
+            out.push({ name: m[1].trim(), family: m[2].trim(), ref });
+          }
+        }
+        return out;
+      })()`,
+    false
+  ).catch(() => []);
+  return Array.isArray(cards) ? cards : [];
+}
+async function clickRef(cdp, ref) {
+  return cdp.evaluate(`(() => { const el = document.querySelector('[data-lbc-ref="${ref}"]'); if (!el) return false; el.click(); return true; })()`, false).catch(() => false);
+}
+async function chooseCategory(cdp, wanted, needed) {
+  let cards = await readCategoryCards(cdp);
+  for (let i = 0; needed && cards.length === 0 && i < 12; i++) {
+    await delay(750);
+    cards = await readCategoryCards(cdp);
+  }
+  if (cards.length === 0 && needed && await clickButton(cdp, DEPOSIT.categoryTreeButton)) {
+    await delay(800);
+    cards = await readCategoryCards(cdp);
+  }
+  if (cards.length === 0) return null;
+  const pick = pickCategoryCard(cards, wanted);
+  const card = cards[pick.index];
+  if (!card || !await clickRef(cdp, card.ref)) return null;
+  return { picked: card.name, family: card.family, guessed: pick.guessed || !wanted };
+}
+async function isFinalStep(cdp, markers, buttons) {
+  if (markers.length && await pageHasText(cdp, markers)) return true;
+  for (const b of buttons) if (await hasButton(cdp, b)) return true;
+  return false;
+}
+function looksLikeFinalReview(map) {
+  const core = /* @__PURE__ */ new Set(["title", "description", "price", "location"]);
+  const onStep = matchFields(map, PROBE_ANNONCE).matches.map((m) => m.target.kind === "logical" ? m.target.name : "").filter((n) => core.has(n));
+  return new Set(onStep).size >= 3;
+}
+function isPaidOption(f) {
+  return [f.label, ...f.altLabels ?? []].some((l) => /\d\s*(?:[,.]\d{1,2})?\s*€|€\s*\d/.test(l ?? ""));
+}
+function blocksStep(f) {
+  if (!f.required || isPaidOption(f)) return false;
+  if ((f.type === "checkbox" || f.type === "switch") && f.requiredSource === "asterisk") return false;
+  return true;
+}
+function describe(f) {
+  return f.label || f.altLabels?.[0] || f.key;
+}
+async function runWizard(cdp, a, opts) {
+  const maxSteps = opts.maxSteps ?? 15;
+  const settle = opts.settleMs ?? 1500;
+  const finalMarkers = opts.finalMarkers ?? DEPOSIT.finalStepMarkers;
+  const finalButtons = opts.finalButtons ?? [DEPOSIT.publishButton];
+  const nextButton = opts.nextButton ?? DEPOSIT.nextButton;
+  const result = {
+    steps: [],
+    stop: "max-steps",
+    uploadedPhotos: 0,
+    expectedPhotos: opts.photos.length,
+    written: [],
+    failed: [],
+    unmatchedAttributes: Object.keys(a.attributes ?? {})
+  };
+  const written = /* @__PURE__ */ new Set();
+  const failed = /* @__PURE__ */ new Set();
+  let categoryAttempts = 0;
+  for (let index = 1; index <= maxSteps; index++) {
+    await delay(settle);
+    if (await isOnCaptcha(cdp)) {
+      if (!await waitForCaptchaResolution(cdp)) {
+        result.stop = "captcha";
+        break;
+      }
+    }
+    const url = await currentUrl(cdp);
+    if (url && DEPOSIT.loginUrlPattern.test(url)) {
+      result.stop = "login-required";
+      break;
+    }
+    const fills = [];
+    const map = await introspectForm(cdp);
+    const { matches, unmatchedAttributes } = matchFields(map, a);
+    result.unmatchedAttributes = result.unmatchedAttributes.filter((k) => unmatchedAttributes.includes(k));
+    for (const m of matches) {
+      const target = m.target.kind === "logical" ? m.target.name : `attr:${m.target.key}`;
+      if (target === "photos") continue;
+      if (isPaidOption(m.field)) {
+        logger.warn(`Skipped \xAB ${describe(m.field)} \xBB: a paid option is never set automatically.`);
+        continue;
+      }
+      const label = describe(m.field);
+      if (valueAlreadySet(m.field, m.value)) {
+        fills.push({ target, field: label, value: m.value, ok: true, via: m.via, detail: "already" });
+        written.add(target);
+        continue;
+      }
+      const r = await fillField(cdp, m.field, m.value, m.hint);
+      fills.push({ target, field: label, value: m.value, ok: r.ok, via: m.via, detail: r.detail, reason: r.reason });
+      if (r.ok) {
+        written.add(target);
+        failed.delete(target);
+      } else if (!written.has(target)) {
+        failed.add(target);
+        logger.warn(`Could not set \xAB ${label} \xBB to "${m.value}"${r.reason ? ` (${r.reason}${r.detail ? `: ${r.detail}` : ""})` : ""}.`);
+      }
+      await delay(300);
+    }
+    if (opts.photos.length && result.uploadedPhotos === 0 && map.fields.some((f) => f.type === "file")) {
+      result.uploadedPhotos = await uploadPhotos(cdp, DEPOSIT.photoFileInput, opts.photos, DEPOSIT.photoThumbnails);
+      if (result.uploadedPhotos < opts.photos.length) {
+        if (await clickButton(cdp, DEPOSIT.photoAddButton)) {
+          await delay(800);
+          result.uploadedPhotos = Math.max(result.uploadedPhotos, await uploadPhotos(cdp, DEPOSIT.photoFileInput, opts.photos, DEPOSIT.photoThumbnails));
+        }
+      }
+      fills.push({
+        target: "photos",
+        field: "photos",
+        value: `${opts.photos.length} file(s)`,
+        ok: result.uploadedPhotos >= opts.photos.length,
+        via: "type",
+        detail: `${result.uploadedPhotos}/${opts.photos.length}`
+      });
+      if (result.uploadedPhotos > 0) written.add("photos");
+      await delay(1500);
+    }
+    if (categoryAttempts < 2) {
+      const allowTree = !written.has("category") && written.has("title") && !await hasButton(cdp, nextButton);
+      const chosen = await chooseCategory(cdp, a.category, allowTree);
+      if (chosen) {
+        categoryAttempts++;
+        result.category = chosen;
+        written.add("category");
+        fills.push({
+          target: "category",
+          field: "cat\xE9gorie",
+          value: a.category,
+          ok: true,
+          via: "category",
+          detail: `${chosen.family ?? ""} \u203A ${chosen.picked}`
+        });
+        if (chosen.guessed) logger.warn(`Category \xAB ${a.category || "(none)"} \xBB not offered \u2014 picked the site's suggestion \xAB ${chosen.picked} \xBB. Check it.`);
+        await delay(settle);
+        const after = await introspectForm(cdp);
+        if (after.step?.fingerprint !== map.step?.fingerprint) {
+          result.steps.push({ index, title: map.step?.title ?? "", url, fills, unresolvedRequired: [], final: false, formMap: map });
+          await opts.shotLog?.shot(cdp, `step-${String(index).padStart(2, "0")}`);
+          continue;
+        }
+      }
+    }
+    const filledMap = await introspectForm(cdp);
+    const photosOk = result.uploadedPhotos > 0 || await countElements(cdp, DEPOSIT.photoThumbnails) > 0;
+    const unresolvedRequired = filledMap.fields.filter((f) => blocksStep(f) && !(f.type === "file" ? photosOk : isFieldFilled(f))).map((f) => `${describe(f)} (required on the live form \u2014 ${f.requiredSource ?? "required"})`);
+    const final = looksLikeFinalReview(filledMap) || await isFinalStep(cdp, finalMarkers, finalButtons);
+    result.steps.push({ index, title: filledMap.step?.title ?? "", url, fills, unresolvedRequired, final, formMap: filledMap });
+    await opts.shotLog?.shot(cdp, `step-${String(index).padStart(2, "0")}`);
+    if (final) {
+      result.stop = "final";
+      break;
+    }
+    if (unresolvedRequired.length) {
+      result.stop = "missing-required";
+      break;
+    }
+    if (await isFinalStep(cdp, finalMarkers, finalButtons)) {
+      result.stop = "final";
+      result.steps[result.steps.length - 1].final = true;
+      break;
+    }
+    if (!await clickButton(cdp, nextButton)) {
+      result.stop = "no-next";
+      break;
+    }
+    await delay(settle);
+    const moved = await introspectForm(cdp);
+    if (moved.step?.fingerprint === filledMap.step?.fingerprint && await currentUrl(cdp) === url) {
+      result.stop = "stuck";
+      result.error = await readFormError(cdp) ?? "the form did not move to the next step";
+      break;
+    }
+  }
+  result.written = [...written];
+  result.failed = [...failed].filter((t) => !written.has(t));
+  return result;
+}
+var PROBE_ANNONCE;
+var init_deposit_wizard = __esm({
+  "src/deposit-wizard.ts"() {
+    "use strict";
+    init_captcha();
+    init_deposit_form();
+    init_field_match();
+    init_form_introspect();
+    init_logger();
+    init_readiness();
+    init_selectors();
+    init_utils();
+    PROBE_ANNONCE = {
+      slug: "probe",
+      title: "x",
+      category: "x",
+      price: 1,
+      zipcode: "75001",
+      attributes: {},
+      photos: [],
+      status: "draft",
+      description: "x"
+    };
+  }
+});
+
 // src/publish.ts
 var publish_exports = {};
 __export(publish_exports, {
   fillForm: () => fillForm,
   runPublish: () => runPublish
 });
-import path8 from "path";
+import path9 from "path";
 async function defaultConnect3(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
-async function fillForm(cdp, a, photos, shotLog) {
+async function fillForm(cdp, a, photos, shotLog, wizardOpts = {}) {
+  const wizard = await runWizard(cdp, a, { photos, shotLog, ...wizardOpts });
+  const written = new Set(wizard.written);
+  const reached = wizard.stop === "final";
   const fields = [];
-  let categoryFilled = false;
-  if (a.category) {
-    const catSel = await resolveSelector(cdp, DEPOSIT.categoryInput);
-    if (catSel) {
-      categoryFilled = await setInputValue(cdp, DEPOSIT.categoryInput, a.category);
-      await delay(1200);
-      await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.category);
-      await delay(1500);
-    } else {
-      logger.warn("Category field not found \u2014 pick the category manually in the browser.");
-    }
-  }
-  fields.push({ field: "category", required: true, hasValue: !!a.category, filled: categoryFilled });
-  await shotLog?.shot(cdp, "10-after-category");
-  const fillText = async (field, required, value, candidates) => {
-    if (!value) {
-      fields.push({ field, required, hasValue: false, filled: false });
-      return;
-    }
-    const filled = await setInputValue(cdp, candidates, value);
-    if (!filled) logger.warn(`Could not fill the ${field} field.`);
-    fields.push({ field, required, hasValue: true, filled });
-  };
-  await fillText("title", true, a.title, DEPOSIT.titleInput);
-  await fillText("description", true, a.description, DEPOSIT.descTextarea);
-  await fillText("price", true, a.price > 0 ? String(a.price) : "", DEPOSIT.priceInput);
-  let zipFilled = false;
-  if (a.zipcode) {
-    zipFilled = await setInputValue(cdp, DEPOSIT.zipcodeInput, a.zipcode);
-    if (zipFilled) {
-      await delay(1200);
-      await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.city ?? a.zipcode);
-    }
-  }
-  fields.push({ field: "zipcode", required: true, hasValue: !!a.zipcode, filled: zipFilled });
-  if (a.condition) await setInputValue(cdp, DEPOSIT.attrByKey("condition"), a.condition);
-  for (const [key, value] of Object.entries(a.attributes ?? {})) {
-    const ok = await setInputValue(cdp, DEPOSIT.attrByKey(key), String(value));
-    if (!ok) logger.warn(`Attribute "${key}" could not be set automatically \u2014 set it manually if needed.`);
-  }
-  if (a.shipping === true) {
-    const ok = await clickButton(cdp, DEPOSIT.shippingToggle);
-    if (!ok) logger.warn("Could not toggle shipping/delivery \u2014 enable it manually if needed.");
-  }
-  let uploaded = await uploadPhotos(cdp, DEPOSIT.photoFileInput, photos);
-  if (uploaded < photos.length) {
-    await clickButton(cdp, DEPOSIT.photoAddButton);
-    await delay(800);
-    uploaded = await uploadPhotos(cdp, DEPOSIT.photoFileInput, photos);
-  }
-  if (uploaded === 0) logger.warn("Could not upload photos automatically \u2014 add them manually in the browser.");
-  else logger.info(`Uploaded ${uploaded}/${photos.length} photo(s).`);
-  await delay(1500);
   const missing = [];
-  for (const f of fields) {
-    if (!f.required) continue;
-    if (!f.hasValue) missing.push(`${f.field} (missing in annonce)`);
-    else if (!f.filled) missing.push(`${f.field} (form field not found)`);
+  const warnings = [];
+  for (const [logical, name, required] of REPORTED_FIELDS) {
+    const hasValue = logical === "category" ? !!a.category : logicalValue(a, logical) !== null;
+    if (!required && !hasValue) continue;
+    const filled = written.has(logical);
+    fields.push({ field: name, required, hasValue, filled });
+    if (!required) {
+      if (hasValue && !filled) warnings.push(`${name}: could not be set \u2014 set it in the browser if the form offers it`);
+      continue;
+    }
+    if (!hasValue) missing.push(`${name} (missing in annonce)`);
+    else if (!filled) missing.push(reached ? `${name} (form field not found)` : `${name} (not reached \u2014 wizard stopped: ${wizard.stop})`);
   }
-  if (uploaded < photos.length) missing.push(`photos (${uploaded}/${photos.length} uploaded)`);
-  return { fields, missing, uploadedPhotos: uploaded, expectedPhotos: photos.length };
+  for (const key of Object.keys(a.attributes ?? {})) {
+    fields.push({ field: `attr:${key}`, required: false, hasValue: true, filled: written.has(`attr:${key}`) });
+  }
+  const last = wizard.steps.at(-1);
+  for (const u of last?.unresolvedRequired ?? []) {
+    const label = u.split(" (")[0]?.toLowerCase() ?? u;
+    if (missing.some((m) => m.toLowerCase().includes(label))) continue;
+    fields.push({ field: u.split(" (")[0] ?? u, required: true, hasValue: false, filled: false });
+    missing.push(u);
+  }
+  if (wizard.uploadedPhotos < photos.length) missing.push(`photos (${wizard.uploadedPhotos}/${photos.length} uploaded)`);
+  if (wizard.stop === "stuck") missing.push(`step \xAB ${last?.title ?? "?"} \xBB refused to continue: ${wizard.error ?? "unknown error"}`);
+  if (wizard.stop === "no-next") missing.push(`step \xAB ${last?.title ?? "?"} \xBB: no \xAB Continuer \xBB button found`);
+  if (wizard.category?.guessed)
+    warnings.push(`category: \xAB ${a.category || "(none)"} \xBB not offered \u2014 the site's suggestion \xAB ${wizard.category.picked} \xBB was picked; check it`);
+  for (const k of wizard.unmatchedAttributes) warnings.push(`attribute \xAB ${k} \xBB: no matching field on the form (use a label from form-map.json)`);
+  for (const t of wizard.failed) if (t.startsWith("attr:")) warnings.push(`attribute \xAB ${t.slice(5)} \xBB: value not accepted by the form`);
+  if (wizard.uploadedPhotos === 0 && photos.length) logger.warn("Could not upload photos automatically \u2014 add them manually in the browser.");
+  else if (photos.length) logger.info(`Uploaded ${wizard.uploadedPhotos}/${photos.length} photo(s).`);
+  return {
+    fields,
+    missing,
+    warnings,
+    uploadedPhotos: wizard.uploadedPhotos,
+    expectedPhotos: photos.length,
+    wizard: { stop: wizard.stop, error: wizard.error, steps: wizard.steps.length, category: wizard.category },
+    formMap: last?.formMap,
+    formMapSteps: wizard.steps.map((st) => ({ ...st.formMap, fills: st.fills, unresolvedRequired: st.unresolvedRequired, final: st.final }))
+  };
 }
 function logFillReport(r) {
   logger.info("Field resolution:");
@@ -5788,6 +6872,8 @@ function logFillReport(r) {
     logger.info(`  ${mark} ${f.field}${f.required ? "" : " (optional)"}${note}`);
   }
   logger.info(`  ${r.uploadedPhotos === r.expectedPhotos ? "\u2713" : "\u2717"} photos: ${r.uploadedPhotos}/${r.expectedPhotos}`);
+  if (r.wizard) logger.info(`Wizard: ${r.wizard.steps} step(s), stopped: ${r.wizard.stop}${r.wizard.error ? ` (${r.wizard.error})` : ""}`);
+  for (const w of r.warnings ?? []) logger.warn(w);
   if (r.missing.length) logger.warn(`Ask the user about: ${r.missing.join(", ")}`);
 }
 async function waitForPublished(cdp, timeoutMs) {
@@ -5821,7 +6907,7 @@ async function waitForPublished(cdp, timeoutMs) {
   return null;
 }
 async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
-  const dir = path8.join(annoncesDir, slug);
+  const dir = path9.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (a.status !== "draft") {
     throw new Error(`annonce "${slug}" is "${a.status}", not "draft" \u2014 only drafts can be published`);
@@ -5834,15 +6920,19 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
     const auth = await ensureLoggedIn(cdp);
     if (!auth.ok) {
       logger.error("Not logged in to Leboncoin \u2014 run `login` (or log in once in the opened browser), then retry.");
-      if (opts.screenshot !== false) await captureScreenshot(cdp, path8.join(dir, "auth-state.png"));
+      if (opts.screenshot !== false) await captureScreenshot(cdp, path9.join(dir, "auth-state.png"));
       return { ok: false, reason: "login-required" };
     }
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
     const shotLog = new ShotLog(dir);
     if (opts.shots) await shotLog.shot(cdp, "00-initial");
     const report = await fillForm(cdp, a, photos, opts.shots ? shotLog : void 0);
+    if (report.wizard?.stop === "login-required") {
+      logger.error("The session was logged out during the deposit \u2014 run `login`, then retry.");
+      return { ok: false, reason: "login-required", report };
+    }
     if (opts.screenshot !== false) {
-      const png = path8.join(dir, "publish-preview.png");
+      const png = path9.join(dir, "publish-preview.png");
       if (await captureScreenshot(cdp, png)) {
         report.previewPng = png;
         logger.info(`Saved form screenshot \u2192 ${png} (read it to verify before submitting)`);
@@ -5850,27 +6940,16 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
     }
     if (opts.shots) {
       await shotLog.shot(cdp, "20-prefilled");
-      const shotsDir = path8.join(dir, "shots");
-      await captureElement(cdp, ELEMENT_TARGETS.price, path8.join(shotsDir, "elem-price.png"));
-      await captureElement(cdp, ELEMENT_TARGETS.photos, path8.join(shotsDir, "elem-photos.png"));
-      await captureElement(cdp, ELEMENT_TARGETS.submit, path8.join(shotsDir, "elem-submit.png"));
+      const shotsDir = path9.join(dir, "shots");
+      await captureElement(cdp, ELEMENT_TARGETS.price, path9.join(shotsDir, "elem-price.png"));
+      await captureElement(cdp, ELEMENT_TARGETS.photos, path9.join(shotsDir, "elem-photos.png"));
+      await captureElement(cdp, ELEMENT_TARGETS.submit, path9.join(shotsDir, "elem-submit.png"));
     }
-    const formMap = await introspectForm(cdp);
-    report.formMap = formMap;
-    const formMapPath = path8.join(dir, "form-map.json");
-    if (writeFormMap(formMapPath, formMap)) report.formMapPath = formMapPath;
-    for (const f of formMap.fields) {
-      if (!f.required || f.type === "file") continue;
-      const filledIn = String(f.value ?? "").trim() !== "" || f.checked === true;
-      if (filledIn) continue;
-      const label = f.label || f.key;
-      if (report.missing.some((m) => m.toLowerCase().includes(label.toLowerCase()))) continue;
-      report.fields.push({ field: label, required: true, hasValue: false, filled: false });
-      report.missing.push(`${label} (required on the live form \u2014 ${f.requiredSource ?? "required"})`);
-    }
+    const formMapPath = path9.join(dir, "form-map.json");
+    if (writeFormMap(formMapPath, { steps: report.formMapSteps ?? [] })) report.formMapPath = formMapPath;
     const href = await currentUrl(cdp);
     const readiness = await buildReadiness(cdp, report, href);
-    const readinessPath = path8.join(dir, "push-readiness.json");
+    const readinessPath = path9.join(dir, "push-readiness.json");
     if (writeReadiness(readinessPath, readiness)) {
       report.readiness = readiness;
       report.readinessPath = readinessPath;
@@ -5879,7 +6958,7 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
       `Push-readiness: ${readiness.ready ? "READY" : "NOT READY"}${readiness.blockers.length ? ` \u2014 ${readiness.blockers.join("; ")}` : ""} \u2192 ${readinessPath}`
     );
     if (opts.diagnostic) {
-      const htmlPath = path8.join(dir, "publish-preview.html");
+      const htmlPath = path9.join(dir, "publish-preview.html");
       if (await savePageHtml(cdp, htmlPath)) report.previewHtml = htmlPath;
       logFillReport(report);
       logger.info("Diagnostic \u2014 nothing submitted.");
@@ -5896,8 +6975,15 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
       return { ok: false, reason: "dry-run", report, missing: report.missing };
     }
     if (opts.yes) {
+      if (report.wizard?.stop !== "final") {
+        logger.error(
+          `Not on the final step (wizard stopped: ${report.wizard?.stop ?? "unknown"}) \u2014 not submitting. Fix: ${report.missing.join(", ") || "see form-map.json"}`
+        );
+        return { ok: false, reason: "form-error", error: `wizard stopped before the final step (${report.wizard?.stop})`, report, missing: report.missing };
+      }
       logger.info("Auto-submitting (--yes)\u2026");
-      if (!await clickButton(cdp, DEPOSIT.publishButton)) {
+      const submitControl = await hasButton(cdp, DEPOSIT.publishButton) ? DEPOSIT.publishButton : DEPOSIT.nextButton;
+      if (!await clickButton(cdp, submitControl)) {
         logger.error("Could not find/click the publish button \u2014 review the form and click \xAB D\xE9poser mon annonce \xBB yourself.");
         return { ok: false, reason: "form-error", error: "publish button not found", report, missing: report.missing };
       }
@@ -5909,7 +6995,9 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
       }
     } else {
       if (report.missing.length) logger.warn(`Before submitting, check: ${report.missing.join(", ")}`);
-      logger.warn("Form prefilled. Review it in the browser and click \xAB D\xE9poser mon annonce \xBB yourself.");
+      logger.warn(
+        report.wizard?.stop === "final" ? "Form prefilled up to the final review. Check it in the browser and submit it yourself (the last \xAB Continuer \xBB / \xAB D\xE9poser \xBB)." : `Form prefilled up to \xAB ${report.formMap?.step?.title ?? "the current step"} \xBB \u2014 finish the remaining steps and submit in the browser yourself.`
+      );
       logger.info("Waiting for you to publish\u2026");
     }
     const published = await waitForPublished(cdp, opts.timeoutSubmitMs ?? DEFAULT_SUBMIT_TIMEOUT_MS);
@@ -5931,13 +7019,15 @@ async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
     cdp.disconnect();
   }
 }
-var DEFAULT_SUBMIT_TIMEOUT_MS;
+var DEFAULT_SUBMIT_TIMEOUT_MS, REPORTED_FIELDS;
 var init_publish = __esm({
   "src/publish.ts"() {
     "use strict";
     init_auth();
     init_captcha();
     init_deposit_form();
+    init_deposit_wizard();
+    init_field_match();
     init_form_introspect();
     init_logger();
     init_markdown();
@@ -5946,6 +7036,228 @@ var init_publish = __esm({
     init_selectors();
     init_utils();
     DEFAULT_SUBMIT_TIMEOUT_MS = 15 * 60 * 1e3;
+    REPORTED_FIELDS = [
+      ["category", "category", true],
+      ["title", "title", true],
+      ["description", "description", true],
+      ["price", "price", true],
+      ["location", "zipcode", true],
+      ["condition", "condition", false],
+      ["shipping", "shipping", false]
+    ];
+  }
+});
+
+// src/manage-actions.ts
+async function navigate(cdp, url, settleMs = 3e3) {
+  await cdp.send("Page.enable").catch(() => {
+  });
+  await cdp.send("Page.navigate", { url }).catch(() => {
+  });
+  await delay(settleMs);
+}
+async function clickInAdCard(cdp, adId, button) {
+  return cdp.evaluate(
+    `(() => {
+        /* click-in-ad-card */
+        const n = (s) => String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+        const link = Array.from(document.querySelectorAll('a[href]')).find((a) => a.getAttribute('href').includes(${JSON.stringify(adId)}));
+        if (!link) return false;
+        let card = link;
+        for (let i = 0; i < 8 && card.parentElement; i++) {
+          card = card.parentElement;
+          if (card.matches('li, article, [role="listitem"], [role="row"]') || card.querySelectorAll('button, [role="button"]').length >= 1) break;
+        }
+        const wanted = ${JSON.stringify(button.textCandidates)}.map(n);
+        const els = Array.from(card.querySelectorAll('button, [role="button"], [role="menuitem"], a')).filter((e) => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true');
+        for (const w of wanted) {
+          const el = els.find((e) => { const t = n(e.innerText || e.textContent); const a = n(e.getAttribute('aria-label')); return t === w || a === w || t.startsWith(w + ' ') || a.startsWith(w + ' '); });
+          if (el) { el.click(); return true; }
+        }
+        return false;
+      })()`,
+    false
+  ).catch(() => false);
+}
+async function clickManageControl(cdp, adId, button) {
+  if (await clickButtonOrMenu(cdp, button, MANAGE.overflowMenu)) return true;
+  await navigate(cdp, MANAGE.listingUrl);
+  if (await clickInAdCard(cdp, adId, button)) return true;
+  if (!await clickInAdCard(cdp, adId, MANAGE.overflowMenu)) return false;
+  await delay(600);
+  return clickInOpenMenu(cdp, button);
+}
+async function clickInOpenMenu(cdp, button) {
+  return cdp.evaluate(
+    `(() => {
+        const n = (s) => String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+        const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]')).filter(visible);
+        const wanted = ${JSON.stringify(button.textCandidates)}.map(n);
+        for (const m of menus) {
+          const els = Array.from(m.querySelectorAll('button, [role="menuitem"], [role="option"], a')).filter(visible);
+          for (const w of wanted) {
+            const el = els.find((e) => n(e.innerText || e.textContent) === w || n(e.getAttribute('aria-label')) === w);
+            if (el) { el.click(); return true; }
+          }
+        }
+        return false;
+      })()`,
+    false
+  ).catch(() => false);
+}
+async function confirmIfAsked(cdp, confirm, waitMs = 1500) {
+  await delay(waitMs);
+  const clicked = await clickButton(cdp, confirm);
+  if (clicked) await delay(waitMs);
+  return clicked;
+}
+async function proveOutcome(cdp, proof) {
+  if (proof.markers.length && await pageHasText(cdp, proof.markers)) return "confirmation-text";
+  if (proof.flippedTo && await hasButton(cdp, proof.flippedTo)) return "control-flipped";
+  if (proof.reloadUrl && proof.goneMarkers?.length) {
+    await navigate(cdp, proof.reloadUrl);
+    if (await pageHasText(cdp, proof.goneMarkers)) return "ad-page-gone";
+  }
+  return null;
+}
+var init_manage_actions = __esm({
+  "src/manage-actions.ts"() {
+    "use strict";
+    init_deposit_form();
+    init_selectors();
+    init_utils();
+  }
+});
+
+// src/doctor.ts
+var doctor_exports = {};
+__export(doctor_exports, {
+  fieldResolutions: () => fieldResolutions,
+  runDoctor: () => runDoctor
+});
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync4 } from "fs";
+import path10 from "path";
+async function defaultConnect4(url) {
+  const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
+  return connectAndNavigate2(url);
+}
+function fieldResolutions(w, a) {
+  const out = {};
+  for (const name of Object.keys(LOGICAL_FIELDS)) {
+    const fills = w.steps.flatMap((s) => s.fills).filter((f) => f.target === name);
+    if (fills.some((f) => f.via === "selector")) out[name] = "selector";
+    else if (fills.length) out[name] = "semantic";
+    else if (name === "category" && w.category) out[name] = "semantic";
+    else if (w.stop !== "final") out[name] = "not-reached";
+    else
+      out[name] = LOGICAL_FIELDS[name].required || (name === "condition" ? !!a.condition : name === "shipping" ? typeof a.shipping === "boolean" : false) ? "unresolved" : "not-reached";
+  }
+  return out;
+}
+async function runDoctor(opts = {}, deps = {}) {
+  const siteOverrides = applySiteOverrides();
+  const report = { at: (/* @__PURE__ */ new Date()).toISOString(), ok: false, checks: [], fields: {}, siteOverrides };
+  const connect = deps.connect ?? defaultConnect4;
+  const cdp = await connect(AUTH.accountUrl);
+  try {
+    if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
+    const login = await checkLogin(cdp);
+    report.checks.push({
+      name: "login",
+      ok: login.loggedIn,
+      detail: login.loggedIn ? `logged in (${login.signals.join(", ")})` : login.loggedOut ? `logged out (${login.signals.join(", ") || login.url})` : "inconclusive \u2014 no account marker found"
+    });
+    await navigate(cdp, `${BASE_URL}/recherche?text=${encodeURIComponent(opts.query ?? "iphone")}`);
+    if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
+    const searchSnap = await readPageSnapshot(cdp);
+    const search = searchFromSnapshot(searchSnap);
+    report.checks.push({
+      name: "search",
+      ok: !!search && search.source === "next-data",
+      detail: search ? `${search.payload.ads.length} ads (total ${search.payload.total}) from ${search.source}${searchSnap.buildId ? `, buildId ${searchSnap.buildId}` : ", no buildId (pagination by navigation)"}` : "no results found on the search page"
+    });
+    const firstUrl = search?.payload.ads.find((x) => x.url)?.url;
+    if (firstUrl) {
+      await navigate(cdp, firstUrl);
+      const adFound = adFromSnapshot(await readPageSnapshot(cdp));
+      report.checks.push({
+        name: "ad-detail",
+        ok: !!adFound,
+        detail: adFound ? `ad ${adFound.ad.list_id} from ${adFound.source}` : `no ad payload on ${firstUrl}`
+      });
+    } else {
+      report.checks.push({ name: "ad-detail", ok: false, detail: "skipped \u2014 no ad URL from the search check" });
+    }
+    if (login.loggedOut) {
+      report.checks.push({ name: "deposit", ok: false, detail: "skipped \u2014 log in first (`leboncoin login`)" });
+    } else {
+      const a = opts.slug ? parseAnnonce(path10.join(opts.annoncesDir ?? "annonces", opts.slug)) : PROBE;
+      const photos = opts.slug ? resolvePhotoPaths(path10.join(opts.annoncesDir ?? "annonces", opts.slug), a) : [];
+      await navigate(cdp, DEPOSIT.startUrl);
+      const w = await runWizard(cdp, a, { photos });
+      report.fields = fieldResolutions(w, a);
+      report.deposit = {
+        stop: w.stop,
+        error: w.error,
+        steps: w.steps.map((s) => ({ title: s.title, fields: s.formMap.fields.length, final: s.final, unresolvedRequired: s.unresolvedRequired }))
+      };
+      const expectedStop = opts.slug ? "final" : "missing-required";
+      const ok = w.stop === "final" || w.stop === expectedStop && w.steps.length >= 2;
+      report.checks.push({
+        name: "deposit",
+        ok,
+        detail: `${w.steps.length} step(s): ${w.steps.map((s) => `\xAB ${s.title || "?"} \xBB`).join(" \u2192 ")}; stopped: ${w.stop}${w.error ? ` (${w.error})` : ""} \u2014 nothing submitted`
+      });
+      await navigate(cdp, "about:blank", 300);
+    }
+    report.ok = report.checks.every((c) => c.ok);
+    let out = opts.out;
+    if (!out) {
+      const { getScraperHome: getScraperHome2 } = await Promise.resolve().then(() => (init_config(), config_exports));
+      out = path10.join(getScraperHome2(), "doctor-report.json");
+    }
+    mkdirSync4(path10.dirname(out), { recursive: true });
+    writeFileSync4(out, JSON.stringify(report, null, 2));
+    report.reportPath = out;
+    for (const c of report.checks) {
+      if (c.ok) logger.success(`${c.name}: ${c.detail}`);
+      else logger.warn(`${c.name}: ${c.detail}`);
+    }
+    const fields = Object.entries(report.fields).map(([k, v]) => `${k}=${v}`);
+    if (fields.length) logger.info(`deposit fields: ${fields.join(", ")}`);
+    logger.info(`Doctor report \u2192 ${out}`);
+    return report;
+  } finally {
+    cdp.disconnect();
+  }
+}
+var PROBE;
+var init_doctor = __esm({
+  "src/doctor.ts"() {
+    "use strict";
+    init_auth();
+    init_captcha();
+    init_deposit_wizard();
+    init_logger();
+    init_manage_actions();
+    init_markdown();
+    init_page_payload();
+    init_selectors();
+    init_site_overrides();
+    PROBE = {
+      slug: "doctor-probe",
+      title: "Test de diagnostic \u2014 ne pas publier",
+      category: "",
+      price: 1,
+      zipcode: "75001",
+      city: "Paris",
+      attributes: {},
+      photos: [],
+      status: "draft",
+      description: "Annonce de test du diagnostic leboncoin-cdp. Elle n'est jamais publi\xE9e."
+    };
   }
 });
 
@@ -5954,9 +7266,9 @@ var delete_exports = {};
 __export(delete_exports, {
   runDelete: () => runDelete
 });
-import path9 from "path";
+import path11 from "path";
 import readline from "readline";
-async function defaultConnect4(url) {
+async function defaultConnect5(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
@@ -5970,7 +7282,7 @@ function promptYesNo(question) {
   });
 }
 async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
-  const dir = path9.join(annoncesDir, slug);
+  const dir = path11.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (a.status !== "published" || !a.leboncoin_id) {
     throw new Error(`annonce "${slug}" is not published (no leboncoin_id) \u2014 nothing to delete`);
@@ -5983,7 +7295,7 @@ async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
       return { ok: false, reason: "aborted" };
     }
   }
-  const connect = deps.connect ?? defaultConnect4;
+  const connect = deps.connect ?? defaultConnect5;
   const target = a.leboncoin_url || MANAGE.adUrl(a.leboncoin_id);
   const cdp = await connect(target);
   try {
@@ -5993,21 +7305,23 @@ async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
       logger.error("Not logged in to Leboncoin \u2014 run `login`, then retry.");
       return { ok: false, reason: "login-required" };
     }
-    const clickedDelete = await clickButton(cdp, MANAGE.deleteButton);
-    if (!clickedDelete) {
-      logger.error("Delete control not found on the ad page \u2014 open mes-annonces and delete it manually.");
+    if (!await clickManageControl(cdp, a.leboncoin_id, MANAGE.deleteButton)) {
+      logger.error(`Delete control not found \u2014 open \xAB mes annonces \xBB (${MANAGE.listingUrl}) and delete it manually.`);
       return { ok: false, reason: "control-not-found" };
     }
-    await delay(1500);
-    await clickButton(cdp, MANAGE.confirmButton);
-    await delay(2500);
-    const confirmed = await pageHasText(cdp, MANAGE.deletedMarkers);
-    if (confirmed) logger.success(`Leboncoin confirmed the deletion of "${slug}".`);
+    await confirmIfAsked(cdp, MANAGE.confirmButton);
+    const proof = await proveOutcome(cdp, { markers: MANAGE.deletedMarkers, reloadUrl: target, goneMarkers: MANAGE.goneMarkers });
+    if (!proof) {
+      const png = path11.join(dir, "delete-unconfirmed.png");
+      const previewPng = await captureScreenshot(cdp, png) ? png : void 0;
+      logger.warn(`Clicked delete, but Leboncoin showed no proof the ad is gone \u2014 "${slug}" stays "published" locally. Check ${previewPng ?? "the browser"}.`);
+      return { ok: false, reason: "unconfirmed", previewPng };
+    }
     a.status = "deleted";
     a.deleted_at = (/* @__PURE__ */ new Date()).toISOString();
     writeAnnonce(dir, a);
-    logger.success(`Marked "${slug}" as deleted locally.`);
-    return { ok: true };
+    logger.success(`Leboncoin confirmed the deletion of "${slug}" (${proof}) \u2014 marked deleted locally.`);
+    return { ok: true, proof };
   } finally {
     cdp.disconnect();
   }
@@ -6017,11 +7331,11 @@ var init_delete = __esm({
     "use strict";
     init_auth();
     init_captcha();
-    init_deposit_form();
     init_logger();
+    init_manage_actions();
     init_markdown();
+    init_screenshot();
     init_selectors();
-    init_utils();
   }
 });
 
@@ -6034,9 +7348,9 @@ __export(manage_exports, {
   runReactivate: () => runReactivate,
   runRenew: () => runRenew
 });
-import path10 from "path";
+import path12 from "path";
 import readline2 from "readline";
-async function defaultConnect5(url) {
+async function defaultConnect6(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
@@ -6050,7 +7364,7 @@ function promptYesNo2(question) {
   });
 }
 async function withAd(annoncesDir, slug, opts, deps, cfg, stage) {
-  const dir = path10.join(annoncesDir, slug);
+  const dir = path12.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (!a.leboncoin_id) throw new Error(`annonce "${slug}" has no leboncoin_id \u2014 it was never published`);
   if (!cfg.allow.includes(a.status)) throw new Error(`annonce "${slug}" is "${a.status}" \u2014 expected ${cfg.allow.join(" or ")}`);
@@ -6062,7 +7376,7 @@ async function withAd(annoncesDir, slug, opts, deps, cfg, stage) {
     }
   }
   logger.warn(TOS_REMINDER);
-  const connect = deps.connect ?? defaultConnect5;
+  const connect = deps.connect ?? defaultConnect6;
   const cdp = await connect(a.leboncoin_url || MANAGE.adUrl(a.leboncoin_id));
   try {
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
@@ -6076,6 +7390,24 @@ async function withAd(annoncesDir, slug, opts, deps, cfg, stage) {
     cdp.disconnect();
   }
 }
+async function lifecycle(cdp, a, dir, label, button, proof, apply) {
+  if (!await clickManageControl(cdp, a.leboncoin_id, button)) {
+    logger.error(`${label} control not found \u2014 do it manually in \xAB mes annonces \xBB (${MANAGE.listingUrl}).`);
+    return { ok: false, reason: "action-failed" };
+  }
+  await confirmIfAsked(cdp, MANAGE.manageConfirmButton);
+  const how = await proveOutcome(cdp, proof);
+  if (!how) {
+    const png = path12.join(dir, "manage-unconfirmed.png");
+    const previewPng = await captureScreenshot(cdp, png) ? png : void 0;
+    logger.warn(`${label}: clicked, but Leboncoin showed no confirmation \u2014 local status left as "${a.status}". Check ${previewPng ?? "the browser"}.`);
+    return { ok: false, reason: "unconfirmed", previewPng };
+  }
+  apply(a);
+  writeAnnonce(dir, a);
+  logger.success(`${label}: confirmed by Leboncoin (${how}).`);
+  return { ok: true, proof: how };
+}
 async function runMarkSold(annoncesDir, slug, opts = {}, deps = {}) {
   return withAd(
     annoncesDir,
@@ -6083,92 +7415,79 @@ async function runMarkSold(annoncesDir, slug, opts = {}, deps = {}) {
     opts,
     deps,
     { allow: ["published", "paused"], confirm: (a) => `Mark "${a.title}" as sold on Leboncoin? [y/N] ` },
-    async (cdp, a, dir) => {
-      if (!await clickButton(cdp, MANAGE.markSoldButton)) {
-        logger.error("Mark-sold control not found \u2014 do it manually in mes-annonces.");
-        return { ok: false, reason: "action-failed" };
-      }
-      await delay(1500);
-      await clickButton(cdp, MANAGE.manageConfirmButton);
-      await delay(1500);
-      a.status = "sold";
-      a.sold_at = (/* @__PURE__ */ new Date()).toISOString();
-      writeAnnonce(dir, a);
-      logger.success(`Marked "${slug}" as sold.`);
-      return { ok: true };
-    }
+    (cdp, a, dir) => lifecycle(cdp, a, dir, "Mark-sold", MANAGE.markSoldButton, { markers: MANAGE.soldMarkers }, (x) => {
+      x.status = "sold";
+      x.sold_at = (/* @__PURE__ */ new Date()).toISOString();
+    })
   );
 }
 async function runRenew(annoncesDir, slug, opts = {}, deps = {}) {
-  return withAd(annoncesDir, slug, opts, deps, { allow: ["published"], confirm: (a) => `Renew / bump "${a.title}" on Leboncoin? [y/N] ` }, async (cdp) => {
-    if (!await clickButton(cdp, MANAGE.renewButton)) {
-      logger.warn("Renew control not found \u2014 bump it manually in mes-annonces.");
+  return withAd(annoncesDir, slug, opts, deps, { allow: ["published"], confirm: (a) => `Renew / bump "${a.title}" on Leboncoin? [y/N] ` }, async (cdp, a) => {
+    if (!await clickManageControl(cdp, a.leboncoin_id, MANAGE.renewButton)) {
+      logger.warn("Renew control not found \u2014 bump it manually in \xAB mes annonces \xBB.");
       return { ok: false, reason: "action-failed" };
     }
-    await delay(1500);
-    await clickButton(cdp, MANAGE.manageConfirmButton);
-    await delay(1e3);
-    logger.success(`Requested a bump for "${slug}" (status unchanged).`);
+    await confirmIfAsked(cdp, MANAGE.manageConfirmButton);
+    logger.success(`Requested a bump for "${slug}" (status unchanged \u2014 a bump may lead to a paid option page: finish or cancel it in the browser).`);
     return { ok: true };
   });
 }
 async function runDeactivate(annoncesDir, slug, opts = {}, deps = {}) {
-  return withAd(annoncesDir, slug, opts, deps, { allow: ["published"], confirm: (a) => `Deactivate (pause) "${a.title}"? [y/N] ` }, async (cdp, a, dir) => {
-    if (!await clickButton(cdp, MANAGE.deactivateButton)) {
-      logger.error("Deactivate control not found \u2014 pause it manually in mes-annonces.");
-      return { ok: false, reason: "action-failed" };
-    }
-    await delay(1500);
-    await clickButton(cdp, MANAGE.manageConfirmButton);
-    await delay(1e3);
-    a.status = "paused";
-    a.paused_at = (/* @__PURE__ */ new Date()).toISOString();
-    writeAnnonce(dir, a);
-    logger.success(`Paused "${slug}".`);
-    return { ok: true };
-  });
+  return withAd(
+    annoncesDir,
+    slug,
+    opts,
+    deps,
+    { allow: ["published"], confirm: (a) => `Deactivate (pause) "${a.title}"? [y/N] ` },
+    (cdp, a, dir) => lifecycle(cdp, a, dir, "Deactivate", MANAGE.deactivateButton, { markers: MANAGE.pausedMarkers, flippedTo: MANAGE.reactivateButton }, (x) => {
+      x.status = "paused";
+      x.paused_at = (/* @__PURE__ */ new Date()).toISOString();
+    })
+  );
 }
 async function runReactivate(annoncesDir, slug, opts = {}, deps = {}) {
-  return withAd(annoncesDir, slug, opts, deps, { allow: ["paused"], confirm: (a) => `Reactivate "${a.title}"? [y/N] ` }, async (cdp, a, dir) => {
-    if (!await clickButton(cdp, MANAGE.reactivateButton)) {
-      logger.error("Reactivate control not found \u2014 reactivate it manually in mes-annonces.");
-      return { ok: false, reason: "action-failed" };
-    }
-    await delay(1500);
-    await clickButton(cdp, MANAGE.manageConfirmButton);
-    await delay(1e3);
-    a.status = "published";
-    a.paused_at = void 0;
-    writeAnnonce(dir, a);
-    logger.success(`Reactivated "${slug}".`);
-    return { ok: true };
-  });
+  return withAd(
+    annoncesDir,
+    slug,
+    opts,
+    deps,
+    { allow: ["paused"], confirm: (a) => `Reactivate "${a.title}"? [y/N] ` },
+    (cdp, a, dir) => lifecycle(cdp, a, dir, "Reactivate", MANAGE.reactivateButton, { markers: MANAGE.reactivatedMarkers, flippedTo: MANAGE.deactivateButton }, (x) => {
+      x.status = "published";
+      x.paused_at = void 0;
+    })
+  );
 }
 async function runEdit(annoncesDir, slug, opts = {}, deps = {}) {
   return withAd(annoncesDir, slug, opts, deps, { allow: ["published", "paused"] }, async (cdp, a, dir) => {
-    if (!await clickButton(cdp, MANAGE.editButton)) {
+    if (!await clickButtonOrMenu(cdp, MANAGE.editButton, MANAGE.overflowMenu)) {
       logger.error("Edit control not found \u2014 open the ad and click \xAB Modifier \xBB manually.");
       return { ok: false, reason: "action-failed" };
     }
     await delay(2e3);
-    const photos = resolvePhotoPaths(dir, a);
-    const report = await fillForm(cdp, a, photos);
+    const report = await fillForm(cdp, a, [], void 0, { finalButtons: [MANAGE.saveButton, DEPOSIT.publishButton] });
     let previewPng;
     if (opts.screenshot !== false) {
-      const png = path10.join(dir, "edit-preview.png");
+      const png = path12.join(dir, "edit-preview.png");
       if (await captureScreenshot(cdp, png)) previewPng = png;
     }
     if (report.missing.length) logger.warn(`Check before saving: ${report.missing.join(", ")}`);
+    for (const w of report.warnings ?? []) logger.warn(w);
     if (opts.yes) {
-      if (!await clickButton(cdp, MANAGE.saveButton)) {
+      if (report.wizard?.stop !== "final") {
+        logger.error(`The edit form did not reach its last step (${report.wizard?.stop}) \u2014 review it and save yourself.`);
+        return { ok: false, reason: "action-failed", previewPng, missing: report.missing };
+      }
+      const save = await hasButton(cdp, MANAGE.saveButton) ? MANAGE.saveButton : DEPOSIT.nextButton;
+      if (!await clickButton(cdp, save)) {
         logger.error("Save control not found \u2014 review the prefilled form and click \xAB Enregistrer \xBB yourself.");
-        return { ok: false, reason: "action-failed", previewPng };
+        return { ok: false, reason: "action-failed", previewPng, missing: report.missing };
       }
       logger.success(`Submitted edits for "${slug}".`);
     } else {
       logger.warn("Edit form prefilled. Review it and click \xAB Enregistrer \xBB / \xAB Mettre \xE0 jour \xBB yourself.");
     }
-    return { ok: true, previewPng };
+    return { ok: true, previewPng, missing: report.missing };
   });
 }
 var TOS_REMINDER;
@@ -6179,6 +7498,7 @@ var init_manage = __esm({
     init_captcha();
     init_deposit_form();
     init_logger();
+    init_manage_actions();
     init_markdown();
     init_publish();
     init_screenshot();
@@ -6301,7 +7621,8 @@ them on your own account via the Chrome DevTools Protocol. Markdown is the sourc
 of truth; you (or the agent) write the copy, the engine just drives the browser.
 
 Usage:
-  leboncoin login [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
+  leboncoin login [--browser brave|chrome|chromium|opera] [--reset-profile] [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
+  leboncoin doctor [<slug>] [--query "<search>"] [--out <path>]
   leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
                        [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
@@ -6319,33 +7640,54 @@ Commands:
                 redirect), and save an auth-state screenshot. --cookies-file attaches an exported
                 cookies.json (best-effort escape hatch; always re-verified). If logged out, it
                 waits while you log in once in the browser. Run this before publish/delete.
+                --browser brave uses (and remembers) your Brave session: its profile is copied
+                once to ~/.lbc-scraper/profile-brave. --reset-profile re-copies it (after you
+                logged in again in the real browser).
+  doctor        READ-ONLY health check against the live site: login, a search page, an ad page,
+                and a walk of the deposit wizard that stops on the final review WITHOUT
+                submitting. Reports how each field was found (selector / semantic / unresolved)
+                in ~/.lbc-scraper/doctor-report.json. Run it first when something breaks.
+                With <slug>, the walk uses that annonce and its photos.
   new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
-  inspect       READ-ONLY: open the live deposit form and write form-map.json (every field +
-                required/optional + select options) + initial.png/html. Submits nothing. Read it
-                to discover category-specific required fields, then fill annonce.md and publish.
-  publish       Open the deposit form, fill it + upload photos via CDP, save a preview
-                screenshot (read it to verify). Semi-auto by default: review and click
-                \xAB D\xE9poser mon annonce \xBB yourself. --diagnostic = fill + screenshot + HTML +
-                field report, no submit. --strict = refuse to submit while fields are missing.
-                --yes = auto-submit. --shots = capture checkpoint + element + post-submit screenshots
-                into shots/. --no-screenshot to skip the capture. Writes push-readiness.json.
-  delete        Remove a published ad (confirms unless --yes).
+  inspect       READ-ONLY: open the live deposit form and write form-map.json ({ steps: [...] }:
+                every field of step 1 + required/optional + options) + initial.png/html. Types
+                and submits nothing. Later steps appear once step 1 is filled: use
+                publish --diagnostic to see them all.
+  publish       Drive the deposit wizard step by step: fill each step by field MEANING (label /
+                name, not fixed selectors), upload photos, click \xAB Continuer \xBB, and stop ON the
+                final review without submitting. Semi-auto by default: review it and submit
+                yourself. --diagnostic = walk + screenshot + HTML + field report, no submit.
+                --strict = refuse to submit while fields are missing. --yes = auto-submit, and
+                only from the recognised final step. --shots = one screenshot per step + element
+                crops + post-submit into shots/. Writes form-map.json (every step) and
+                push-readiness.json.
+  delete        Remove a published ad (confirms unless --yes). Marked deleted locally only when
+                Leboncoin proves it (message, or the ad page is gone) \u2014 else "unconfirmed".
   edit          Re-open the published ad's modify form, re-fill it from annonce.md, screenshot;
                 review and save \xAB Enregistrer \xBB yourself (or --yes to submit).
   renew         Bump / "remettre en avant" a published ad (no status change).
   mark-sold     Mark a published/paused ad as sold (status \u2192 sold).
   deactivate    Pause a published ad without deleting it (status \u2192 paused).
   reactivate    Put a paused ad back online (status \u2192 published).
+                Controls are looked up on the ad page, in its \xAB \u2026 \xBB menu, then in its card on
+                \xAB mes annonces \xBB; the local status changes only with proof from the site.
   list/status   Show local annonces and their published state.
   scrape        The original read-only scraper (search results + ad details).
 
 Common options:
   --annonces-dir <dir>   Root of the local store            (default: ./annonces)
+  --browser <name>       chrome | brave | chromium | opera \u2014 remembered for next runs
+  --chrome-path <bin>    Explicit browser binary (remembered too)
+  --reset-profile        Re-copy the selected browser's real profile into ~/.lbc-scraper
   --json                 Machine-readable output
   -h, --help             Show this help
   -v, --version          Show version
+
+Site changes:
+  ~/.lbc-scraper/site.json (or $LBC_SITE_OVERRIDES) extends the selector tables without a
+  rebuild \u2014 see references/deposit-form-mapping.md. Start with: leboncoin doctor.
 
 Publish/delete safety:
   Semi-auto is the default \u2014 the engine never clicks the final publish for you unless
@@ -6368,7 +7710,8 @@ var COMMANDS = /* @__PURE__ */ new Set([
   "renew",
   "mark-sold",
   "deactivate",
-  "reactivate"
+  "reactivate",
+  "doctor"
 ]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "query",
@@ -6506,9 +7849,26 @@ function requireSlug(p) {
   if (!slug) fail(`missing <slug> (e.g. leboncoin ${p.command} macbook-air-m1)`);
   return slug;
 }
+var BROWSER_COMMANDS = /* @__PURE__ */ new Set(["login", "auth", "inspect", "publish", "delete", "edit", "renew", "mark-sold", "deactivate", "reactivate", "doctor"]);
+async function prepareSite(p) {
+  if (!BROWSER_COMMANDS.has(p.command) && p.command !== "scrape" && p.command !== "comparables") return;
+  const { applySiteOverrides: applySiteOverrides2 } = await Promise.resolve().then(() => (init_site_overrides(), site_overrides_exports));
+  applySiteOverrides2();
+  if (!BROWSER_COMMANDS.has(p.command)) return;
+  if (p.values.browser || p.values["chrome-path"] || p.bools.has("reset-profile")) {
+    const { selectBrowser: selectBrowser2 } = await Promise.resolve().then(() => (init_config(), config_exports));
+    selectBrowser2({ browser: p.values.browser, chromePath: p.values["chrome-path"], resetProfile: p.bools.has("reset-profile") });
+  }
+  const port = intOf(p.values.port);
+  if (port) {
+    const { config: config2 } = await Promise.resolve().then(() => (init_config(), config_exports));
+    config2.browser.debuggingPort = port;
+  }
+}
 async function main() {
   const p = parseArgs(process.argv.slice(2));
   const json = p.bools.has("json");
+  await prepareSite(p);
   switch (p.command) {
     case "new": {
       const slug = requireSlug(p);
@@ -6612,13 +7972,22 @@ async function main() {
         timeoutSubmitMs: intOf(p.values["timeout-submit"])
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
-      else if (r.missing && r.missing.length) {
-        process.stderr.write(`leboncoin: ask the user about \u2192 ${r.missing.join(", ")}
+      else {
+        if (r.missing && r.missing.length) process.stderr.write(`leboncoin: ask the user about \u2192 ${r.missing.join(", ")}
+`);
+        for (const w of r.report?.warnings ?? []) process.stderr.write(`leboncoin: note \u2192 ${w}
 `);
       }
       if (!r.ok && ["login-required", "not-published", "incomplete", "form-error"].includes(r.reason ?? "")) {
         process.exit(2);
       }
+      return;
+    }
+    case "doctor": {
+      const { runDoctor: runDoctor2 } = await Promise.resolve().then(() => (init_doctor(), doctor_exports));
+      const r = await runDoctor2({ slug: p.positional[0], annoncesDir: annoncesDirOf(p), query: p.values.query, out: p.values.out });
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
       return;
     }
     case "login":

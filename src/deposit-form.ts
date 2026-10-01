@@ -30,7 +30,7 @@ const PICK_JS = `(labels, wanted) => {
   for (const t of tiers) { const i = L.findIndex((o) => o && t(o)); if (i >= 0) return i; }
   const wt = new Set(w.split(' ').filter((x) => x.length > 1));
   let best = -1, bs = 0;
-  L.forEach((o, i) => { const s = o.split(' ').filter((x) => wt.has(x)).length; if (s > bs) { best = i; bs = s; } });
+  L.forEach((o, i) => { const s = Array.from(new Set(o.split(' '))).filter((x) => wt.has(x)).length; if (s > bs || (s === bs && s > 0 && o.length < L[best].length)) { best = i; bs = s; } });
   return best;
 }`;
 
@@ -200,7 +200,7 @@ export interface FillResult {
  * option), checkbox/switch (click only if the state differs), contenteditable.
  * Targets the `data-lbc-ref` handle, so no name/id is needed.
  */
-export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: string, hint?: string): Promise<FillResult> {
+export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: string, hint?: string, opts: { optionWaitMs?: number } = {}): Promise<FillResult> {
   const sel = d.ref ? `[data-lbc-ref="${d.ref}"]` : d.selector;
   if (!sel) return { ok: false, reason: "gone" };
   if (d.type === "file") return { ok: false, reason: "unsupported" };
@@ -246,21 +246,22 @@ export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: strin
           input.click();
           await sleep(150);
           if (input.matches('input, textarea')) setVal(input, VALUE);
-          // Options can load asynchronously (address geocoding): poll up to ~4 s.
-          let options = [];
-          for (let t = 0; t < 20; t++) {
+          // Options can load asynchronously (address geocoding, ≈1–3 s live) and the
+          // list first shows STALE entries: poll until an option MATCHES (~6 s max).
+          let options = [], labels = [], i = -1;
+          for (let t = 0; t < ${Math.max(1, Math.ceil((opts.optionWaitMs ?? 6_000) / 200))}; t++) {
             const lb = document.getElementById(input.getAttribute('aria-controls') || el.getAttribute('aria-controls') || '');
             options = Array.from((lb || document).querySelectorAll('[role="option"]')).filter((o) => visible(o) && o.getAttribute('aria-disabled') !== 'true');
-            if (options.length) break;
+            labels = options.map(txt);
+            i = pick(labels, VALUE);
+            if (i < 0 && HINT) i = pick(labels, HINT);
+            if (i >= 0) break;
             await sleep(200);
           }
           if (!options.length) {
             // Free-text combobox: the typed value stands.
             return input.value ? { ok: true, detail: input.value } : { ok: false, reason: 'no-option' };
           }
-          const labels = options.map(txt);
-          let i = pick(labels, VALUE);
-          if (i < 0 && HINT) i = pick(labels, HINT);
           if (i < 0) return { ok: false, reason: 'no-option', detail: labels.slice(0, 8).join(' | ') };
           options[i].click();
           await sleep(300);

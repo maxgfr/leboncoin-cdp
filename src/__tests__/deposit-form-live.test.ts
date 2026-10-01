@@ -36,10 +36,28 @@ describe("fillField on the live wizard markup", () => {
     expect(cdp.clicks).toContain("Très bon état");
   });
 
+  it("waits past the STALE address suggestion for the async ones, and picks the city (seen live)", async () => {
+    const cdp = new DomCDP(fixture("deposit-step-3-review.html"));
+    const input = cdp.document.querySelector('input[name="location"]') as HTMLInputElement;
+    const listbox = cdp.document.getElementById(input.getAttribute("aria-controls") as string) as HTMLElement;
+    listbox.innerHTML = '<li role="option">10 Rue de l’Exemple, Issoire (63500)</li>';
+    input.addEventListener("input", () => {
+      // The geocoder answers ~400 ms after typing.
+      setTimeout(() => {
+        listbox.innerHTML = ["Avenue de Paris, Paris (75012)", "Paris (75012)", "Route de Paris, Carquefou (44470)"]
+          .map((o) => `<li role="option">${o}</li>`)
+          .join("");
+      }, 400);
+    });
+    const loc = await field(cdp, (f) => f.name === "location");
+    const r = await fillField(cdp as never, loc, "75012 Paris", "75012");
+    expect(r).toMatchObject({ ok: true, detail: "Paris (75012)" });
+  });
+
   it("reports no-option (and the choices) when the value is not offered", async () => {
     const cdp = new DomCDP(fixture("deposit-step-2.html"));
     const brand = await field(cdp, (f) => f.rhfName === "computer_brand");
-    const r = await fillField(cdp as never, brand, "Commodore");
+    const r = await fillField(cdp as never, brand, "Commodore", undefined, { optionWaitMs: 400 });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("no-option");
     expect(r.detail).toContain("Apple");
