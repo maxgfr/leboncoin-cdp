@@ -11,56 +11,22 @@ vi.mock("../utils", async (importOriginal) => {
 import { runDeactivate, runEdit, runMarkSold, runReactivate, runRenew } from "../manage";
 import { parseAnnonce, writeAnnonce } from "../markdown";
 import type { Annonce } from "../types";
+import { adPage, confirmDialog, messagePage } from "./helpers/ad-pages";
+import { DomCDP, fixture } from "./helpers/dom-cdp";
 
-class FakeCDP {
-  calls: { method: string }[] = [];
-  clicks = 0;
-  filesSet: string[] = [];
-  constructor(private opts: { url?: string; clickFails?: boolean } = {}) {}
-  async evaluate(expr: string): Promise<unknown> {
-    if (expr.includes("location.href")) return this.opts.url ?? "https://www.leboncoin.fr/ad/123";
-    if (expr.includes("geo.captcha-delivery")) return expr.includes("hostname");
-    if (expr.includes("querySelectorAll('button")) {
-      if (this.opts.clickFails) return false; // simulate a control that isn't found
-      this.clicks++;
-      return true;
-    }
-    if (expr.startsWith("!!document.querySelector")) return !this.opts.clickFails;
-    if (expr.includes("opts[0]")) return true;
-    if (expr.includes("dispatchEvent")) return true;
-    if (expr.includes("files")) return this.filesSet.length;
-    if (expr.includes("body.innerText")) return false;
-    return null;
-  }
-  async send(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-    this.calls.push({ method });
-    if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
-    if (method === "DOM.querySelector") return { nodeId: 2 };
-    if (method === "DOM.setFileInputFiles") {
-      this.filesSet = (params.files as string[]) ?? [];
-      return {};
-    }
-    if (method === "Page.captureScreenshot") return { data: "iVBORw0KGgo=" };
-    return {};
-  }
-  on(): void {}
-  once(): Promise<unknown> {
-    return Promise.resolve({});
-  }
-  disconnect(): void {}
-}
+const AD_URL = "https://www.leboncoin.fr/ad/informatique/123";
 
 const published: Annonce = {
   slug: "ad",
   title: "MacBook Air M1 2020",
-  category: "Informatique",
+  category: "Ordinateurs",
   price: 650,
   zipcode: "75012",
   attributes: {},
   photos: [],
   status: "published",
   leboncoin_id: "123",
-  leboncoin_url: "https://www.leboncoin.fr/ad/123",
+  leboncoin_url: AD_URL,
   description: "MacBook Air M1, très bon état.",
 };
 
@@ -72,29 +38,49 @@ function setup(over: Partial<Annonce> = {}): { dir: string; root: string } {
   return { dir, root };
 }
 
+/** An ad page whose `control` opens a confirm dialog, then shows `after`. */
+function site(control: string, after: string, controls = ["Modifier", "Mettre en pause", "Marquer comme vendu", "Remonter"]) {
+  return new DomCDP(adPage({ controls }), {
+    url: AD_URL,
+    onClick: (label) => {
+      if (label === control) return confirmDialog(`${control} ?`);
+      if (label === "Confirmer") return after;
+      return undefined;
+    },
+    onNavigate: () => adPage({ controls }),
+  });
+}
+
 describe("runMarkSold", () => {
-  it("clicks the sold flow and transitions published → sold", async () => {
+  it("clicks the sold flow and transitions published → sold once Leboncoin confirms", async () => {
     const { dir, root } = setup();
-    const cdp = new FakeCDP();
+    const cdp = site("Marquer comme vendu", messagePage("Votre annonce a été marquée comme vendue."));
     const res = await runMarkSold(root, "ad", { yes: true }, { connect: async () => cdp as never });
-    expect(res.ok).toBe(true);
-    expect(cdp.clicks).toBeGreaterThanOrEqual(1);
+    expect(res).toMatchObject({ ok: true, proof: "confirmation-text" });
     const after = parseAnnonce(dir);
     expect(after.status).toBe("sold");
     expect(after.sold_at).toBeTruthy();
   });
 
+  it("does NOT change the status without proof (unconfirmed)", async () => {
+    const { dir, root } = setup();
+    const cdp = site("Marquer comme vendu", adPage({ controls: ["Modifier", "Marquer comme vendu"] }));
+    const res = await runMarkSold(root, "ad", { yes: true }, { connect: async () => cdp as never });
+    expect(res).toMatchObject({ ok: false, reason: "unconfirmed" });
+    expect(parseAnnonce(dir).status).toBe("published");
+    expect(existsSync(join(dir, "manage-unconfirmed.png"))).toBe(true);
+  });
+
   it("aborts (and changes nothing) when the user declines", async () => {
     const { dir, root } = setup();
-    const cdp = new FakeCDP();
-    const res = await runMarkSold(root, "ad", {}, { connect: async () => cdp as never, confirm: async () => false });
+    const res = await runMarkSold(root, "ad", {}, { connect: async () => site("x", "") as never, confirm: async () => false });
     expect(res.reason).toBe("aborted");
     expect(parseAnnonce(dir).status).toBe("published");
   });
 
   it("returns login-required (no change) when logged out", async () => {
     const { dir, root } = setup();
-    const cdp = new FakeCDP({ url: "https://www.leboncoin.fr/connexion" });
+    const cdp = new DomCDP("<html><body></body></html>", { url: "https://www.leboncoin.fr/connexion" });
     const res = await runMarkSold(root, "ad", { yes: true }, { connect: async () => cdp as never });
     expect(res.reason).toBe("login-required");
     expect(parseAnnonce(dir).status).toBe("published");
@@ -102,58 +88,102 @@ describe("runMarkSold", () => {
 
   it("returns action-failed and does NOT change status when the control isn't found", async () => {
     const { dir, root } = setup();
-    const cdp = new FakeCDP({ clickFails: true });
-    const res = await runMarkSold(root, "ad", { yes: true }, { connect: async () => cdp as never });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("action-failed");
+    const res = await runMarkSold(root, "ad", { yes: true }, { connect: async () => site("x", "", ["Modifier"]) as never });
+    expect(res).toMatchObject({ ok: false, reason: "action-failed" });
     expect(parseAnnonce(dir).status).toBe("published"); // local state not corrupted
   });
 });
 
 describe("runDeactivate / runReactivate", () => {
-  it("pauses a published ad, then reactivates it", async () => {
+  it("pauses (proof: « Réactiver » appears), then reactivates (proof: confirmation text)", async () => {
     const { dir, root } = setup();
-    const off = await runDeactivate(root, "ad", { yes: true }, { connect: async () => new FakeCDP() as never });
-    expect(off.ok).toBe(true);
+    const off = await runDeactivate(
+      root,
+      "ad",
+      { yes: true },
+      { connect: async () => site("Mettre en pause", adPage({ controls: ["Modifier", "Réactiver"] })) as never },
+    );
+    expect(off).toMatchObject({ ok: true, proof: "control-flipped" });
     expect(parseAnnonce(dir).status).toBe("paused");
     expect(parseAnnonce(dir).paused_at).toBeTruthy();
 
-    const on = await runReactivate(root, "ad", { yes: true }, { connect: async () => new FakeCDP() as never });
+    const on = await runReactivate(
+      root,
+      "ad",
+      { yes: true },
+      { connect: async () => site("Réactiver", messagePage("Votre annonce a été réactivée."), ["Modifier", "Réactiver"]) as never },
+    );
     expect(on.ok).toBe(true);
+    expect(parseAnnonce(dir).status).toBe("published");
+  });
+
+  it("does not take the « Mettre en pause » button itself as proof of a pause", async () => {
+    const { dir, root } = setup();
+    const res = await runDeactivate(
+      root,
+      "ad",
+      { yes: true },
+      { connect: async () => site("Mettre en pause", adPage({ controls: ["Mettre en pause"] })) as never },
+    );
+    expect(res.reason).toBe("unconfirmed");
     expect(parseAnnonce(dir).status).toBe("published");
   });
 
   it("refuses to reactivate an ad that is not paused", async () => {
     const { root } = setup(); // status published
-    await expect(runReactivate(root, "ad", { yes: true }, { connect: async () => new FakeCDP() as never })).rejects.toThrow(/expected paused/);
+    await expect(runReactivate(root, "ad", { yes: true }, { connect: async () => site("x", "") as never })).rejects.toThrow(/expected paused/);
   });
 });
 
 describe("runRenew", () => {
   it("bumps a published ad without changing its status", async () => {
     const { dir, root } = setup();
-    const res = await runRenew(root, "ad", { yes: true }, { connect: async () => new FakeCDP() as never });
+    const cdp = site("Remonter", messagePage("ok"));
+    const res = await runRenew(root, "ad", { yes: true }, { connect: async () => cdp as never });
     expect(res.ok).toBe(true);
+    expect(cdp.clicks).toContain("Remonter");
     expect(parseAnnonce(dir).status).toBe("published");
   });
 });
 
 describe("runEdit", () => {
-  it("opens the edit form, re-fills it, screenshots, and submits with --yes", async () => {
+  function editSite() {
+    const state = { saved: false };
+    const cdp = new DomCDP(adPage({ controls: ["Modifier", "Supprimer"] }), {
+      url: AD_URL,
+      onClick: (label) => {
+        if (label === "Modifier") return fixture("deposit-step-3-review.html");
+        if (label === "Continuer") state.saved = true;
+        return undefined;
+      },
+    });
+    return { cdp, state };
+  }
+
+  it("opens the modify form, re-fills it by meaning, screenshots, and submits with --yes", async () => {
     const { dir, root } = setup();
-    const cdp = new FakeCDP();
+    const { cdp, state } = editSite();
     const res = await runEdit(root, "ad", { yes: true }, { connect: async () => cdp as never });
     expect(res.ok).toBe(true);
-    expect(cdp.clicks).toBeGreaterThanOrEqual(2); // open edit + save
+    expect(state.saved).toBe(true);
+    expect((cdp.document.querySelector('[name="price_cents"]') as HTMLInputElement).value).toBe("650");
+    expect(cdp.uploaded).toHaveLength(0); // photos are never re-uploaded on edit
     expect(existsSync(join(dir, "edit-preview.png"))).toBe(true);
     expect(parseAnnonce(dir).status).toBe("published"); // edit keeps it published
   });
 
+  it("semi-auto edit prefills but never saves", async () => {
+    const { root } = setup();
+    const { cdp, state } = editSite();
+    const res = await runEdit(root, "ad", {}, { connect: async () => cdp as never });
+    expect(res.ok).toBe(true);
+    expect(state.saved).toBe(false);
+  });
+
   it("returns action-failed when the modify form never opens (does not fill the wrong page)", async () => {
     const { root } = setup();
-    const cdp = new FakeCDP({ clickFails: true });
+    const cdp = new DomCDP(adPage({ controls: [] }), { url: AD_URL });
     const res = await runEdit(root, "ad", { yes: true }, { connect: async () => cdp as never });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("action-failed");
+    expect(res).toMatchObject({ ok: false, reason: "action-failed" });
   });
 });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -12,75 +12,49 @@ vi.mock("../utils", async (importOriginal) => {
 import { parseAnnonce, writeAnnonce } from "../markdown";
 import { runPublish } from "../publish";
 import type { Annonce } from "../types";
+import { DomCDP, fixture } from "./helpers/dom-cdp";
 
 /**
- * A fake CDPClient that answers cdp.evaluate by pattern-matching the in-page JS
- * the engine sends, and records cdp.send calls — so the whole publish flow runs
- * with no browser, no network, no config side effects.
+ * The whole publish flow over the REAL deposit wizard pages captured live
+ * (anonymized): step 1 (title + suggested categories) → step 2 (photos +
+ * attributes) → step 3 (final review, whose « Continuer » submits). The page only
+ * "publishes" if the engine clicks that final « Continuer » — which it must do
+ * with --yes and must NOT do otherwise.
  */
-class FakeCDP {
-  calls: { method: string; params: Record<string, unknown> }[] = [];
-  filesSet: string[] = [];
-  submitted = false;
-  constructor(private opts: { url?: string; publishedUrl?: string; formFields?: unknown[]; noSubmitButton?: boolean } = {}) {}
-
-  async evaluate(expr: string): Promise<unknown> {
-    if (expr.includes("introspect-form")) return { url: this.opts.url ?? "https://www.leboncoin.fr/deposer-une-annonce", fields: this.opts.formFields ?? [] };
-    if (expr.includes("location.href")) {
-      return this.submitted && this.opts.publishedUrl ? this.opts.publishedUrl : (this.opts.url ?? "https://www.leboncoin.fr/deposer-une-annonce");
-    }
-    if (expr.includes("geo.captcha-delivery")) return expr.includes("hostname"); // isOnCaptcha=false, isClear=true
-    if (expr.includes("submit-enabled")) return true; // readiness probe — BEFORE the click probe
-    if (expr.includes('role="alert"')) return null; // readFormError → no error
-    if (expr.includes("documentElement.outerHTML")) return "<html><body>form</body></html>"; // savePageHtml
-    if (expr.includes('a[href*="/ad/"]')) return ""; // firstAdLink
-    if (expr.includes("files")) return this.filesSet.length; // upload verify
-    if (expr.includes("querySelectorAll('button")) {
-      if (this.opts.noSubmitButton) return false; // simulate a missing publish button (text probe)
-      this.submitted = true; // clickByText (publish)
-      return true;
-    }
-    if (expr.includes("opts[0]")) return true; // pickSuggestion
-    if (expr.includes("dispatchEvent")) return true; // setInputValue
-    if (expr.startsWith("!!document.querySelector")) {
-      // simulate a missing publish button on the CSS fallback too (submit/adsubmit selectors)
-      if (this.opts.noSubmitButton && (expr.includes("submit") || expr.includes("adsubmit"))) return false;
-      return true; // resolveSelector
-    }
-    if (expr.includes("body.innerText")) return false; // pageHasText
-    return null;
-  }
-
-  async send(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-    this.calls.push({ method, params });
-    if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
-    if (method === "DOM.querySelector") return { nodeId: 2 };
-    if (method === "DOM.setFileInputFiles") {
-      this.filesSet = params.files as string[];
-      return {};
-    }
-    if (method === "DOM.getBoxModel") return { model: { border: [10, 20, 110, 20, 110, 70, 10, 70] } };
-    if (method === "Page.captureScreenshot") return { data: "iVBORw0KGgo=" };
-    return {};
-  }
-  on(): void {}
-  once(): Promise<unknown> {
-    return Promise.resolve({});
-  }
-  disconnect(): void {}
-}
-
-function scratch(): string {
-  return mkdtempSync(join(tmpdir(), "lbc-pub-"));
+function liveSite(opts: { publishedUrl?: string; startUrl?: string } = {}) {
+  const state = { page: "step1", submitted: false };
+  const cdp = new DomCDP(fixture("deposit-step-1-suggest.html"), {
+    url: opts.startUrl,
+    onClick: (label, _el, self) => {
+      if (state.page === "step1" && /^Choix \d/.test(label)) {
+        state.page = "step2";
+        return fixture("deposit-step-2.html");
+      }
+      if (label === "Continuer" && state.page === "step2") {
+        state.page = "step3";
+        return fixture("deposit-step-3-review.html");
+      }
+      if (label === "Continuer" && state.page === "step3") {
+        state.submitted = true;
+        if (opts.publishedUrl) {
+          self.url = opts.publishedUrl;
+          return "<html><body><h1>Votre annonce est en ligne</h1></body></html>";
+        }
+      }
+      return undefined;
+    },
+  });
+  return { cdp, state };
 }
 
 const draft: Annonce = {
   slug: "ad",
   title: "MacBook Air M1 2020",
-  category: "Informatique",
+  category: "Vélos",
   price: 650,
   zipcode: "75012",
   city: "Paris",
+  condition: "Très bon état",
   attributes: { brand: "Apple" },
   photos: ["1.jpg", "2.jpg"],
   status: "draft",
@@ -88,7 +62,7 @@ const draft: Annonce = {
 };
 
 function setupDraft(over: Partial<Annonce> = {}): { dir: string; root: string } {
-  const root = scratch();
+  const root = mkdtempSync(join(tmpdir(), "lbc-pub-"));
   const dir = join(root, "ad");
   mkdirSync(join(dir, "photos"), { recursive: true });
   writeFileSync(join(dir, "photos", "1.jpg"), "");
@@ -97,94 +71,108 @@ function setupDraft(over: Partial<Annonce> = {}): { dir: string; root: string } 
   return { dir, root };
 }
 
-describe("runPublish", () => {
-  it("fills the form, uploads photos, screenshots, and writes back the ad id (--yes)", async () => {
+describe("runPublish over the live wizard", () => {
+  it("--yes walks every step, submits from the final step only, and writes back the ad id", async () => {
     const { dir, root } = setupDraft();
-    const cdp = new FakeCDP({ publishedUrl: "https://www.leboncoin.fr/ad/informatique/3138258318" });
+    const { cdp, state } = liveSite({ publishedUrl: "https://www.leboncoin.fr/ad/informatique/3138258318" });
     const res = await runPublish(root, "ad", { yes: true, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
 
     expect(res.ok).toBe(true);
+    expect(state.submitted).toBe(true);
     expect(res.leboncoin_id).toBe("3138258318");
+    expect(res.report?.wizard).toMatchObject({ stop: "final", steps: 3 });
+    expect(res.report?.uploadedPhotos).toBe(2);
+    expect(cdp.uploaded).toHaveLength(2);
 
     const after = parseAnnonce(dir);
     expect(after.status).toBe("published");
     expect(after.leboncoin_id).toBe("3138258318");
-
-    // DOM upload sequence + screenshot happened
-    const methods = cdp.calls.map((c) => c.method);
-    expect(methods).toEqual(expect.arrayContaining(["DOM.getDocument", "DOM.querySelector", "DOM.setFileInputFiles", "Page.captureScreenshot"]));
-    const upload = cdp.calls.find((c) => c.method === "DOM.setFileInputFiles");
-    expect((upload?.params.files as string[]).length).toBe(2);
     expect(existsSync(join(dir, "publish-preview.png"))).toBe(true);
   });
 
+  it("semi-auto (default) parks on the final review and NEVER submits", async () => {
+    const { dir, root } = setupDraft();
+    const { cdp, state } = liveSite();
+    const res = await runPublish(root, "ad", { timeoutSubmitMs: 10 }, { connect: async () => cdp as never });
+    expect(state.page).toBe("step3");
+    expect(state.submitted).toBe(false);
+    expect(res.reason).toBe("not-published");
+    expect(parseAnnonce(dir).status).toBe("draft");
+  });
+
   it("--diagnostic fills + screenshots + saves HTML + reports missing, without submitting", async () => {
-    const { dir, root } = setupDraft({ zipcode: "" }); // a required field left empty
-    const cdp = new FakeCDP();
+    const { dir, root } = setupDraft({ zipcode: "", city: undefined });
+    const { cdp, state } = liveSite();
     const res = await runPublish(root, "ad", { diagnostic: true }, { connect: async () => cdp as never });
 
     expect(res.reason).toBe("diagnostic");
     expect(res.missing).toEqual(expect.arrayContaining([expect.stringContaining("zipcode")]));
-    expect(parseAnnonce(dir).status).toBe("draft"); // not submitted
-    expect(cdp.submitted).toBe(false);
+    expect(state.submitted).toBe(false);
+    expect(parseAnnonce(dir).status).toBe("draft");
     expect(existsSync(join(dir, "publish-preview.png"))).toBe(true);
     expect(existsSync(join(dir, "publish-preview.html"))).toBe(true);
   });
 
-  it("surfaces a category-specific required field (from the live form) in missing[] and writes form-map.json", async () => {
-    const { dir, root } = setupDraft();
-    const cdp = new FakeCDP({
-      formFields: [
-        { label: "Kilométrage", type: "text", value: "", required: true, requiredSource: "aria-required", name: "mileage", selector: 'input[name="mileage"]' },
-      ],
-    });
+  it("surfaces a required field the annonce cannot fill (État) and writes every step to form-map.json", async () => {
+    const { dir, root } = setupDraft({ condition: undefined });
+    const { cdp } = liveSite();
     const res = await runPublish(root, "ad", { diagnostic: true }, { connect: async () => cdp as never });
-    expect(res.missing).toEqual(expect.arrayContaining([expect.stringContaining("Kilométrage")]));
-    expect(existsSync(join(dir, "form-map.json"))).toBe(true);
-    expect(res.report?.formMap?.fields?.length).toBe(1);
+    expect(res.report?.wizard?.stop).toBe("missing-required");
+    expect(res.missing).toEqual(expect.arrayContaining([expect.stringMatching(/^État/)]));
+    const map = JSON.parse(readFileSync(join(dir, "form-map.json"), "utf8"));
+    expect(map.steps).toHaveLength(2);
+    expect(map.steps[1].fields.some((f: { rhfName?: string }) => f.rhfName === "condition")).toBe(true);
   });
 
-  it("writes push-readiness.json next to the preview", async () => {
+  it("writes push-readiness.json (ready on the final step)", async () => {
     const { dir, root } = setupDraft();
-    const cdp = new FakeCDP({ publishedUrl: "https://www.leboncoin.fr/ad/x/123456" });
-    const res = await runPublish(root, "ad", { yes: true, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
+    const { cdp } = liveSite();
+    const res = await runPublish(root, "ad", { dryRun: true }, { connect: async () => cdp as never });
     expect(existsSync(join(dir, "push-readiness.json"))).toBe(true);
+    expect(res.report?.readiness?.blockers).toEqual([]);
     expect(res.report?.readiness?.ready).toBe(true);
   });
 
-  it("--shots captures checkpoint + element crops + a post-submit confirmation", async () => {
+  it("--shots captures one checkpoint per wizard step + element crops + the confirmation", async () => {
     const { dir, root } = setupDraft();
-    const cdp = new FakeCDP({ publishedUrl: "https://www.leboncoin.fr/ad/x/123456" });
+    const { cdp } = liveSite({ publishedUrl: "https://www.leboncoin.fr/ad/x/123456" });
     const res = await runPublish(root, "ad", { yes: true, shots: true, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
     expect(res.ok).toBe(true);
-    for (const f of ["00-initial.png", "10-after-category.png", "20-prefilled.png", "30-confirmation.png", "elem-price.png"]) {
+    for (const f of ["00-initial.png", "step-01.png", "step-02.png", "step-03.png", "20-prefilled.png", "30-confirmation.png", "elem-price.png"]) {
       expect(existsSync(join(dir, "shots", f))).toBe(true);
     }
-    expect(res.report?.shots?.map((s) => s.name)).toEqual(expect.arrayContaining(["00-initial", "30-confirmation"]));
-    expect(existsSync(join(dir, "publish-preview.png"))).toBe(true); // back-compat
+    expect(res.report?.shots?.map((s) => s.name)).toEqual(expect.arrayContaining(["00-initial", "step-03", "30-confirmation"]));
   });
 
   it("--no-screenshot skips the capture", async () => {
     const { dir, root } = setupDraft();
-    const cdp = new FakeCDP({ publishedUrl: "https://www.leboncoin.fr/ad/x/999999" });
+    const { cdp } = liveSite({ publishedUrl: "https://www.leboncoin.fr/ad/x/999999" });
     await runPublish(root, "ad", { yes: true, screenshot: false, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
     expect(cdp.calls.some((c) => c.method === "Page.captureScreenshot")).toBe(false);
     expect(existsSync(join(dir, "publish-preview.png"))).toBe(false);
   });
 
-  it("--yes fails fast (form-error, no wait) when the publish button can't be clicked", async () => {
-    const { dir, root } = setupDraft();
-    const cdp = new FakeCDP({ noSubmitButton: true });
+  it("--yes refuses to submit when the wizard stopped before the final step", async () => {
+    const { dir, root } = setupDraft({ condition: undefined });
+    const { cdp, state } = liveSite({ publishedUrl: "https://www.leboncoin.fr/ad/x/1" });
     const res = await runPublish(root, "ad", { yes: true, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("form-error");
-    expect(cdp.submitted).toBe(false);
-    expect(parseAnnonce(dir).status).toBe("draft"); // not published
+    expect(state.submitted).toBe(false);
+    expect(parseAnnonce(dir).status).toBe("draft");
+  });
+
+  it("--strict refuses to submit while required fields are missing", async () => {
+    const { root } = setupDraft({ condition: undefined });
+    const { cdp, state } = liveSite();
+    const res = await runPublish(root, "ad", { strict: true, yes: true, timeoutSubmitMs: 10 }, { connect: async () => cdp as never });
+    expect(res.reason).toBe("incomplete");
+    expect(state.submitted).toBe(false);
   });
 
   it("stops with login-required when redirected to the login page", async () => {
     const { root } = setupDraft();
-    const cdp = new FakeCDP({ url: "https://www.leboncoin.fr/connexion" });
+    const { cdp } = liveSite({ startUrl: "https://auth.leboncoin.fr/login/?client_id=lbc-front-web" });
     const res = await runPublish(root, "ad", {}, { connect: async () => cdp as never });
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("login-required");
@@ -192,7 +180,7 @@ describe("runPublish", () => {
 
   it("refuses to publish a non-draft annonce", async () => {
     const { root } = setupDraft({ status: "published", leboncoin_id: "1" });
-    const cdp = new FakeCDP();
+    const { cdp } = liveSite();
     await expect(runPublish(root, "ad", {}, { connect: async () => cdp as never })).rejects.toThrow(/only drafts/);
   });
 });

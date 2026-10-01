@@ -1,10 +1,12 @@
 /**
- * The CDP publish engine. Opens the deposit form on the logged-in stealth
- * profile, fills every field + uploads photos, captures a screenshot the agent
- * can review, then (semi-auto, the default) waits for the user to review and
- * click « Déposer mon annonce » — which also clears DataDome at submit. `--yes`
- * clicks publish automatically. On success it captures the new ad's list_id/URL
- * and writes them back to the annonce.
+ * The CDP publish engine. Opens the deposit wizard on the logged-in stealth
+ * profile and drives it step by step (deposit-wizard.ts): fills every step by
+ * meaning, uploads photos, clicks « Continuer » between steps and STOPS on the
+ * final review without submitting. It captures a screenshot the agent can
+ * review, then (semi-auto, the default) waits for the user to review and submit
+ * — which also clears DataDome at submit. `--yes` submits automatically, and only
+ * from the recognised final step. On success it captures the new ad's
+ * list_id/URL and writes them back to the annonce.
  *
  * fillForm returns a FillReport (which fields resolved/were filled, and what is
  * missing) so the agent can ask the user for the gaps. `--diagnostic` saves the
@@ -19,13 +21,15 @@ import path from "node:path";
 import { ensureLoggedIn } from "./auth";
 import type { CDPClient } from "./cdp";
 import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
-import { clickButton, currentUrl, firstAdLink, pickSuggestion, resolveSelector, setInputValue, uploadPhotos } from "./deposit-form";
-import { type FormMap, introspectForm, writeFormMap } from "./form-introspect";
+import { clickButton, currentUrl, firstAdLink, hasButton } from "./deposit-form";
+import { type StepFill, type WizardOptions, type WizardStop, runWizard } from "./deposit-wizard";
+import { logicalValue } from "./field-match";
+import { type FormMap, writeFormMap } from "./form-introspect";
 import { logger } from "./logger";
 import { parseAnnonce, resolvePhotoPaths, writeAnnonce } from "./markdown";
 import { type PushReadiness, buildReadiness, readFormError, writeReadiness } from "./readiness";
 import { ShotLog, type ShotRef, captureElement, captureScreenshot, savePageHtml } from "./screenshot";
-import { DEPOSIT, ELEMENT_TARGETS } from "./selectors";
+import { DEPOSIT, ELEMENT_TARGETS, type LogicalFieldName } from "./selectors";
 import type { Annonce } from "./types";
 import { delay } from "./utils";
 
@@ -40,7 +44,7 @@ export interface PublishOptions {
   strict?: boolean;
   /** Capture a preview screenshot after filling (default true). */
   screenshot?: boolean;
-  /** Capture the full checkpoint set (00-initial/10-after-category/20-prefilled + element crops). */
+  /** Capture the full checkpoint set (00-initial / step-NN per wizard step / 20-prefilled + element crops). */
   shots?: boolean;
   /** Max wait for the published ad to appear (default 15 min). */
   timeoutSubmitMs?: number;
@@ -59,10 +63,17 @@ export interface FieldFill {
   filled: boolean;
 }
 
+/** One wizard step as written to form-map.json. */
+export type StepMap = FormMap & { fills: StepFill[]; unresolvedRequired: string[]; final: boolean };
+
 export interface FillReport {
   fields: FieldFill[];
   /** Required fields the agent should ask the user about (empty in the annonce, or the form field wasn't found). */
   missing: string[];
+  /** Non-blocking issues worth telling the user (guessed category, unmatched attributes…). */
+  warnings?: string[];
+  /** How the wizard ended: `final` = parked on the last step, ready for the human to submit. */
+  wizard?: { stop: WizardStop; error?: string; steps: number; category?: { picked: string; family?: string; guessed: boolean } };
   uploadedPhotos: number;
   expectedPhotos: number;
   /** Where the preview screenshot/HTML were saved (if any). */
@@ -73,8 +84,10 @@ export interface FillReport {
   readinessPath?: string;
   /** Checkpoint/element screenshots captured during the run. */
   shots?: ShotRef[];
-  /** Live form map (every field + required + options) + where it was written. */
+  /** Live form map of the last step reached (every field + required + options). */
   formMap?: FormMap;
+  /** Every step the wizard went through (written to form-map.json as `{ steps }`). */
+  formMapSteps?: StepMap[];
   formMapPath?: string;
 }
 
@@ -96,87 +109,75 @@ async function defaultConnect(url: string): Promise<CDPClient> {
   return connectAndNavigate(url);
 }
 
-/** Fill the entire deposit form from the annonce (best-effort, never throws). Returns a FillReport. */
-export async function fillForm(cdp: CDPClient, a: Annonce, photos: string[], shotLog?: ShotLog): Promise<FillReport> {
+/** Logical fields reported on, in form order: [logical name, report name, required]. */
+const REPORTED_FIELDS: [LogicalFieldName, string, boolean][] = [
+  ["category", "category", true],
+  ["title", "title", true],
+  ["description", "description", true],
+  ["price", "price", true],
+  ["location", "zipcode", true],
+  ["condition", "condition", false],
+  ["shipping", "shipping", false],
+];
+
+/**
+ * Fill the deposit wizard from the annonce (best-effort, never throws): every
+ * step is filled by meaning and the wizard advances with « Continuer » until the
+ * FINAL step, where it stops without submitting. Returns a FillReport.
+ */
+export async function fillForm(cdp: CDPClient, a: Annonce, photos: string[], shotLog?: ShotLog, wizardOpts: Partial<WizardOptions> = {}): Promise<FillReport> {
+  const wizard = await runWizard(cdp, a, { photos, shotLog, ...wizardOpts });
+  const written = new Set(wizard.written);
+  const reached = wizard.stop === "final";
   const fields: FieldFill[] = [];
-
-  // 1. Category first — choosing it mutates the rest of the form, so later
-  //    selectors must be resolved AFTER this step.
-  let categoryFilled = false;
-  if (a.category) {
-    const catSel = await resolveSelector(cdp, DEPOSIT.categoryInput);
-    if (catSel) {
-      categoryFilled = await setInputValue(cdp, DEPOSIT.categoryInput, a.category);
-      await delay(1_200);
-      await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.category);
-      await delay(1_500);
-    } else {
-      logger.warn("Category field not found — pick the category manually in the browser.");
-    }
-  }
-  fields.push({ field: "category", required: true, hasValue: !!a.category, filled: categoryFilled });
-  // Choosing the category mutates the rest of the form — snapshot that state.
-  await shotLog?.shot(cdp, "10-after-category");
-
-  // 2. Core text fields.
-  const fillText = async (field: string, required: boolean, value: string, candidates: string[]): Promise<void> => {
-    if (!value) {
-      fields.push({ field, required, hasValue: false, filled: false });
-      return;
-    }
-    const filled = await setInputValue(cdp, candidates, value);
-    if (!filled) logger.warn(`Could not fill the ${field} field.`);
-    fields.push({ field, required, hasValue: true, filled });
-  };
-
-  await fillText("title", true, a.title, DEPOSIT.titleInput);
-  await fillText("description", true, a.description, DEPOSIT.descTextarea);
-  await fillText("price", true, a.price > 0 ? String(a.price) : "", DEPOSIT.priceInput);
-
-  // 3. Location (zipcode → pick the city suggestion).
-  let zipFilled = false;
-  if (a.zipcode) {
-    zipFilled = await setInputValue(cdp, DEPOSIT.zipcodeInput, a.zipcode);
-    if (zipFilled) {
-      await delay(1_200);
-      await pickSuggestion(cdp, DEPOSIT.suggestionOption, a.city ?? a.zipcode);
-    }
-  }
-  fields.push({ field: "zipcode", required: true, hasValue: !!a.zipcode, filled: zipFilled });
-
-  // 4. Condition + category-specific attributes (optional; unknown keys logged, never fatal).
-  if (a.condition) await setInputValue(cdp, DEPOSIT.attrByKey("condition"), a.condition);
-  for (const [key, value] of Object.entries(a.attributes ?? {})) {
-    const ok = await setInputValue(cdp, DEPOSIT.attrByKey(key), String(value));
-    if (!ok) logger.warn(`Attribute "${key}" could not be set automatically — set it manually if needed.`);
-  }
-
-  // Shipping / delivery toggle (only when explicitly requested in the annonce).
-  if (a.shipping === true) {
-    const ok = await clickButton(cdp, DEPOSIT.shippingToggle);
-    if (!ok) logger.warn("Could not toggle shipping/delivery — enable it manually if needed.");
-  }
-
-  // 5. Photos (the one CDP DOM-domain operation).
-  let uploaded = await uploadPhotos(cdp, DEPOSIT.photoFileInput, photos);
-  if (uploaded < photos.length) {
-    await clickButton(cdp, DEPOSIT.photoAddButton);
-    await delay(800);
-    uploaded = await uploadPhotos(cdp, DEPOSIT.photoFileInput, photos);
-  }
-  if (uploaded === 0) logger.warn("Could not upload photos automatically — add them manually in the browser.");
-  else logger.info(`Uploaded ${uploaded}/${photos.length} photo(s).`);
-  await delay(1_500); // let thumbnails render
-
   const missing: string[] = [];
-  for (const f of fields) {
-    if (!f.required) continue;
-    if (!f.hasValue) missing.push(`${f.field} (missing in annonce)`);
-    else if (!f.filled) missing.push(`${f.field} (form field not found)`);
-  }
-  if (uploaded < photos.length) missing.push(`photos (${uploaded}/${photos.length} uploaded)`);
+  const warnings: string[] = [];
 
-  return { fields, missing, uploadedPhotos: uploaded, expectedPhotos: photos.length };
+  for (const [logical, name, required] of REPORTED_FIELDS) {
+    const hasValue = logical === "category" ? !!a.category : logicalValue(a, logical) !== null;
+    if (!required && !hasValue) continue;
+    const filled = written.has(logical);
+    fields.push({ field: name, required, hasValue, filled });
+    if (!required) {
+      if (hasValue && !filled) warnings.push(`${name}: could not be set — set it in the browser if the form offers it`);
+      continue;
+    }
+    if (!hasValue) missing.push(`${name} (missing in annonce)`);
+    else if (!filled) missing.push(reached ? `${name} (form field not found)` : `${name} (not reached — wizard stopped: ${wizard.stop})`);
+  }
+  for (const key of Object.keys(a.attributes ?? {})) {
+    fields.push({ field: `attr:${key}`, required: false, hasValue: true, filled: written.has(`attr:${key}`) });
+  }
+
+  const last = wizard.steps.at(-1);
+  for (const u of last?.unresolvedRequired ?? []) {
+    const label = u.split(" (")[0]?.toLowerCase() ?? u;
+    if (missing.some((m) => m.toLowerCase().includes(label))) continue;
+    fields.push({ field: u.split(" (")[0] ?? u, required: true, hasValue: false, filled: false });
+    missing.push(u);
+  }
+  if (wizard.uploadedPhotos < photos.length) missing.push(`photos (${wizard.uploadedPhotos}/${photos.length} uploaded)`);
+  if (wizard.stop === "stuck") missing.push(`step « ${last?.title ?? "?"} » refused to continue: ${wizard.error ?? "unknown error"}`);
+  if (wizard.stop === "no-next") missing.push(`step « ${last?.title ?? "?"} »: no « Continuer » button found`);
+
+  if (wizard.category?.guessed)
+    warnings.push(`category: « ${a.category || "(none)"} » not offered — the site's suggestion « ${wizard.category.picked} » was picked; check it`);
+  for (const k of wizard.unmatchedAttributes) warnings.push(`attribute « ${k} »: no matching field on the form (use a label from form-map.json)`);
+  for (const t of wizard.failed) if (t.startsWith("attr:")) warnings.push(`attribute « ${t.slice(5)} »: value not accepted by the form`);
+
+  if (wizard.uploadedPhotos === 0 && photos.length) logger.warn("Could not upload photos automatically — add them manually in the browser.");
+  else if (photos.length) logger.info(`Uploaded ${wizard.uploadedPhotos}/${photos.length} photo(s).`);
+
+  return {
+    fields,
+    missing,
+    warnings,
+    uploadedPhotos: wizard.uploadedPhotos,
+    expectedPhotos: photos.length,
+    wizard: { stop: wizard.stop, error: wizard.error, steps: wizard.steps.length, category: wizard.category },
+    formMap: last?.formMap,
+    formMapSteps: wizard.steps.map((st) => ({ ...st.formMap, fills: st.fills, unresolvedRequired: st.unresolvedRequired, final: st.final })),
+  };
 }
 
 function logFillReport(r: FillReport): void {
@@ -187,6 +188,8 @@ function logFillReport(r: FillReport): void {
     logger.info(`  ${mark} ${f.field}${f.required ? "" : " (optional)"}${note}`);
   }
   logger.info(`  ${r.uploadedPhotos === r.expectedPhotos ? "✓" : "✗"} photos: ${r.uploadedPhotos}/${r.expectedPhotos}`);
+  if (r.wizard) logger.info(`Wizard: ${r.wizard.steps} step(s), stopped: ${r.wizard.stop}${r.wizard.error ? ` (${r.wizard.error})` : ""}`);
+  for (const w of r.warnings ?? []) logger.warn(w);
   if (r.missing.length) logger.warn(`Ask the user about: ${r.missing.join(", ")}`);
 }
 
@@ -248,6 +251,10 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
     if (opts.shots) await shotLog.shot(cdp, "00-initial");
 
     const report = await fillForm(cdp, a, photos, opts.shots ? shotLog : undefined);
+    if (report.wizard?.stop === "login-required") {
+      logger.error("The session was logged out during the deposit — run `login`, then retry.");
+      return { ok: false, reason: "login-required", report };
+    }
 
     // Preview screenshot (default on) so the agent can SEE the prefilled form.
     if (opts.screenshot !== false) {
@@ -266,22 +273,10 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
       await captureElement(cdp, ELEMENT_TARGETS.submit, path.join(shotsDir, "elem-submit.png"));
     }
 
-    // Read-only form map: discover the live fields (incl. category-specific ones)
-    // and fold any required-but-empty field into missing[] ADDITIVELY — never a
-    // replacement, so the hardcoded core-required set can't silently drop out.
-    const formMap = await introspectForm(cdp);
-    report.formMap = formMap;
+    // Every step's form map (fields, required, options, what was filled) — the
+    // agent reads it to fill gaps in annonce.md (labels can be used as attribute keys).
     const formMapPath = path.join(dir, "form-map.json");
-    if (writeFormMap(formMapPath, formMap)) report.formMapPath = formMapPath;
-    for (const f of formMap.fields) {
-      if (!f.required || f.type === "file") continue;
-      const filledIn = String(f.value ?? "").trim() !== "" || f.checked === true;
-      if (filledIn) continue;
-      const label = f.label || f.key;
-      if (report.missing.some((m) => m.toLowerCase().includes(label.toLowerCase()))) continue;
-      report.fields.push({ field: label, required: true, hasValue: false, filled: false });
-      report.missing.push(`${label} (required on the live form — ${f.requiredSource ?? "required"})`);
-    }
+    if (writeFormMap(formMapPath, { steps: report.formMapSteps ?? [] })) report.formMapPath = formMapPath;
 
     // Push-readiness verdict — the machine-readable "can we push?" the agent reads first.
     const href = await currentUrl(cdp);
@@ -316,8 +311,17 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
     }
 
     if (opts.yes) {
+      // Only ever submit from the wizard's FINAL step — never from a step whose
+      // « Continuer » merely moves on (or from a page we did not recognise).
+      if (report.wizard?.stop !== "final") {
+        logger.error(
+          `Not on the final step (wizard stopped: ${report.wizard?.stop ?? "unknown"}) — not submitting. Fix: ${report.missing.join(", ") || "see form-map.json"}`,
+        );
+        return { ok: false, reason: "form-error", error: `wizard stopped before the final step (${report.wizard?.stop})`, report, missing: report.missing };
+      }
       logger.info("Auto-submitting (--yes)…");
-      if (!(await clickButton(cdp, DEPOSIT.publishButton))) {
+      const submitControl = (await hasButton(cdp, DEPOSIT.publishButton)) ? DEPOSIT.publishButton : DEPOSIT.nextButton;
+      if (!(await clickButton(cdp, submitControl))) {
         // Fail fast instead of waiting 15 min for an ad that was never submitted.
         logger.error("Could not find/click the publish button — review the form and click « Déposer mon annonce » yourself.");
         return { ok: false, reason: "form-error", error: "publish button not found", report, missing: report.missing };
@@ -330,7 +334,11 @@ export async function runPublish(annoncesDir: string, slug: string, opts: Publis
       }
     } else {
       if (report.missing.length) logger.warn(`Before submitting, check: ${report.missing.join(", ")}`);
-      logger.warn("Form prefilled. Review it in the browser and click « Déposer mon annonce » yourself.");
+      logger.warn(
+        report.wizard?.stop === "final"
+          ? "Form prefilled up to the final review. Check it in the browser and submit it yourself (the last « Continuer » / « Déposer »)."
+          : `Form prefilled up to « ${report.formMap?.step?.title ?? "the current step"} » — finish the remaining steps and submit in the browser yourself.`,
+      );
       logger.info("Waiting for you to publish…");
     }
 

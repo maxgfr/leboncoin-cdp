@@ -110,8 +110,10 @@ export async function checkLogin(cdp: CDPClient): Promise<AuthState> {
   }
   if (probe.loggedIn) return { loggedIn: true, loggedOut: false, signals: probe.signals, url };
 
-  // No positive signal: only call it "logged out" if a login-required marker is
-  // visible; otherwise it is inconclusive (the pre-flight will allow it through).
+  // No positive signal: only call it "logged out" on a NEGATIVE signal (the
+  // header's « Se connecter » control, or a login-required text); otherwise it is
+  // inconclusive (the pre-flight will allow it through).
+  if (probe.loggedOutSignals.length) return { loggedIn: false, loggedOut: true, signals: probe.loggedOutSignals.map((s) => `logged-out:${s}`), url };
   const loggedOut = await pageHasText(cdp, AUTH.loginRequiredTextMarkers);
   return { loggedIn: false, loggedOut, signals: loggedOut ? ["text:login"] : [], url };
 }
