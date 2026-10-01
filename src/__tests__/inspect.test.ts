@@ -50,7 +50,7 @@ describe("runInspect", () => {
     expect(res.formMap?.fields).toHaveLength(1);
     expect(existsSync(join(dir, "form-map.json"))).toBe(true);
     expect(existsSync(join(dir, "initial.png"))).toBe(true);
-    expect(JSON.parse(readFileSync(join(dir, "form-map.json"), "utf8")).fields[0].key).toBe("subject");
+    expect(JSON.parse(readFileSync(join(dir, "form-map.json"), "utf8")).steps[0].fields[0].key).toBe("subject");
   });
 
   it("returns login-required when logged out (and writes nothing)", async () => {

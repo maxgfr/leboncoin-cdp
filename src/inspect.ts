@@ -1,9 +1,10 @@
 /**
  * `inspect` — a READ-ONLY look at the live deposit form. Opens the form on the
- * logged-in profile, enumerates every field into form-map.json (label, type,
- * required + why, select options), and saves initial.png + initial.html. Submits
- * nothing. This is the "show me the live form so I can drive it" entry point the
- * agent uses to discover category-specific required fields before publishing.
+ * logged-in profile, enumerates every field of the FIRST wizard step into
+ * form-map.json (`{ steps: [ … ] }`: label, type, required + why, options), and
+ * saves initial.png + initial.html. Types and submits nothing — so it cannot see
+ * the later steps (they only appear once step 1 is filled); `publish --diagnostic`
+ * walks every step and stops on the final review without submitting.
  *
  * Connection is injected via deps.connect so it is unit-testable with a fake CDP.
  */
@@ -55,12 +56,14 @@ export async function runInspect(
     mkdirSync(dir, { recursive: true });
     const formMap = await introspectForm(cdp);
     const formMapPath = path.join(dir, "form-map.json");
-    const written = writeFormMap(formMapPath, formMap);
+    const written = writeFormMap(formMapPath, { steps: [formMap] });
     const previewPng = (await captureScreenshot(cdp, path.join(dir, "initial.png"))) ? path.join(dir, "initial.png") : undefined;
     const previewHtml = (await savePageHtml(cdp, path.join(dir, "initial.html"))) ? path.join(dir, "initial.html") : undefined;
 
     logger.success(`Live form: ${summarizeFormMap(formMap)}${written ? ` → ${formMapPath}` : ""}`);
-    logger.info("Read form-map.json + initial.png, fill any required field that is empty in annonce.md, then publish.");
+    logger.info(
+      "Read form-map.json + initial.png. Later steps (photos, attributes, review) only appear once step 1 is filled: run `publish <slug> --diagnostic` to walk them all without submitting.",
+    );
     return { ok: true, formMap, formMapPath: written ? formMapPath : undefined, previewPng, previewHtml };
   } finally {
     cdp.disconnect();

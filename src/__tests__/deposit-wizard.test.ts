@@ -117,6 +117,17 @@ describe("runWizard over the live deposit wizard", () => {
     expect(r.category).toMatchObject({ picked: "Ordinateurs", family: "Électronique", guessed: false });
   });
 
+  it("still stops on the final review when its wording changes (structural guard)", async () => {
+    const reworded = fixture("deposit-step-3-review.html")
+      .replace(/Un dernier aperçu avant de publier votre annonce !/g, "Vérifiez votre annonce")
+      .replace(/je confirme l'exactitude/g, "j'atteste");
+    const state = { submitted: false };
+    const cdp = new DomCDP(reworded, { onClick: (l) => void (l === "Continuer" && (state.submitted = true)) });
+    const r = await runWizard(cdp as never, annonce, { photos: [] });
+    expect(r.stop).toBe("final");
+    expect(state.submitted).toBe(false);
+  });
+
   it("is bounded by maxSteps", async () => {
     let n = 0;
     const page = (i: number) =>

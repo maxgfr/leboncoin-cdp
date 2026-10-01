@@ -155,6 +155,34 @@ async function isFinalStep(cdp: CDPClient, markers: string[], buttons: ButtonSel
   return false;
 }
 
+/** A placeholder annonce with every core value set: used to ask "which core fields are on this step?". */
+const PROBE_ANNONCE: Annonce = {
+  slug: "probe",
+  title: "x",
+  category: "x",
+  price: 1,
+  zipcode: "75001",
+  attributes: {},
+  photos: [],
+  status: "draft",
+  description: "x",
+};
+
+/**
+ * Structural final-step guard, independent of any wording: the last step is a
+ * review that shows the core fields TOGETHER (title, description, price,
+ * address), while earlier steps show one or two of them. Three or more on one
+ * step = final review — so the wizard still stops if the site rewords its
+ * « avant de publier » text.
+ */
+export function looksLikeFinalReview(map: FormMap): boolean {
+  const core = new Set(["title", "description", "price", "location"]);
+  const onStep = matchFields(map, PROBE_ANNONCE)
+    .matches.map((m) => (m.target.kind === "logical" ? m.target.name : ""))
+    .filter((n) => core.has(n));
+  return new Set(onStep).size >= 3;
+}
+
 function describe(f: FormMap["fields"][number]): string {
   return f.label || f.altLabels?.[0] || f.key;
 }
@@ -277,7 +305,7 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
     const unresolvedRequired = filledMap.fields
       .filter((f) => f.required && !(f.type === "file" ? photosOk : isFieldFilled(f)))
       .map((f) => `${describe(f)} (required on the live form — ${f.requiredSource ?? "required"})`);
-    const final = await isFinalStep(cdp, finalMarkers, finalButtons);
+    const final = looksLikeFinalReview(filledMap) || (await isFinalStep(cdp, finalMarkers, finalButtons));
     result.steps.push({ index, title: filledMap.step?.title ?? "", url, fills, unresolvedRequired, final, formMap: filledMap });
     await opts.shotLog?.shot(cdp, `step-${String(index).padStart(2, "0")}`);
 
