@@ -59,9 +59,14 @@ export function normalizeSearchInput(input: string, baseUrl: string): Normalized
       // "recherche?..." | "/carte/voitures?..."
       pathname = "/" + trimmed.slice(0, qIndex).replace(/^\/+/, "");
       params = new URLSearchParams(trimmed.slice(qIndex + 1));
-    } else {
+    } else if (trimmed.includes("=")) {
       // Bare query string: "a=b&c=d"
       params = new URLSearchParams(trimmed);
+    } else {
+      // Bare keyword(s): "macbook air" → a text search. Parsing it as a query
+      // string would yield `macbook=`, which the site ignores (whole catalogue).
+      params = new URLSearchParams();
+      if (trimmed) params.set("text", trimmed.replace(/\s+/g, " "));
     }
   }
 
