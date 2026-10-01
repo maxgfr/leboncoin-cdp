@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { connectAndNavigate } from "./browser";
 import { buildQueryFromAnnonce, digest } from "./comparables-format";
-import { config, createWrapperDataDir, detectUserDataDir, getBrowserPath } from "./config";
+import { config, selectBrowser } from "./config";
 import type { BrowserType } from "./config";
 import { logger } from "./logger";
 import { parseAnnonce } from "./markdown";
@@ -38,13 +38,7 @@ export async function runComparables(
     throw new Error(`cannot build a comparables query for "${slug}" — add a title/zipcode or pass --query`);
   }
 
-  if (opts.browser) {
-    config.browser.chromePath = getBrowserPath(opts.browser);
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(config.browser.chromePath));
-  } else if (opts.chromePath) {
-    config.browser.chromePath = opts.chromePath;
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(opts.chromePath));
-  }
+  selectBrowser({ browser: opts.browser, chromePath: opts.chromePath });
   if (opts.debuggingPort) config.browser.debuggingPort = opts.debuggingPort;
   if (opts.pageTimeout) config.browser.timeout = opts.pageTimeout;
   config.scraping.maxPages = opts.maxPages && opts.maxPages > 0 ? opts.maxPages : 1;

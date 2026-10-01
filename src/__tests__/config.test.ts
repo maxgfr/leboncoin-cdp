@@ -1,5 +1,14 @@
 import { expect, test, describe, beforeAll, afterAll } from "vitest";
-import { getBrowserAppName, detectUserDataDir, createWrapperDataDir, getBrowserPath, resetScraperProfile } from "../config";
+import {
+  browserKey,
+  getBrowserAppName,
+  detectUserDataDir,
+  createWrapperDataDir,
+  getBrowserPath,
+  loadBrowserChoice,
+  resetScraperProfile,
+  saveBrowserChoice,
+} from "../config";
 import type { BrowserType } from "../config";
 import os from "os";
 import path from "path";
@@ -144,5 +153,41 @@ describe("getBrowserPath", () => {
       expect(error.message).toContain("not found at");
       expect(error.message).toContain("Chromium");
     }
+  });
+});
+
+describe("per-browser profiles (Brave support)", () => {
+  test("Chrome keeps `profile`; Brave gets its own `profile-brave` (keychain-encrypted cookies are per browser)", () => {
+    expect(browserKey("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser")).toBe("brave");
+    expect(browserKey("/usr/bin/google-chrome")).toBe("chrome");
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), "lbc-real-"));
+    fs.writeFileSync(path.join(real, "Local State"), "{}");
+    const brave = createWrapperDataDir(real, "brave");
+    expect(path.basename(brave)).toBe("profile-brave");
+    fs.rmSync(brave, { recursive: true });
+    fs.rmSync(real, { recursive: true });
+  });
+
+  test("the profile copy skips caches and lock files but keeps cookies", () => {
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), "lbc-real-"));
+    fs.mkdirSync(path.join(real, "Default", "Cache"), { recursive: true });
+    fs.mkdirSync(path.join(real, "Default", "Code Cache"), { recursive: true });
+    fs.writeFileSync(path.join(real, "Default", "Cache", "blob"), "x");
+    fs.writeFileSync(path.join(real, "Default", "Cookies"), "c");
+    fs.writeFileSync(path.join(real, "SingletonLock"), "");
+    fs.writeFileSync(path.join(real, "Local State"), "{}");
+    const wrapper = createWrapperDataDir(real, "chromium");
+    expect(fs.existsSync(path.join(wrapper, "Default", "Cookies"))).toBe(true);
+    expect(fs.existsSync(path.join(wrapper, "Default", "Cache"))).toBe(false);
+    expect(fs.existsSync(path.join(wrapper, "Default", "Code Cache"))).toBe(false);
+    expect(fs.existsSync(path.join(wrapper, "SingletonLock"))).toBe(false);
+    fs.rmSync(wrapper, { recursive: true });
+    fs.rmSync(real, { recursive: true });
+  });
+
+  test("the browser choice is remembered for the next runs", () => {
+    expect(loadBrowserChoice()).toBeNull();
+    saveBrowserChoice("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser");
+    expect(loadBrowserChoice()).toContain("Brave");
   });
 });

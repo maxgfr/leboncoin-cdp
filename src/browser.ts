@@ -7,7 +7,7 @@
  * a manually launched instance.
  */
 import { spawn, execSync } from "child_process";
-import { config, getBrowserAppName, saveCdpPort, loadCdpPort, clearCdpPort } from "./config";
+import { config, ensureUserDataDir, getBrowserAppName, saveCdpPort, loadCdpPort, clearCdpPort } from "./config";
 import { logger } from "./logger";
 import { delay } from "./utils";
 import { CDPClient } from "./cdp";
@@ -188,7 +188,8 @@ export async function connectAndNavigate(targetUrl: string): Promise<CDPClient> 
 
   logger.info(`Launching a dedicated scraper ${browserName} on port ${newPort}`);
   logger.info(`  Binary  : ${config.browser.chromePath}`);
-  logger.info(`  Profile : ${config.browser.userDataDir}`);
+  const userDataDir = ensureUserDataDir();
+  logger.info(`  Profile : ${userDataDir}`);
   if (isBrowserRunning()) {
     logger.info(`  (your existing ${browserName} will NOT be affected)`);
   }
@@ -197,7 +198,7 @@ export async function connectAndNavigate(targetUrl: string): Promise<CDPClient> 
     config.browser.chromePath,
     [
       `--remote-debugging-port=${newPort}`,
-      `--user-data-dir=${config.browser.userDataDir}`,
+      `--user-data-dir=${userDataDir}`,
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-session-crashed-bubble",
