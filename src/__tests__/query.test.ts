@@ -70,6 +70,18 @@ describe("normalizeSearchInput", () => {
   });
 });
 
+describe("normalizeSearchInput — bare keywords", () => {
+  it("turns a bare keyword into a text search (not `macbook=`, which returns the whole site)", () => {
+    const r = normalizeSearchInput("macbook", BASE);
+    expect(r.params.get("text")).toBe("macbook");
+    expect(r.navigateUrl).toBe(`${BASE}/recherche?text=macbook`);
+  });
+
+  it("keeps multi-word keywords together", () => {
+    expect(normalizeSearchInput("  macbook air m1 ", BASE).params.get("text")).toBe("macbook air m1");
+  });
+});
+
 describe("buildQueryString", () => {
   it("injects the category id only when absent", () => {
     expect(buildQueryString(new URLSearchParams("a=1"), "9")).toContain("category=9");

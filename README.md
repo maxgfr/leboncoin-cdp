@@ -12,8 +12,9 @@ npx skills add maxgfr/leboncoin-cdp
 Markdown is the source of truth. You (or your agent) write and enrich the description —
 grounded by comparable live listings — then the skill drives the « déposer une annonce »
 form on your real, logged-in browser to publish. **Semi-automatic and safe by default:** it
-fills the form and uploads the photos, but you review on screen and click
-« Déposer mon annonce » yourself.
+walks the deposit wizard, fills every step by field meaning and uploads the photos, then stops
+on the final review: you check it on screen and submit it yourself. Logged in with Brave?
+`login --browser brave` once. When Leboncoin changes something, `doctor` says what broke.
 
 ## Why CDP (and why it isn't detected)
 
@@ -26,14 +27,17 @@ copy of your profile (`~/.lbc-scraper`) and **never touches your running browser
 ## The skill workflow
 
 ```bash
-node scripts/leboncoin.mjs new macbook-air-m1 --title "MacBook Air M1" --category "Informatique"
+node scripts/leboncoin.mjs login --browser brave             # once: use (and remember) your Brave session
+node scripts/leboncoin.mjs new macbook-air-m1 --title "MacBook Air M1" --category "Ordinateurs"
 # → drop photos into annonces/macbook-air-m1/photos/, write the description in annonce.md
 
 node scripts/leboncoin.mjs comparables macbook-air-m1      # scrape similar ads → comparables.md
 # → set price / category / attributes from the comparables
 
 node scripts/leboncoin.mjs validate macbook-air-m1         # structural gate (exit≠0 if invalid)
-node scripts/leboncoin.mjs publish  macbook-air-m1         # fills the form + uploads photos, you click publish
+node scripts/leboncoin.mjs publish  macbook-air-m1 --diagnostic   # walk the wizard, never submits
+node scripts/leboncoin.mjs publish  macbook-air-m1         # same, then you submit the final step
+node scripts/leboncoin.mjs doctor                          # read-only health check when something breaks
 node scripts/leboncoin.mjs list                            # see local annonces + their state
 node scripts/leboncoin.mjs delete  macbook-air-m1          # remove a published ad
 ```

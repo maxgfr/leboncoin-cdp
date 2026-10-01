@@ -32,10 +32,11 @@ export async function readFormError(cdp: CDPClient): Promise<string | null> {
   return cdp
     .evaluate<string | null>(
       `(() => {
-        const els = Array.from(document.querySelectorAll('[role="alert"], [class*="error" i], [data-qa-id*="error" i]'));
+        const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+        const els = Array.from(document.querySelectorAll('[role="alert"], [aria-live="assertive"], [class*="error" i], [data-qa-id*="error" i], [id$="-error"], [id*="error-message" i]'));
         for (const el of els) {
           const t = (el.innerText || el.textContent || '').trim();
-          if (t && el.offsetParent !== null && t.length > 0 && t.length < 200) return t;
+          if (t && visible(el) && t.length < 200) return t;
         }
         return null;
       })()`,
@@ -44,22 +45,36 @@ export async function readFormError(cdp: CDPClient): Promise<string | null> {
     .catch(() => null);
 }
 
-/** True/false if the publish button resolves, null if it isn't on the page yet. */
+/**
+ * True/false if the submit control resolves, null if it isn't on the page yet.
+ * On the live final step the submit control is the wizard's « Continuer », so the
+ * explicit publish labels AND the next-step labels are both accepted (exact or
+ * word-prefix match only, visible controls only).
+ */
 async function isSubmitEnabled(cdp: CDPClient): Promise<boolean | null> {
-  const texts = JSON.stringify(DEPOSIT.publishButton.textCandidates.map((t) => t.toLowerCase()));
-  const css = JSON.stringify(DEPOSIT.publishButton.css);
+  const norm = (t: string) =>
+    t
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  const texts = JSON.stringify([...DEPOSIT.publishButton.textCandidates, ...DEPOSIT.nextButton.textCandidates].map(norm));
+  const css = JSON.stringify([...DEPOSIT.publishButton.css, ...DEPOSIT.nextButton.css]);
   return cdp
     .evaluate<boolean | null>(
       `(() => {
         /* submit-enabled probe */
         const texts = ${texts}, css = ${css};
         let btn = null;
-        const all = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
-        for (const el of all) {
-          const t = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
-          if (t && texts.some((w) => t === w || t.includes(w))) { btn = el; break; }
+        const n = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
+        const all = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]')).filter(visible);
+        for (const w of texts) {
+          btn = all.find((el) => { const t = n(el.innerText || el.textContent || el.value); return t === w || t.startsWith(w + ' '); }) || null;
+          if (btn) break;
         }
-        if (!btn) { for (const sel of css) { const el = document.querySelector(sel); if (el) { btn = el; break; } } }
+        if (!btn) { for (const sel of css) { const el = Array.from(document.querySelectorAll(sel)).find(visible); if (el) { btn = el; break; } } }
         if (!btn) return null;
         return !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
       })()`,
@@ -94,6 +109,17 @@ export async function buildReadiness(cdp: CDPClient, report: FillReport, href: s
 
   const err = await readFormError(cdp);
   checks.push({ name: "no-form-error", ok: !err, detail: err ? `form error: ${err}` : "no visible error" });
+
+  if (report.wizard) {
+    const final = report.wizard.stop === "final";
+    checks.push({
+      name: "final-step",
+      ok: final,
+      detail: final
+        ? `reached the final review after ${report.wizard.steps} step(s)`
+        : `wizard stopped early: ${report.wizard.stop}${report.wizard.error ? ` (${report.wizard.error})` : ""}`,
+    });
+  }
 
   const blockers = checks.filter((c) => !c.ok).map((c) => `${c.name} (${c.detail})`);
   return { ready: blockers.length === 0, checks, blockers };

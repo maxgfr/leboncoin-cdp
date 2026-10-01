@@ -1,7 +1,10 @@
 /**
  * The CDP delete engine. Navigates to the published ad (using its stored
- * leboncoin_id/url), clicks the delete control + confirmation, and marks the
- * annonce deleted locally. Confirms on the terminal unless `--yes`.
+ * leboncoin_id/url), clicks the delete control (ad page, « … » menu, or the ad's
+ * card on « mes annonces ») + confirmation, and marks the annonce deleted locally
+ * ONLY with proof: a deletion message, or the ad page reloaded and gone. Without
+ * proof the result is `unconfirmed` and annonce.md is left untouched.
+ * Confirms on the terminal unless `--yes`.
  *
  * Like publish, the connection and the y/N prompt are injectable so tests run
  * with a fake CDP client, no browser, no stdin.
@@ -11,11 +14,11 @@ import readline from "node:readline";
 import { ensureLoggedIn } from "./auth";
 import type { CDPClient } from "./cdp";
 import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
-import { clickButton, pageHasText } from "./deposit-form";
 import { logger } from "./logger";
+import { clickManageControl, confirmIfAsked, proveOutcome } from "./manage-actions";
 import { parseAnnonce, writeAnnonce } from "./markdown";
+import { captureScreenshot } from "./screenshot";
 import { MANAGE } from "./selectors";
-import { delay } from "./utils";
 
 export interface DeleteOptions {
   yes?: boolean;
@@ -28,7 +31,11 @@ export interface DeleteDeps {
 
 export interface DeleteResult {
   ok: boolean;
-  reason?: "aborted" | "not-published" | "login-required" | "control-not-found";
+  /** `unconfirmed`: clicked, but no proof the ad is gone — local status unchanged. */
+  reason?: "aborted" | "not-published" | "login-required" | "control-not-found" | "unconfirmed";
+  /** How the deletion was proven (confirmation-text / ad-page-gone). */
+  proof?: string;
+  previewPng?: string;
 }
 
 async function defaultConnect(url: string): Promise<CDPClient> {
@@ -76,25 +83,28 @@ export async function runDelete(annoncesDir: string, slug: string, opts: DeleteO
       return { ok: false, reason: "login-required" };
     }
 
-    const clickedDelete = await clickButton(cdp, MANAGE.deleteButton);
-    if (!clickedDelete) {
+    if (!(await clickManageControl(cdp, a.leboncoin_id, MANAGE.deleteButton))) {
       // Don't mark the ad deleted locally when we never even found the control —
       // that would desync local state from a still-live ad.
-      logger.error("Delete control not found on the ad page — open mes-annonces and delete it manually.");
+      logger.error(`Delete control not found — open « mes annonces » (${MANAGE.listingUrl}) and delete it manually.`);
       return { ok: false, reason: "control-not-found" };
     }
-    await delay(1_500);
-    await clickButton(cdp, MANAGE.confirmButton);
-    await delay(2_500);
+    await confirmIfAsked(cdp, MANAGE.confirmButton);
 
-    const confirmed = await pageHasText(cdp, MANAGE.deletedMarkers);
-    if (confirmed) logger.success(`Leboncoin confirmed the deletion of "${slug}".`);
+    // Proof first: a deletion message, else re-open the ad page and require it to be gone.
+    const proof = await proveOutcome(cdp, { markers: MANAGE.deletedMarkers, reloadUrl: target, goneMarkers: MANAGE.goneMarkers });
+    if (!proof) {
+      const png = path.join(dir, "delete-unconfirmed.png");
+      const previewPng = (await captureScreenshot(cdp, png)) ? png : undefined;
+      logger.warn(`Clicked delete, but Leboncoin showed no proof the ad is gone — "${slug}" stays "published" locally. Check ${previewPng ?? "the browser"}.`);
+      return { ok: false, reason: "unconfirmed", previewPng };
+    }
 
     a.status = "deleted";
     a.deleted_at = new Date().toISOString();
     writeAnnonce(dir, a);
-    logger.success(`Marked "${slug}" as deleted locally.`);
-    return { ok: true };
+    logger.success(`Leboncoin confirmed the deletion of "${slug}" (${proof}) — marked deleted locally.`);
+    return { ok: true, proof };
   } finally {
     cdp.disconnect();
   }

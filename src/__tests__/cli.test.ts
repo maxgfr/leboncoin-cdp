@@ -78,6 +78,16 @@ describe("parseArgs", () => {
     }
   });
 
+  it("recognizes doctor and the browser selection flags on any live command", () => {
+    const doc = run(["doctor", "macbook", "--query", "iphone"]);
+    expect(doc.result?.command).toBe("doctor");
+    expect(doc.result?.positional).toEqual(["macbook"]);
+    const login = run(["login", "--browser", "brave", "--reset-profile"]);
+    expect(login.result?.values.browser).toBe("brave");
+    expect(login.result?.bools.has("reset-profile")).toBe(true);
+    expect(run(["publish", "x", "--chrome-path", "/bin/b"]).result?.values["chrome-path"]).toBe("/bin/b");
+  });
+
   it("prints help (exit 0) for -h and version (exit 0) for -v", () => {
     expect(run(["-h"]).exitCode).toBe(0);
     expect(run(["-v"]).exitCode).toBe(0);

@@ -5,13 +5,14 @@
  * effects — only happens when a CDP command actually runs).
  */
 import fs from "node:fs";
-import { connectAndNavigate, waitForPageReady } from "./browser";
+import { connectAndNavigate } from "./browser";
+import { readPageSnapshot } from "./page-payload";
 import { scrapeAllSearchPages, scrapeAdDetails } from "./scraper";
 import { formatDateWithTimestamp } from "./utils";
 import { normalizeSearchInput } from "./query";
 import type { Ad } from "./types";
 import { logger } from "./logger";
-import { config, detectUserDataDir, createWrapperDataDir, getBrowserPath, resetScraperProfile } from "./config";
+import { config, selectBrowser } from "./config";
 import type { BrowserType } from "./config";
 
 export interface ScrapeOptions {
@@ -43,19 +44,9 @@ async function loadConfigFile(configPath: string): Promise<{ query: string; outp
 }
 
 export async function runScrape(args: ScrapeOptions): Promise<void> {
-  // --reset-profile: wipe the scraper profile so it gets re-created
-  if (args.resetProfile) {
-    resetScraperProfile();
-  }
-
-  // Browser selection: --browser > --chrome-path > env > auto-detect
-  if (args.browser) {
-    config.browser.chromePath = getBrowserPath(args.browser);
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(config.browser.chromePath));
-  } else if (args.chromePath) {
-    config.browser.chromePath = args.chromePath;
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(args.chromePath));
-  }
+  // Browser selection: --browser > --chrome-path > env > remembered choice > auto-detect.
+  // --reset-profile wipes that browser's scraper profile so it gets re-copied.
+  selectBrowser({ browser: args.browser, chromePath: args.chromePath, resetProfile: args.resetProfile });
   if (args.debuggingPort) config.browser.debuggingPort = args.debuggingPort;
   if (args.pageTimeout) config.browser.timeout = args.pageTimeout;
   if (args.maxRetries) config.scraping.maxRetries = args.maxRetries;
@@ -93,7 +84,13 @@ export async function runScrape(args: ScrapeOptions): Promise<void> {
       fs.mkdirSync(config.output.directory, { recursive: true });
       const outputPath = `${config.output.directory}/${outputName}.json`;
       fs.writeFileSync(outputPath, JSON.stringify(searchResult.ads, null, 2));
-      logger.success(`Saved ${searchResult.ads.length} results to ${outputPath}`);
+      logger.success(`Saved ${searchResult.ads.length} results to ${outputPath} (source: ${searchResult.source})`);
+      if (config.output.saveRawJson) {
+        // The untouched first-page payload: what to diff when the site changes shape.
+        const rawPath = `${config.output.directory}/raw_${outputName}.json`;
+        fs.writeFileSync(rawPath, JSON.stringify(searchResult.rawFirstPage, null, 2));
+        logger.info(`Saved the raw first-page payload to ${rawPath}`);
+      }
     }
 
     if (args.withDetails || args.detailsOnly) {
@@ -105,43 +102,13 @@ export async function runScrape(args: ScrapeOptions): Promise<void> {
       }
 
       const results: Ad[] = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
-      const urls = results.map((ad) => ad.url);
+      const urls = results.map((ad) => ad.url).filter(Boolean);
 
       if (urls.length > 0) {
-        // If we don't have buildId (--details-only), extract it from the current page
-        if (!buildId) {
-          const nextData = await cdp
-            .evaluate<{ buildId: string } | null>(
-              `(() => {
-              const el = document.getElementById('__NEXT_DATA__');
-              return el ? JSON.parse(el.textContent).buildId : null;
-            })()`,
-            )
-            .catch(() => null);
-          buildId = nextData?.buildId || "";
-
-          if (!buildId) {
-            logger.warn("Could not get buildId — navigating to get one…");
-            await cdp.send("Page.enable");
-            await cdp.send("Page.navigate", { url: urls[0] });
-            await waitForPageReady(cdp);
-            await new Promise((r) => setTimeout(r, 2000));
-            const nd = await cdp
-              .evaluate<{ buildId: string } | null>(
-                `(() => {
-                const el = document.getElementById('__NEXT_DATA__');
-                return el ? { buildId: JSON.parse(el.textContent).buildId } : null;
-              })()`,
-              )
-              .catch(() => null);
-            buildId = nd?.buildId || "";
-          }
-        }
-
-        if (!buildId) {
-          logger.error("Cannot determine buildId — ad detail scraping requires it.");
-          process.exit(1);
-        }
+        // --details-only: take the buildId from the current page when it has one.
+        // Without it, details are read by visiting each ad page (slower, same data).
+        if (!buildId) buildId = (await readPageSnapshot(cdp)).buildId ?? "";
+        if (!buildId) logger.warn("No Next.js buildId on the page — reading each ad page directly.");
 
         const details = await scrapeAdDetails(cdp, urls, buildId);
         const detailsPath = `${config.output.directory}/details_${outputName}.json`;

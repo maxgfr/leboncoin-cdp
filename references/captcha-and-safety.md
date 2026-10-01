@@ -2,12 +2,18 @@
 
 ## Semi-auto vs `--yes`
 
-- **Default (semi-auto):** `publish` fills every field and uploads the photos via CDP,
-  then *waits*. The user reviews the prefilled form in the real browser and clicks
-  « Déposer mon annonce » themselves. That human click is also what clears DataDome at
-  submit. This is the safe default — use it unless the user explicitly opts into full-auto.
-- **`--yes` (full-auto):** the engine clicks publish itself. It is **not truly headless**:
-  if a DataDome challenge appears at submit, it still waits for a human to solve it.
+- **Default (semi-auto):** `publish` walks the deposit wizard via CDP (fills each step,
+  uploads the photos, « Continuer » between steps) and *stops on the final review*, then
+  waits. The user reviews it in the real browser and submits it themselves (on that step the
+  button reads « Continuer »). That human click is also what clears DataDome at submit. This
+  is the safe default — use it unless the user explicitly opts into full-auto.
+- **The final step is never clicked by accident.** It is recognised by its content (« avant de
+  publier », « je confirme l'exactitude »), by an explicit publish button, and structurally
+  (title + description + price/address on one step); `--diagnostic`, `doctor` and the default
+  mode never submit.
+- **`--yes` (full-auto):** the engine submits itself, and only from that recognised final
+  step. It is **not truly headless**: if a DataDome challenge appears at submit, it still
+  waits for a human to solve it.
 - `delete` always asks a `y/N` confirmation unless `--yes`.
 
 Never pass `--yes` on the user's behalf without an explicit request.

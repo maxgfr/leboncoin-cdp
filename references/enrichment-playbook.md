@@ -15,7 +15,7 @@ judgment in `comparables.md` whenever possible.
 
 ## 2. Infer the category + attributes
 
-- Pick the Leboncoin **category label** that matches the item (e.g. `Informatique`,
+- Pick the Leboncoin **category label** that matches the item (e.g. `Ordinateurs`,
   `Téléphones & Objets connectés`, `Vélos`, `Voitures`).
 - Fill `attributes` with the category-specific fields that comparable ads expose
   (`brand`, `model`, `storage`, `year`, `mileage`, `size`…). Use the **same keys** the
@@ -46,19 +46,21 @@ exact model/year, condition, price, or a **category-specific** one (mileage, sur
 **ask the user** and write the answer into `annonce.md`. Never invent it and never publish a blank
 field. Three signals tell you what's missing:
 - `validate <slug>` issues (hard structural requirements),
-- `inspect <slug>` → `form-map.json`: every live field with `required` + `requiredSource` + select
-  `options` — the authoritative list of what THIS category's form demands (read it before filling),
-- `publish <slug> --diagnostic` → `missing[]` (annonce-empty + live-required fields, folded
-  together) and `push-readiness.json` (`ready` / `blockers[]`). In normal `publish`, the CLI also
-  prints `ask the user about → …`. Live required fields are authoritative over the hardcoded set.
+- `publish <slug> --diagnostic` → `form-map.json` (`{ steps }`): every live control of every
+  wizard step with `required` + `requiredSource` + `options` — the authoritative list of what THIS
+  category's form demands — plus `missing[]` (blocking) and `push-readiness.json`. It never
+  submits. The CLI prints `ask the user about → …` and `note → …`. An attribute can be keyed by
+  the **label** shown there (`Kilométrage: "120000"`); a value must be one of the listed options.
+- `inspect <slug>` shows the first step only (the rest appears once the title is typed).
 
 ## 6. Then validate → publish (verify with the screenshot)
 
 - `validate <slug>` and fix each issue (warnings are advisory).
-- `publish <slug>` fills the form and writes `publish-preview.png` (Read it), `form-map.json`
-  (Read it for required/optional + options), and `push-readiness.json` (**Read it first** —
-  `ready` / `blockers[]`). For a deeper look (which selector matched + page HTML + element crops),
-  use `publish <slug> --diagnostic --shots`; after a real publish, `shots/30-confirmation.png` is
-  the proof the ad went live.
-- In semi-auto (default) tell the user to **review the prefilled form and click
-  « Déposer mon annonce »**. Only use `--yes` if they explicitly asked for full-auto.
+- `publish <slug>` walks the wizard, stops on the final review, and writes `publish-preview.png`
+  (Read it), `form-map.json` (every step, required/optional + options + what was filled), and
+  `push-readiness.json` (**Read it first** — `ready` / `blockers[]`). For a deeper look (one
+  screenshot per step + page HTML + element crops), use `publish <slug> --diagnostic --shots`;
+  after a real publish, `shots/30-confirmation.png` is the proof the ad went live.
+- In semi-auto (default) tell the user to **review the final step in the browser and submit it
+  themselves** (the button reads « Continuer » there). Only use `--yes` if they explicitly asked
+  for full-auto.

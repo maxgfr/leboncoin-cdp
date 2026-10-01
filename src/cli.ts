@@ -12,7 +12,8 @@ them on your own account via the Chrome DevTools Protocol. Markdown is the sourc
 of truth; you (or the agent) write the copy, the engine just drives the browser.
 
 Usage:
-  leboncoin login [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
+  leboncoin login [--browser brave|chrome|chromium|opera] [--reset-profile] [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
+  leboncoin doctor [<slug>] [--query "<search>"] [--out <path>]
   leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
                        [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
@@ -30,33 +31,54 @@ Commands:
                 redirect), and save an auth-state screenshot. --cookies-file attaches an exported
                 cookies.json (best-effort escape hatch; always re-verified). If logged out, it
                 waits while you log in once in the browser. Run this before publish/delete.
+                --browser brave uses (and remembers) your Brave session: its profile is copied
+                once to ~/.lbc-scraper/profile-brave. --reset-profile re-copies it (after you
+                logged in again in the real browser).
+  doctor        READ-ONLY health check against the live site: login, a search page, an ad page,
+                and a walk of the deposit wizard that stops on the final review WITHOUT
+                submitting. Reports how each field was found (selector / semantic / unresolved)
+                in ~/.lbc-scraper/doctor-report.json. Run it first when something breaks.
+                With <slug>, the walk uses that annonce and its photos.
   new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
-  inspect       READ-ONLY: open the live deposit form and write form-map.json (every field +
-                required/optional + select options) + initial.png/html. Submits nothing. Read it
-                to discover category-specific required fields, then fill annonce.md and publish.
-  publish       Open the deposit form, fill it + upload photos via CDP, save a preview
-                screenshot (read it to verify). Semi-auto by default: review and click
-                « Déposer mon annonce » yourself. --diagnostic = fill + screenshot + HTML +
-                field report, no submit. --strict = refuse to submit while fields are missing.
-                --yes = auto-submit. --shots = capture checkpoint + element + post-submit screenshots
-                into shots/. --no-screenshot to skip the capture. Writes push-readiness.json.
-  delete        Remove a published ad (confirms unless --yes).
+  inspect       READ-ONLY: open the live deposit form and write form-map.json ({ steps: [...] }:
+                every field of step 1 + required/optional + options) + initial.png/html. Types
+                and submits nothing. Later steps appear once step 1 is filled: use
+                publish --diagnostic to see them all.
+  publish       Drive the deposit wizard step by step: fill each step by field MEANING (label /
+                name, not fixed selectors), upload photos, click « Continuer », and stop ON the
+                final review without submitting. Semi-auto by default: review it and submit
+                yourself. --diagnostic = walk + screenshot + HTML + field report, no submit.
+                --strict = refuse to submit while fields are missing. --yes = auto-submit, and
+                only from the recognised final step. --shots = one screenshot per step + element
+                crops + post-submit into shots/. Writes form-map.json (every step) and
+                push-readiness.json.
+  delete        Remove a published ad (confirms unless --yes). Marked deleted locally only when
+                Leboncoin proves it (message, or the ad page is gone) — else "unconfirmed".
   edit          Re-open the published ad's modify form, re-fill it from annonce.md, screenshot;
                 review and save « Enregistrer » yourself (or --yes to submit).
   renew         Bump / "remettre en avant" a published ad (no status change).
   mark-sold     Mark a published/paused ad as sold (status → sold).
   deactivate    Pause a published ad without deleting it (status → paused).
   reactivate    Put a paused ad back online (status → published).
+                Controls are looked up on the ad page, in its « … » menu, then in its card on
+                « mes annonces »; the local status changes only with proof from the site.
   list/status   Show local annonces and their published state.
   scrape        The original read-only scraper (search results + ad details).
 
 Common options:
   --annonces-dir <dir>   Root of the local store            (default: ./annonces)
+  --browser <name>       chrome | brave | chromium | opera — remembered for next runs
+  --chrome-path <bin>    Explicit browser binary (remembered too)
+  --reset-profile        Re-copy the selected browser's real profile into ~/.lbc-scraper
   --json                 Machine-readable output
   -h, --help             Show this help
   -v, --version          Show version
+
+Site changes:
+  ~/.lbc-scraper/site.json (or $LBC_SITE_OVERRIDES) extends the selector tables without a
+  rebuild — see references/deposit-form-mapping.md. Start with: leboncoin doctor.
 
 Publish/delete safety:
   Semi-auto is the default — the engine never clicks the final publish for you unless
@@ -81,6 +103,7 @@ export const COMMANDS = new Set([
   "mark-sold",
   "deactivate",
   "reactivate",
+  "doctor",
 ]);
 
 const VALUE_FLAGS = new Set([
@@ -242,9 +265,33 @@ function requireSlug(p: Parsed): string {
   return slug as string;
 }
 
+/** Commands that drive the browser and pick it up from --browser / --chrome-path / --reset-profile. */
+const BROWSER_COMMANDS = new Set(["login", "auth", "inspect", "publish", "delete", "edit", "renew", "mark-sold", "deactivate", "reactivate", "doctor"]);
+
+/**
+ * Before any live command: apply ~/.lbc-scraper/site.json (site-drift overrides,
+ * no rebuild) and select the browser. scrape/comparables select theirs themselves.
+ */
+async function prepareSite(p: Parsed): Promise<void> {
+  if (!BROWSER_COMMANDS.has(p.command) && p.command !== "scrape" && p.command !== "comparables") return;
+  const { applySiteOverrides } = await import("./site-overrides");
+  applySiteOverrides();
+  if (!BROWSER_COMMANDS.has(p.command)) return;
+  if (p.values.browser || p.values["chrome-path"] || p.bools.has("reset-profile")) {
+    const { selectBrowser } = await import("./config");
+    selectBrowser({ browser: p.values.browser as BrowserType | undefined, chromePath: p.values["chrome-path"], resetProfile: p.bools.has("reset-profile") });
+  }
+  const port = intOf(p.values.port);
+  if (port) {
+    const { config } = await import("./config");
+    config.browser.debuggingPort = port;
+  }
+}
+
 async function main(): Promise<void> {
   const p = parseArgs(process.argv.slice(2));
   const json = p.bools.has("json");
+  await prepareSite(p);
 
   switch (p.command) {
     case "new": {
@@ -353,12 +400,21 @@ async function main(): Promise<void> {
         timeoutSubmitMs: intOf(p.values["timeout-submit"]),
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
-      else if (r.missing && r.missing.length) {
-        process.stderr.write(`leboncoin: ask the user about → ${r.missing.join(", ")}\n`);
+      else {
+        if (r.missing && r.missing.length) process.stderr.write(`leboncoin: ask the user about → ${r.missing.join(", ")}\n`);
+        for (const w of r.report?.warnings ?? []) process.stderr.write(`leboncoin: note → ${w}\n`);
       }
       if (!r.ok && ["login-required", "not-published", "incomplete", "form-error"].includes(r.reason ?? "")) {
         process.exit(2);
       }
+      return;
+    }
+
+    case "doctor": {
+      const { runDoctor } = await import("./doctor");
+      const r = await runDoctor({ slug: p.positional[0], annoncesDir: annoncesDirOf(p), query: p.values.query, out: p.values.out });
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      if (!r.ok) process.exit(2);
       return;
     }
 

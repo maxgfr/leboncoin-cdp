@@ -35,6 +35,14 @@ const sample: Annonce = {
 };
 
 describe("serializeAnnonce / parseAnnonce", () => {
+  it("round-trips attribute keys copied from form-map.json labels (accents, apostrophes, spaces)", () => {
+    const dir = join(scratch(), "labels");
+    mkdirSync(dir, { recursive: true });
+    const attributes = { brand: "Apple", "Taille d'écran": "12 à 14", Kilométrage: "120000" };
+    writeAnnonce(dir, { ...sample, attributes });
+    expect(parseAnnonce(dir).attributes).toEqual(attributes);
+  });
+
   it("round-trips a full annonce", () => {
     const dir = join(scratch(), sample.slug);
     mkdirSync(dir, { recursive: true });
