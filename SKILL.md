@@ -3,7 +3,7 @@ name: leboncoin
 description: Prepare and manage Leboncoin listings and research comparable ads through the logged-in browser. Use only when the user explicitly asks for leboncoin or a Leboncoin listing or ad-research task.
 license: MIT
 metadata:
-  version: 1.3.0
+  version: 1.4.0
   opencode/autoinvoke: 'true'
 ---
 

@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+# [1.4.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.3.0...v1.4.0) (2026-10-08)
+
+
+### Features
+
+* **skill:** let the agent invoke leboncoin on request ([0d62f45](https://github.com/maxgfr/leboncoin-cdp/commit/0d62f45e5fc06395c604287a5b11511cdb4bb974))
+
 # [1.3.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.2.3...v1.3.0) (2026-10-01)
 
 
