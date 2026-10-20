@@ -4,7 +4,6 @@ description: Prepare and manage Leboncoin listings and research comparable ads t
 license: MIT
 metadata:
   version: 1.4.0
-  opencode/autoinvoke: 'true'
 ---
 
 # leboncoin — manage your listings, publish/delete via CDP
