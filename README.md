@@ -134,6 +134,5 @@ Making it explicit-only, so that only its name runs it, is one setting per host,
 | Host | Shipped, on request | Explicit-only |
 | --- | --- | --- |
 | Claude Code, OpenCode | no `disable-model-invocation` in `SKILL.md` | add `disable-model-invocation: true` |
-| Codex | `allow_implicit_invocation: true` under `policy:` in `agents/openai.yaml` | set it to `false` |
 
 Claude Code can do it without touching the file: `"skillOverrides": { "leboncoin": "user-invocable-only" }` in `settings.json` leaves `/leboncoin` working while hiding the skill from the model. Updating or reinstalling restores the shipped default, so reapply the change afterwards.

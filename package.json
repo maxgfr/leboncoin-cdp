@@ -22,8 +22,7 @@
     "scripts",
     "references",
     "assets",
-    "src",
-    "agents"
+    "src"
   ],
   "engines": {
     "node": ">=18"
