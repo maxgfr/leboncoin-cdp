@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+# [1.5.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.4.0...v1.5.0) (2026-11-25)
+
+
+### Features
+
+* **computer-use:** recommend dev-browser attached to the scraper window ([61f9fbe](https://github.com/maxgfr/leboncoin-cdp/commit/61f9fbe4563e41cfc65b7ae8b892f8299060cff6))
+* isolated scraper profile by default and a computer-use mode ([8e25485](https://github.com/maxgfr/leboncoin-cdp/commit/8e25485941dcd655205246d07c31d3b9403b23dd))
+
 # [1.4.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.3.0...v1.4.0) (2026-10-08)
 
 

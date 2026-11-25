@@ -7995,7 +7995,7 @@ function runList(annoncesDir, filterStatus) {
 init_validate();
 
 // src/types.ts
-var VERSION = "1.4.0";
+var VERSION = "1.5.0";
 
 // src/cli.ts
 var HELP = `leboncoin v${VERSION}
