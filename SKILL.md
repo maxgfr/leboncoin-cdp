@@ -64,15 +64,29 @@ Common flags: `--annonces-dir <dir>` (default `./annonces`), `--browser <chrome|
 6. **Act** — the same loop for every account action (`<a>` = `publish` by default, or `edit`,
    `delete`, `renew`, `mark-sold`, `deactivate`, `reactivate`):
    1. `cu-sheet <slug> --action <a>` → **Read** `annonces/<slug>/computer-use.md`.
-   2. `open <slug> --real --action <a>` → the start page opens in the user's own browser.
+   2. `open <slug> --real --action <a>` → the start page opens in the user's own browser
+      (optional with Claude in Chrome, which navigates its own tab).
    3. Perform it by computer use, following the sheet in order: screenshot before each step;
       the human solves captchas and logins; stop at the sheet's **stop rule** for the
       final/irreversible click (the user's explicit consent, or the user clicks).
    4. With the sheet's proof of success on screen, run the `record` command the sheet prints.
 
-   Publish details: fields are found by visible label; photos go through the OS file dialog
-   (`Cmd+Shift+G` → paste the photos folder → `Cmd+A` → « Ouvrir »; Linux `Ctrl+L`); stop on
-   the final review. If `annonce.md` has no `leboncoin_url` for a later action, the sheet says
+   **Driver order** (the sheet's "How to drive"):
+   1. **Claude in Chrome**, if its `mcp__claude-in-chrome__*` tools are in the session (it runs
+      in Chrome and Brave, in the user's logged-in profile): `tabs_context_mcp` →
+      `tabs_create_mcp` (your own new tab; close it at the end) → `navigate`; look with
+      `read_page` (`filter: "interactive"`) or `find` → act by ref (`form_input` for text,
+      `computer` to click) → verify. Photos: `file_upload` on the file input's ref with the
+      sheet's absolute paths (never click the input; needs the photos folder shared with the
+      session, ≤ 10 MB per call), else the file-dialog recipe. Screenshot before each
+      irreversible step. Never trigger a native alert/confirm (it freezes the extension): if one
+      shows, ask the user to dismiss it.
+   2. **Desktop computer use** (screenshots, clicks) on the window `open --real` opened.
+   3. dev-browser — only for the advanced CDP scraper window (below).
+
+   Publish details: fields are found by visible label; with desktop computer use, photos go
+   through the OS file dialog (`Cmd+Shift+G` → paste the photos folder → `Cmd+A` → « Ouvrir »;
+   Linux `Ctrl+L`); stop on the final review. If `annonce.md` has no `leboncoin_url` for a later action, the sheet says
    to find the ad in « Mes annonces » by title and price. Playbook: `references/computer-use.md`.
 
 ### Advanced: CDP engine (needs the isolated scraper profile logged in once)

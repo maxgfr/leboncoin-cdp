@@ -128,7 +128,7 @@ describe("cu-sheet", () => {
     expect(md).toContain("dev-browser --connect 41234 -t 30");
   });
 
-  it("defaults to computer use in the user's own browser; dev-browser is the advanced CDP option", () => {
+  it("drives the user's own browser: Claude in Chrome first, then desktop computer use; dev-browser is the advanced CDP option", () => {
     const { root } = setup();
     const r = runCuSheet(root, "ex");
     const md = readFileSync(r.path as string, "utf8");
@@ -136,7 +136,23 @@ describe("cu-sheet", () => {
     expect(at).toBeGreaterThan(md.indexOf("## 1. Open the deposit form"));
     expect(at).toBeLessThan(md.indexOf("## 2. Values, in form order"));
     expect(md).toContain("`leboncoin open ex --real`");
-    expect(md.indexOf("Default: computer use")).toBeLessThan(md.indexOf("Advanced (CDP engine, scraper window only): dev-browser"));
+    const order = [
+      "1. Preferred: the Claude in Chrome extension",
+      "2. Else: desktop computer use",
+      "3. Advanced (CDP engine, scraper window only): dev-browser",
+    ].map((k) => md.indexOf(k));
+    expect(order.every((i) => i > at)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(md).toContain("`tabs_context_mcp`, then `tabs_create_mcp`: work in a new tab of your own");
+    expect(md).toContain("close it at the end");
+    expect(md).toContain('`read_page` with `filter: "interactive"`');
+    expect(md).toContain("`form_input` for text fields");
+    expect(md).toContain("`file_upload` on the file input's ref with the absolute paths below; never click the file input");
+    expect(md).toContain("photos folder shared with the session");
+    expect(md).toContain("otherwise use desktop computer use and the file-dialog recipe below");
+    expect(md).toContain("screenshot before every irreversible step");
+    expect(md).toContain("ask the user to dismiss it");
+    expect(md).toContain("Claude in Chrome: file_upload with these paths");
     expect(md).toContain("`dev-browser --connect <port>`");
     expect(md).toContain("Never let it launch its own browser");
     const s = r.sheet as CuSheet;
@@ -185,6 +201,16 @@ describe("cu-sheet --action", () => {
     expect(s.record).toBe(`leboncoin record ex --url ${URL} --status deleted`);
     const text = md(r);
     expect(text).toContain("`leboncoin open ex --real --action delete`");
+    // How to drive: Claude in Chrome first (own tab, refs), then desktop computer use; no photo upload.
+    const drive = text.indexOf("## How to drive");
+    expect(drive).toBeGreaterThan(-1);
+    expect(drive).toBeLessThan(text.indexOf("## Steps"));
+    expect(text.indexOf("1. Preferred: the Claude in Chrome extension")).toBeLessThan(text.indexOf("2. Else: desktop computer use"));
+    expect(text).toContain("on the window `leboncoin open ex --real --action delete` opened");
+    expect(text).toContain("with Claude in Chrome, navigate your own new tab there");
+    expect(text).toContain("Claude in Chrome: work in a new tab and close it at the end");
+    expect(text).not.toContain("file_upload");
+    expect(text).not.toContain("dev-browser");
     expect(text).toContain("« Supprimer l'annonce »");
     expect(text).toContain("« Plus d'actions »");
     expect(text).toContain("click « Confirmer la suppression »");

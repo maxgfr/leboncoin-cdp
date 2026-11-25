@@ -5958,6 +5958,7 @@ __export(computer_use_exports, {
   handoffPath: () => handoffPath,
   isCuAction: () => isCuAction,
   macAppName: () => macAppName,
+  ownBrowserDrivers: () => ownBrowserDrivers,
   parseAdUrl: () => parseAdUrl,
   parseCuAction: () => parseCuAction,
   readFormSteps: () => readFormSteps,
@@ -6146,16 +6147,16 @@ function renderCuSheet(s) {
   L.push("## 1. Open the deposit form", "");
   L.push(`- URL: ${s.deposit_url}`);
   L.push(`- Run \`leboncoin open ${s.slug} --real\`: it opens it in the user's own browser (already logged in) through the OS \u2014 no CDP, no scraper profile.`);
+  L.push("- With Claude in Chrome, that is optional: navigate your own new tab to the URL.");
   L.push(
     `- Advanced (CDP engine): \`leboncoin open ${s.slug} --deposit\` opens it in the isolated scraper window (logged in once with \`leboncoin login\`) and prints the CDP port.`
   );
   L.push("");
   const port = s.handoff?.cdp_port ?? "<port>";
   L.push("## How to drive", "");
-  L.push("1. Default: computer use (screenshots, clicks, typing) in the user's own browser window. Loop: screenshot \u2192 act \u2192 screenshot to verify.");
-  L.push("   For the photos, use the OS file dialog (recipe below).");
+  for (const line of ownBrowserDrivers(`leboncoin open ${s.slug} --real`, true)) L.push(line);
   L.push(
-    `2. Advanced (CDP engine, scraper window only): dev-browser attached to it \u2014 \`${devBrowserCommand(port)}\` (port printed by \`leboncoin open --deposit\`; optional: \`npm i -g dev-browser\`). Never let it launch its own browser.`
+    `3. Advanced (CDP engine, scraper window only): dev-browser attached to it \u2014 \`${devBrowserCommand(port)}\` (port printed by \`leboncoin open --deposit\`; optional: \`npm i -g dev-browser\`). Never let it launch its own browser.`
   );
   L.push('   Loop: look (`page.snapshot({ interactive: true })`) \u2192 act by ref (`page.click("ref/eN")`, `page.fill("ref/eN", \u2026)`) \u2192 verify (snapshot again).');
   L.push("   Work in the tab `leboncoin open` already opened (`browser.listPages()` \u2192 `browser.getPage(id)`); do not restart the deposit.");
@@ -6184,7 +6185,9 @@ function renderCuSheet(s) {
     L.push(`${n++}. [ ] Attributes (field label \u2192 value):`);
     for (const [k, val] of attrs) L.push(`   - ${k} \u2192 ${val}`);
   }
-  L.push(`${n++}. [ ] Photos (in this order \u2014 computer use: the file dialog below; dev-browser: uploadFile with these paths):`);
+  L.push(
+    `${n++}. [ ] Photos (in this order \u2014 Claude in Chrome: file_upload with these paths; desktop computer use: the file dialog below; dev-browser: uploadFile with these paths):`
+  );
   for (const p of v.photos) L.push(`   - ${p}`);
   L.push("");
   L.push("## Photos via the file dialog", "");
@@ -6208,6 +6211,23 @@ function renderCuSheet(s) {
   L.push(`\`leboncoin record ${s.slug} --url <ad url>\` (writes leboncoin_url / leboncoin_id / status back to annonce.md).`);
   L.push("");
   return L.join("\n");
+}
+function ownBrowserDrivers(openCmd, photos) {
+  const L = [
+    "1. Preferred: the Claude in Chrome extension, if its tools (`mcp__claude-in-chrome__*`) are available in this session. It drives the user's real, logged-in Chrome or Brave, so `open --real` is optional.",
+    "   - `tabs_context_mcp`, then `tabs_create_mcp`: work in a new tab of your own, `navigate` it to the start URL, and close it at the end.",
+    '   - Loop: look (`read_page` with `filter: "interactive"`, or `find` by label) \u2192 act by ref (`form_input` for text fields, `computer` to click) \u2192 verify (`read_page` again).',
+    "   - Take a `computer` screenshot before every irreversible step (the stop rule) and check it.",
+    "   - Never trigger a native alert/confirm dialog (it freezes the extension); if one appears, ask the user to dismiss it. Leboncoin's confirmations are in-page modals: fine."
+  ];
+  if (photos) {
+    L.push(
+      "   - For the photos, `file_upload` on the file input's ref with the absolute paths below; never click the file input. It needs the photos folder shared with the session (e.g. a connected folder), max 10 MB per call; otherwise use desktop computer use and the file-dialog recipe below."
+    );
+  }
+  L.push(`2. Else: desktop computer use (screenshots, clicks, typing) on the window \`${openCmd}\` opened. Loop: screenshot \u2192 act \u2192 screenshot to verify.`);
+  if (photos) L.push("   For the photos, use the OS file dialog (recipe below).");
+  return L;
 }
 function fileDialogRecipe(count) {
   const add = DEPOSIT.photoAddButton.textCandidates.map(quote).join(" / ");
@@ -6273,7 +6293,9 @@ function buildActionSheet(dir, a, action) {
       "annonce.md has no leboncoin_url: find the ad in \xAB Mes annonces \xBB by its title and price, open it, and copy its URL from the address bar for the `record` command."
     );
   }
-  const steps = [`Run \`leboncoin open ${a.slug} --real --action ${action}\`: it opens ${start} in the user's own browser. Screenshot it.`];
+  const steps = [
+    `Open ${start}: with Claude in Chrome, navigate your own new tab there; else run \`leboncoin open ${a.slug} --real --action ${action}\` (the user's own browser). Screenshot it.`
+  ];
   steps.push("If a login page or a \xAB V\xE9rification \xBB captcha shows: stop and ask the user to handle it, then screenshot again.");
   if (start === MANAGE.listingUrl) steps.push(`In \xAB Mes annonces \xBB (${MANAGE.listingUrl}), find the ad's card: ${who}.`);
   else steps.push(`The page is the ad itself: check it is ${who}. If it is gone, find its card in \xAB Mes annonces \xBB (${MANAGE.listingUrl}).`);
@@ -6311,7 +6333,7 @@ function buildActionSheet(dir, a, action) {
 function renderActionSheet(s) {
   const L = [`# Computer-use playbook \u2014 ${s.action} \u2014 ${s.slug}`, ""];
   L.push(`Generated by \`leboncoin cu-sheet ${s.slug} --action ${s.action}\` from annonce.md. ${s.summary}`);
-  L.push("Done by computer use (screenshots, clicks, typing) in the user's own, already logged-in browser.", "");
+  L.push("Done by computer use in the user's own, already logged-in browser.", "");
   L.push("## The ad", "");
   L.push(`- Title: ${s.ad.title}`, `- Price: ${s.ad.price} \u20AC`, `- Local status: ${s.ad.status}`);
   L.push(`- leboncoin_id: ${s.ad.leboncoin_id ?? "(unknown)"}`, `- leboncoin_url: ${s.ad.leboncoin_url ?? "(unknown: find it in \xAB Mes annonces \xBB)"}`);
@@ -6321,6 +6343,9 @@ function renderActionSheet(s) {
     for (const n of s.notes) L.push(`- ${n}`);
     L.push("");
   }
+  L.push("## How to drive", "");
+  for (const line of ownBrowserDrivers(`leboncoin open ${s.slug} --real --action ${s.action}`, false)) L.push(line);
+  L.push("");
   L.push("## Steps", "");
   s.steps.forEach((st, i) => L.push(`${i + 1}. [ ] ${st}`));
   L.push("");
@@ -6470,7 +6495,7 @@ function runRecord(annoncesDir, slug, opts) {
     handoffRemoved
   };
 }
-var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, SAFETY_RULES, DEV_BROWSER_BIN, DEV_BROWSER_INSTALL_HINT, REPORT_TO_LOGICAL, fold, CU_ACTIONS, IRREVERSIBLE_STOP, REVERSIBLE_STOP, ACTION_PLANS, ACTION_SAFETY, RECORD_STATUSES;
+var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, CLAUDE_IN_CHROME_RULE, SAFETY_RULES, DEV_BROWSER_BIN, DEV_BROWSER_INSTALL_HINT, REPORT_TO_LOGICAL, fold, CU_ACTIONS, IRREVERSIBLE_STOP, REVERSIBLE_STOP, ACTION_PLANS, ACTION_SAFETY, RECORD_STATUSES;
 var init_computer_use = __esm({
   "src/computer-use.ts"() {
     "use strict";
@@ -6485,12 +6510,14 @@ var init_computer_use = __esm({
     FORM_MAP_FILENAME = "form-map.json";
     DEPOSIT_URL = DEPOSIT.startUrl;
     HANDOFF_REASONS = ["incomplete", "form-error", "not-published"];
+    CLAUDE_IN_CHROME_RULE = "Claude in Chrome: work in a new tab and close it at the end; never trigger a native alert/confirm dialog (it freezes the extension) \u2014 if one appears, ask the user to dismiss it.";
     SAFETY_RULES = [
       "Fill ONLY the values in this sheet (they come from annonce.md); never invent content.",
       "Stop on the final review step (\xAB Avant de publier \xBB / \xAB Je confirme l'exactitude\u2026 \xBB): do NOT click the final \xAB Continuer \xBB / \xAB D\xE9poser mon annonce \xBB unless the user explicitly asked for full-auto.",
       "A DataDome captcha / \xAB V\xE9rification \xBB page is solved by the human, never by the agent: pause and ask.",
       "Work in the user's own browser (`leboncoin open <slug> --real`), where they are already logged in: never type their password, never log in for them.",
       "Take a screenshot before every step and check it before moving on.",
+      CLAUDE_IN_CHROME_RULE,
       "Advanced CDP engine only: dev-browser must stay attached to the scraper window (`dev-browser --connect <port>`): never let it launch its own browser (not logged in, automation flags).",
       "Once the ad is live, run `leboncoin record <slug> --url <ad url>` so annonce.md is updated."
     ];
@@ -6569,6 +6596,7 @@ var init_computer_use = __esm({
       "Act only on the ad described in this sheet: check its title and price on a screenshot before any click.",
       "Work in the user's own browser (`leboncoin open <slug> --real --action <action>`), where they are already logged in: never type their password, never log in for them. A login page means: stop and ask the user to log in themselves.",
       "Take a screenshot before every step and check it before moving on.",
+      CLAUDE_IN_CHROME_RULE,
       "A DataDome captcha / \xAB V\xE9rification \xBB page is solved by the human, never by the agent: pause and ask.",
       "Never pay, never accept a paid option, never type payment details.",
       "No proof of success \u2192 do NOT run `record`: screenshot, tell the user, and let them check \xAB Mes annonces \xBB."

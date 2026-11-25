@@ -16,7 +16,9 @@ mark-sold, deactivate, reactivate) goes through **computer use in your everyday 
 you are already logged in: `cu-sheet <slug> --action <a>` writes a step-by-step sheet (values,
 labels to click, proof of success, stop rule), `open <slug> --real --action <a>` opens the right
 page in your browser, the agent acts by screenshots, clicks and typing, and `record` writes the
-result back. No second login, no remote-debugging flag. **Safe by default:** the agent stops
+result back. The preferred driver is the Claude in Chrome extension (Chrome or Brave: its own
+tab, page refs, photo upload without the file dialog); else desktop computer use on the window
+`open --real` opened. No second login, no remote-debugging flag. **Safe by default:** the agent stops
 before the final publish and asks before any irreversible click (delete, mark-sold); a human
 solves captchas.
 

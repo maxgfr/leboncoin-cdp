@@ -40,6 +40,31 @@ Rules first (they override everything below):
 - **Never pay**: a bump may lead to a paid-option page — stop there and ask.
 - No proof of success → no `record`.
 
+## Claude in Chrome (preferred)
+
+Drivers for the user's own browser, in order: **1)** the Claude in Chrome extension, when its
+tools (`mcp__claude-in-chrome__*`) are available in the session; **2)** desktop computer use
+(screenshots, clicks) on the window `open --real` opened; **3)** dev-browser, only for the
+advanced CDP scraper window. The extension installs from the Chrome Web Store in Chrome and
+Brave alike and acts in the user's real, logged-in profile, so `open --real` is optional with it.
+
+- **Own tab.** `tabs_context_mcp`, then `tabs_create_mcp`: work in a new tab, `navigate` it to
+  the sheet's start URL, and close it at the end. Never reuse the user's tabs.
+- **Loop:** look (`read_page` with `filter: "interactive"` → an accessibility tree with refs, e.g.
+  `textbox "Quel est le titre de l’annonce ?" [ref_5]`; or `find` "the price field") → act by
+  ref (`form_input` sets a text field's value; `computer` clicks/types by ref or coordinates) →
+  verify (`read_page` again). `get_page_text` reads the proof-of-success text.
+- **Screenshot** (`computer` screenshot) before every irreversible step, then apply the stop rule.
+- **Photos:** `file_upload` on the file input's ref with the sheet's absolute paths — no native
+  dialog. Never click the file input (that opens the OS dialog). It only reaches files shared with
+  the session (e.g. the photos folder connected to it), at most 10 MB per call; otherwise switch
+  to desktop computer use and the [file-dialog recipe](#4-photos-os-file-dialog). Then check the
+  thumbnail count.
+- **No native dialogs.** A JS `alert` / `confirm` freezes the extension: never trigger one blindly.
+  Leboncoin's delete confirmation is an in-page modal (fine); if a native dialog appears, ask the
+  user to dismiss it.
+- Every rule above still applies (logins and captchas are the human's, stop rules, never pay).
+
 ## 1. Prepare (publish)
 
 ```
@@ -80,7 +105,8 @@ guess silently.
 
 ## 4. Photos (OS file dialog)
 
-The sheet gives the photos folder (absolute path) and the files in order. Click the photo area
+With Claude in Chrome, use `file_upload` instead (see above). With desktop computer use: the
+sheet gives the photos folder (absolute path) and the files in order. Click the photo area
 (« Ajouter des photos »). The OS file dialog opens:
 
 - macOS: press `Cmd+Shift+G`, paste the **folder** path, Enter; then `Cmd+A` to select every
