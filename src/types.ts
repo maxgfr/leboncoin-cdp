@@ -56,6 +56,8 @@ export type Annonce = {
   /** Set when marked sold / paused via the manage commands. */
   sold_at?: string;
   paused_at?: string;
+  /** Last bump (« Remettre en avant »), set by `record --status renewed`. */
+  renewed_at?: string;
   /** The description (markdown body). */
   description: string;
 };

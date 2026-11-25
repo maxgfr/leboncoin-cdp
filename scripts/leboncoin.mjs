@@ -152,6 +152,7 @@ function parseAnnonce(dir) {
     deleted_at: optStr(f.deleted_at),
     sold_at: optStr(f.sold_at),
     paused_at: optStr(f.paused_at),
+    renewed_at: optStr(f.renewed_at),
     description: body.trim()
   };
 }
@@ -190,6 +191,7 @@ function serializeAnnonce(a) {
   if (a.deleted_at) L.push(`deleted_at: ${q(a.deleted_at)}`);
   if (a.sold_at) L.push(`sold_at: ${q(a.sold_at)}`);
   if (a.paused_at) L.push(`paused_at: ${q(a.paused_at)}`);
+  if (a.renewed_at) L.push(`renewed_at: ${q(a.renewed_at)}`);
   L.push("---");
   L.push("");
   L.push(a.description.trim());
@@ -5781,8 +5783,8 @@ function scoreLogical(f, name, spec) {
   if (f.cssHits?.includes(name)) return { confidence: 1, via: "selector" };
   const ids = identities(f);
   if (spec.names.some((n) => ids.includes(normalizeText(n)))) return { confidence: 0.95, via: "name" };
-  const labels = labelTexts(f);
-  if (spec.labels.some((l) => labels.some((t) => hasWord(t, normalizeText(l))))) return { confidence: 0.8, via: "label" };
+  const labels2 = labelTexts(f);
+  if (spec.labels.some((l) => labels2.some((t) => hasWord(t, normalizeText(l))))) return { confidence: 0.8, via: "label" };
   const ph = normalizeText(f.placeholder);
   if (spec.labels.some((l) => hasWord(ph, normalizeText(l)))) return { confidence: 0.6, via: "placeholder" };
   if (spec.types.length === 1 && spec.types[0] === f.type && f.type === "file") return { confidence: 0.5, via: "type" };
@@ -5797,8 +5799,8 @@ function scoreAttribute(f, key) {
   const kSnake = k.replace(/ /g, "_");
   const rawIds = [f.name, f.rhfName, f.dataQaId].filter(Boolean).map((s) => String(s).toLowerCase());
   if (rawIds.some((id) => id.endsWith(`_${kSnake}`))) return { confidence: 0.85, via: "suffix" };
-  const labels = labelTexts(f);
-  if (labels.some((t) => t === k || t.startsWith(`${k} `))) return { confidence: 0.8, via: "label" };
+  const labels2 = labelTexts(f);
+  if (labels2.some((t) => t === k || t.startsWith(`${k} `))) return { confidence: 0.8, via: "label" };
   if (normalizeText(f.placeholder) === k) return { confidence: 0.6, via: "placeholder" };
   return null;
 }
@@ -5932,29 +5934,41 @@ var init_readiness = __esm({
 // src/computer-use.ts
 var computer_use_exports = {};
 __export(computer_use_exports, {
+  ACTION_SAFETY: () => ACTION_SAFETY,
+  CU_ACTIONS: () => CU_ACTIONS,
   CU_SHEET_FILENAME: () => CU_SHEET_FILENAME,
   DEPOSIT_URL: () => DEPOSIT_URL,
   DEV_BROWSER_BIN: () => DEV_BROWSER_BIN,
   DEV_BROWSER_INSTALL_HINT: () => DEV_BROWSER_INSTALL_HINT,
   HANDOFF_FILENAME: () => HANDOFF_FILENAME,
   HANDOFF_REASONS: () => HANDOFF_REASONS,
+  RECORD_STATUSES: () => RECORD_STATUSES,
   SAFETY_RULES: () => SAFETY_RULES,
+  actionStartUrl: () => actionStartUrl,
   adIdFromUrl: () => adIdFromUrl,
   annonceValue: () => annonceValue,
+  buildActionSheet: () => buildActionSheet,
   buildCuSheet: () => buildCuSheet,
   buildHandoff: () => buildHandoff,
   clearHandoff: () => clearHandoff,
   detectDevBrowser: () => detectDevBrowser,
   devBrowserCommand: () => devBrowserCommand,
+  fileDialogRecipe: () => fileDialogRecipe,
   findOnPath: () => findOnPath,
   handoffPath: () => handoffPath,
+  isCuAction: () => isCuAction,
+  macAppName: () => macAppName,
   parseAdUrl: () => parseAdUrl,
+  parseCuAction: () => parseCuAction,
   readFormSteps: () => readFormSteps,
   readHandoff: () => readHandoff,
+  realOpenCommand: () => realOpenCommand,
+  renderActionSheet: () => renderActionSheet,
   renderCuSheet: () => renderCuSheet,
   resolveOpenUrl: () => resolveOpenUrl,
   runCuSheet: () => runCuSheet,
   runOpen: () => runOpen,
+  runOpenReal: () => runOpenReal,
   runRecord: () => runRecord,
   settleHandoff: () => settleHandoff
 });
@@ -6066,21 +6080,23 @@ function readFormSteps(dir) {
   }
   const steps = Array.isArray(raw.steps) ? raw.steps : Array.isArray(raw.fields) ? [raw] : [];
   return steps.map((s, i) => {
-    const labels = [];
+    const labels2 = [];
     const required = [];
     for (const f of s.fields ?? []) {
       const label = (f.label || f.altLabels?.[0] || f.key || "").trim();
       if (!label) continue;
-      if (!labels.includes(label)) labels.push(label);
+      if (!labels2.includes(label)) labels2.push(label);
       if (f.required && !required.includes(label)) required.push(label);
     }
-    return { index: i + 1, title: s.step?.title ?? "", required, labels };
+    return { index: i + 1, title: s.step?.title ?? "", required, labels: labels2 };
   });
 }
 function buildCuSheet(dir, a) {
   return {
     slug: a.slug,
+    action: "publish",
     deposit_url: DEPOSIT_URL,
+    start_url: DEPOSIT_URL,
     handoff: readHandoff(dir),
     values: {
       title: a.title,
@@ -6092,7 +6108,8 @@ function buildCuSheet(dir, a) {
       ...a.condition ? { condition: a.condition } : {},
       ...a.shipping !== void 0 ? { shipping: a.shipping } : {},
       attributes: { ...a.attributes },
-      photos: resolvePhotoPaths(dir, a)
+      photos: resolvePhotoPaths(dir, a),
+      photos_dir: path7.resolve(dir, PHOTOS_DIRNAME)
     },
     form_steps: readFormSteps(dir),
     safety: SAFETY_RULES
@@ -6108,7 +6125,9 @@ function renderCuSheet(s) {
     L.push("## Resume from the CDP handoff", "");
     const at = h.step ? `step ${h.step.index}${h.step.title ? ` \xAB ${h.step.title} \xBB` : ""}` : "the current step";
     L.push(`The CDP run stopped (\`${h.reason}\`${h.wizard_stop ? `, wizard: ${h.wizard_stop}` : ""}${h.error ? ` \u2014 ${h.error}` : ""}) at ${at}.`);
-    L.push(`Resume from ${at} in the window that is still open${h.cdp_port ? ` (CDP port ${h.cdp_port})` : ""}; do not restart the deposit.`);
+    L.push(
+      `Resume from ${at} in the scraper window that is still open${h.cdp_port ? ` (CDP port ${h.cdp_port})` : ""}; do not restart the deposit. (This is the advanced CDP engine's window, not your own browser.)`
+    );
     if (h.missing.length) {
       L.push("", "Remaining fields:");
       for (const m of h.missing) L.push(`- [ ] ${m.field}${m.required ? " (required)" : ""}: ${m.value ?? `\u2014 ${m.note ?? "ask the user"}`}`);
@@ -6126,18 +6145,22 @@ function renderCuSheet(s) {
   }
   L.push("## 1. Open the deposit form", "");
   L.push(`- URL: ${s.deposit_url}`);
-  L.push(`- Or run \`leboncoin open ${s.slug} --deposit\`: it opens it in the logged-in scraper window and prints the CDP port.`);
+  L.push(`- Run \`leboncoin open ${s.slug} --real\`: it opens it in the user's own browser (already logged in) through the OS \u2014 no CDP, no scraper profile.`);
+  L.push(
+    `- Advanced (CDP engine): \`leboncoin open ${s.slug} --deposit\` opens it in the isolated scraper window (logged in once with \`leboncoin login\`) and prints the CDP port.`
+  );
   L.push("");
   const port = s.handoff?.cdp_port ?? "<port>";
   L.push("## How to drive", "");
+  L.push("1. Default: computer use (screenshots, clicks, typing) in the user's own browser window. Loop: screenshot \u2192 act \u2192 screenshot to verify.");
+  L.push("   For the photos, use the OS file dialog (recipe below).");
   L.push(
-    `1. Preferred: dev-browser attached to the scraper window \u2014 \`${devBrowserCommand(port)}\` (port printed by \`leboncoin open\`; optional: \`npm i -g dev-browser\`). Never let it launch its own browser.`
+    `2. Advanced (CDP engine, scraper window only): dev-browser attached to it \u2014 \`${devBrowserCommand(port)}\` (port printed by \`leboncoin open --deposit\`; optional: \`npm i -g dev-browser\`). Never let it launch its own browser.`
   );
   L.push('   Loop: look (`page.snapshot({ interactive: true })`) \u2192 act by ref (`page.click("ref/eN")`, `page.fill("ref/eN", \u2026)`) \u2192 verify (snapshot again).');
   L.push("   Work in the tab `leboncoin open` already opened (`browser.listPages()` \u2192 `browser.getPage(id)`); do not restart the deposit.");
   L.push("   For the photos, call `uploadFile` on the file input with the absolute paths below \u2014 no OS file dialog.");
-  L.push("2. Last resort: computer use (screenshots, clicks, typing) on the same window.");
-  L.push("", "Example (refs come from your own snapshot):", "");
+  L.push("", "Example (advanced; refs come from your own snapshot):", "");
   L.push("```bash");
   L.push(`${devBrowserCommand(port)} -t 30 <<'EOF'`);
   L.push('const tab = (await browser.listPages()).find((p) => p.url.includes("deposer-une-annonce"));');
@@ -6161,8 +6184,12 @@ function renderCuSheet(s) {
     L.push(`${n++}. [ ] Attributes (field label \u2192 value):`);
     for (const [k, val] of attrs) L.push(`   - ${k} \u2192 ${val}`);
   }
-  L.push(`${n++}. [ ] Photos (in this order \u2014 dev-browser: uploadFile with these paths; computer use: the file dialog):`);
+  L.push(`${n++}. [ ] Photos (in this order \u2014 computer use: the file dialog below; dev-browser: uploadFile with these paths):`);
   for (const p of v.photos) L.push(`   - ${p}`);
+  L.push("");
+  L.push("## Photos via the file dialog", "");
+  L.push(`Photos folder: ${v.photos_dir}`, "");
+  for (const line of fileDialogRecipe(v.photos.length)) L.push(line);
   L.push("");
   if (s.form_steps?.length) {
     L.push("## 3. What each step shows (form-map.json)", "");
@@ -6182,13 +6209,151 @@ function renderCuSheet(s) {
   L.push("");
   return L.join("\n");
 }
-function runCuSheet(annoncesDir, slug) {
+function fileDialogRecipe(count) {
+  const add = DEPOSIT.photoAddButton.textCandidates.map(quote).join(" / ");
+  return [
+    `1. Click the add-photos control (${add}): the OS file dialog opens.`,
+    "2. macOS: press Cmd+Shift+G, paste the photos folder path above, press Enter.",
+    "   Linux (GTK): press Ctrl+L, type the photos folder path above, press Enter.",
+    "3. Press Cmd+A (Linux: Ctrl+A) to select every photo of the folder \u2014 or Cmd/Ctrl-click only the files listed above if the folder holds others.",
+    "4. Click \xAB Ouvrir \xBB / \xAB Open \xBB.",
+    `5. Wait for the thumbnails, then check that ${count} thumbnail(s) show. Reorder them on the page if the order matters.`
+  ];
+}
+function isCuAction(x) {
+  return CU_ACTIONS.includes(x);
+}
+function parseCuAction(raw) {
+  if (raw === void 0) return "publish";
+  if (!isCuAction(raw)) throw new Error(`--action must be one of ${CU_ACTIONS.join(", ")} (got "${raw}")`);
+  return raw;
+}
+function quote(t) {
+  return `\xAB ${t} \xBB`;
+}
+function labels(b) {
+  return b.textCandidates.map(quote).join(" / ");
+}
+function anyOf(markers) {
+  return markers.map(quote).join(", ");
+}
+function actionStartUrl(a, action) {
+  if (action === "publish") return DEPOSIT_URL;
+  if (!a?.leboncoin_url || ACTION_PLANS[action].listingFirst) return MANAGE.listingUrl;
+  return a.leboncoin_url;
+}
+function editChanges(dir, a) {
+  const c = [
+    { field: "Title", value: a.title },
+    { field: "Description", value: a.description },
+    { field: "Price", value: `${a.price} \u20AC` },
+    { field: "Location", value: `${a.zipcode}${a.city ? ` ${a.city}` : ""}` }
+  ];
+  if (a.condition) c.push({ field: "Condition (\xC9tat)", value: a.condition });
+  if (a.shipping !== void 0) c.push({ field: "Shipping / delivery", value: a.shipping ? "yes" : "no" });
+  for (const [k, v] of Object.entries(a.attributes ?? {})) c.push({ field: k, value: String(v) });
+  c.push({ field: "Photos", value: `leave them as they are unless the user asked (folder: ${path7.resolve(dir, PHOTOS_DIRNAME)})` });
+  return c;
+}
+function buildActionSheet(dir, a, action) {
+  const plan = ACTION_PLANS[action];
+  const start = actionStartUrl(a, action);
+  const known = Boolean(a.leboncoin_url);
+  const who = `title ${quote(a.title)}, price ${a.price} \u20AC${a.leboncoin_id ? `, id ${a.leboncoin_id}` : ""}`;
+  const recordStatus = action === "edit" ? a.status === "paused" ? "paused" : "published" : plan.record;
+  const record = `leboncoin record ${a.slug} --url ${a.leboncoin_url ?? "<ad url>"} --status ${recordStatus}`;
+  const notes = [];
+  if (!plan.allow.includes(a.status)) {
+    notes.push(
+      `annonce.md says status "${a.status}" (this action expects ${plan.allow.join(" or ")}): check the ad's real state in \xAB Mes annonces \xBB first, and stop if the action does not apply.`
+    );
+  }
+  if (!known) {
+    notes.push(
+      "annonce.md has no leboncoin_url: find the ad in \xAB Mes annonces \xBB by its title and price, open it, and copy its URL from the address bar for the `record` command."
+    );
+  }
+  const steps = [`Run \`leboncoin open ${a.slug} --real --action ${action}\`: it opens ${start} in the user's own browser. Screenshot it.`];
+  steps.push("If a login page or a \xAB V\xE9rification \xBB captcha shows: stop and ask the user to handle it, then screenshot again.");
+  if (start === MANAGE.listingUrl) steps.push(`In \xAB Mes annonces \xBB (${MANAGE.listingUrl}), find the ad's card: ${who}.`);
+  else steps.push(`The page is the ad itself: check it is ${who}. If it is gone, find its card in \xAB Mes annonces \xBB (${MANAGE.listingUrl}).`);
+  steps.push(
+    `Find the control ${labels(plan.control)}: on the ad page, else in its \xAB \u2026 \xBB menu (${labels(MANAGE.overflowMenu)}), else on the ad's card in \xAB Mes annonces \xBB.`
+  );
+  if (action === "edit") {
+    steps.push("Click it: the modify form opens (the same wizard as the deposit). Screenshot it.");
+    steps.push(
+      "Make every field match the values below, finding each by its visible label; the category usually cannot be changed. Move through the steps with \xAB Continuer \xBB."
+    );
+    steps.push(`STOP RULE: ${plan.stop}`);
+  } else {
+    steps.push(`STOP RULE: ${plan.stop}`);
+    steps.push("Click the control. Screenshot.");
+    if (plan.confirm) steps.push(`If a confirmation dialog shows, click ${labels(plan.confirm)}. Screenshot.`);
+  }
+  steps.push(`Look for the proof of success: ${plan.proof.join("; ")}.`);
+  steps.push(`Only with that proof, run \`${record}\`${known ? "" : " (replace <ad url> with the ad's URL)"}.`);
+  return {
+    slug: a.slug,
+    action,
+    summary: plan.summary,
+    start_url: start,
+    ad: { title: a.title, price: a.price, status: a.status, leboncoin_id: a.leboncoin_id ?? null, leboncoin_url: a.leboncoin_url ?? null },
+    steps,
+    ...action === "edit" ? { changes: editChanges(dir, a) } : {},
+    proof: plan.proof,
+    stop_rule: plan.stop,
+    record,
+    notes,
+    safety: ACTION_SAFETY.map((r) => r.replace("<slug>", a.slug).replace("<action>", action))
+  };
+}
+function renderActionSheet(s) {
+  const L = [`# Computer-use playbook \u2014 ${s.action} \u2014 ${s.slug}`, ""];
+  L.push(`Generated by \`leboncoin cu-sheet ${s.slug} --action ${s.action}\` from annonce.md. ${s.summary}`);
+  L.push("Done by computer use (screenshots, clicks, typing) in the user's own, already logged-in browser.", "");
+  L.push("## The ad", "");
+  L.push(`- Title: ${s.ad.title}`, `- Price: ${s.ad.price} \u20AC`, `- Local status: ${s.ad.status}`);
+  L.push(`- leboncoin_id: ${s.ad.leboncoin_id ?? "(unknown)"}`, `- leboncoin_url: ${s.ad.leboncoin_url ?? "(unknown: find it in \xAB Mes annonces \xBB)"}`);
+  L.push(`- Start URL: ${s.start_url}`, "");
+  if (s.notes.length) {
+    L.push("## Check first", "");
+    for (const n of s.notes) L.push(`- ${n}`);
+    L.push("");
+  }
+  L.push("## Steps", "");
+  s.steps.forEach((st, i) => L.push(`${i + 1}. [ ] ${st}`));
+  L.push("");
+  if (s.changes) {
+    L.push("## Values the form must end up with (annonce.md)", "");
+    for (const c of s.changes) {
+      if (c.field === "Description") L.push("- Description (type it verbatim):", "", "````text", c.value, "````", "");
+      else L.push(`- ${c.field}: ${c.value}`);
+    }
+    L.push("");
+  }
+  L.push("## Proof of success", "");
+  for (const p of s.proof) L.push(`- ${p}`);
+  L.push("", "## Stop rule", "", s.stop_rule, "");
+  L.push("## Safety rules", "");
+  for (const r of s.safety) L.push(`- ${r}`);
+  L.push("", "## Afterwards", "", `\`${s.record}\``, "");
+  return L.join("\n");
+}
+function runCuSheet(annoncesDir, slug, action = "publish") {
   const dir = path7.join(annoncesDir, slug);
-  const validation = validateAnnonce(dir);
+  const full = validateAnnonce(dir);
+  const gate = action === "publish" ? () => true : action === "edit" ? (f) => f !== "status" : (f) => f === "file";
+  const issues = full.issues.filter((i) => gate(i.field));
+  const validation = { ...full, issues, ok: issues.length === 0 };
   if (!validation.ok) return { ok: false, validation };
-  const sheet = buildCuSheet(dir, parseAnnonce(dir));
+  const a = parseAnnonce(dir);
+  if (action !== "publish" && a.status === "deleted") {
+    return { ok: false, validation, error: `annonce "${slug}" is "deleted": there is no ad left to ${action}` };
+  }
   const file = path7.join(dir, CU_SHEET_FILENAME);
-  fs5.writeFileSync(file, renderCuSheet(sheet));
+  const sheet = action === "publish" ? buildCuSheet(dir, a) : buildActionSheet(dir, a, action);
+  fs5.writeFileSync(file, sheet.action === "publish" ? renderCuSheet(sheet) : renderActionSheet(sheet));
   return { ok: true, validation, sheet, path: file };
 }
 function resolveOpenUrl(annoncesDir, slug, opts = {}) {
@@ -6196,6 +6361,7 @@ function resolveOpenUrl(annoncesDir, slug, opts = {}) {
     if (!/^https?:\/\//i.test(opts.url)) throw new Error(`--url must be an http(s) URL (got "${opts.url}")`);
     return opts.url;
   }
+  if (opts.action) return actionStartUrl(slug ? parseAnnonce(path7.join(annoncesDir, slug)) : null, opts.action);
   if (slug && !opts.deposit) {
     const a = parseAnnonce(path7.join(annoncesDir, slug));
     if (a.leboncoin_url && (a.status === "published" || a.status === "paused")) return a.leboncoin_url;
@@ -6216,6 +6382,41 @@ async function runOpen(annoncesDir, slug, opts = {}, deps = {}) {
   cdp.disconnect();
   const port = await (deps.port ?? defaultOpenPort)();
   return { url, port, endpoint: `http://127.0.0.1:${port}`, devBrowser: detectDevBrowser(port, deps.which) };
+}
+function macAppName(binaryPath) {
+  const m = binaryPath.match(/([^/]+)\.app(?:\/|$)/);
+  return m?.[1] ?? null;
+}
+function realOpenCommand(url, platform, browserPath) {
+  if (platform === "darwin") {
+    const app = browserPath ? macAppName(browserPath) : null;
+    return app ? { cmd: "open", args: ["-a", app, url], browser: app } : { cmd: "open", args: [url], browser: "default" };
+  }
+  if (platform === "linux") return { cmd: "xdg-open", args: [url], browser: "default" };
+  throw new Error(`open --real supports macOS and Linux only (this is ${platform}): open ${url} in your browser by hand`);
+}
+async function defaultBrowserPath() {
+  const { config: config2 } = await Promise.resolve().then(() => (init_config(), config_exports));
+  return config2.browser.chromePath || null;
+}
+async function defaultOpener(cmd, args) {
+  const { spawn: spawn2 } = await import("child_process");
+  await new Promise((resolve2, reject) => {
+    const child = spawn2(cmd, args, { stdio: "ignore", detached: true });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve2();
+    });
+  });
+}
+async function runOpenReal(annoncesDir, slug, opts = {}, deps = {}) {
+  const url = resolveOpenUrl(annoncesDir, slug, opts);
+  const platform = deps.platform ?? process.platform;
+  const bin = platform === "darwin" ? await (deps.browserPath ?? defaultBrowserPath)() : null;
+  const { cmd, args, browser } = realOpenCommand(url, platform, bin);
+  await (deps.opener ?? defaultOpener)(cmd, args);
+  return { url, mode: "real", browser };
 }
 function adIdFromUrl(url) {
   for (const re of DEPOSIT.publishedUrlPattern) {
@@ -6240,24 +6441,36 @@ function parseAdUrl(url) {
   return id;
 }
 function runRecord(annoncesDir, slug, opts) {
-  const status = opts.status ?? "published";
-  if (!RECORD_STATUSES.includes(status)) throw new Error(`--status must be one of ${RECORD_STATUSES.join(", ")} (got "${opts.status}")`);
+  const given = opts.status ?? "published";
+  if (!RECORD_STATUSES.includes(given)) throw new Error(`--status must be one of ${RECORD_STATUSES.join(", ")} (got "${opts.status}")`);
+  const status = given === "renewed" ? "published" : given;
   const id = parseAdUrl(opts.url);
   const dir = path7.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   const now = (/* @__PURE__ */ new Date()).toISOString();
+  const wasPaused = a.status === "paused";
   a.leboncoin_url = opts.url;
   a.leboncoin_id = id;
   a.status = status;
   if (status === "published" && !a.published_at) a.published_at = now;
+  if (status === "published" && wasPaused) a.paused_at = void 0;
+  if (given === "renewed") a.renewed_at = now;
   if (status === "sold" && !a.sold_at) a.sold_at = now;
   if (status === "paused" && !a.paused_at) a.paused_at = now;
   if (status === "deleted" && !a.deleted_at) a.deleted_at = now;
   writeAnnonce(dir, a);
   const handoffRemoved = clearHandoff(dir);
-  return { slug, status, leboncoin_id: id, leboncoin_url: opts.url, published_at: a.published_at, handoffRemoved };
+  return {
+    slug,
+    status,
+    leboncoin_id: id,
+    leboncoin_url: opts.url,
+    published_at: a.published_at,
+    ...a.renewed_at ? { renewed_at: a.renewed_at } : {},
+    handoffRemoved
+  };
 }
-var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, SAFETY_RULES, DEV_BROWSER_BIN, DEV_BROWSER_INSTALL_HINT, REPORT_TO_LOGICAL, fold, RECORD_STATUSES;
+var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, SAFETY_RULES, DEV_BROWSER_BIN, DEV_BROWSER_INSTALL_HINT, REPORT_TO_LOGICAL, fold, CU_ACTIONS, IRREVERSIBLE_STOP, REVERSIBLE_STOP, ACTION_PLANS, ACTION_SAFETY, RECORD_STATUSES;
 var init_computer_use = __esm({
   "src/computer-use.ts"() {
     "use strict";
@@ -6276,8 +6489,9 @@ var init_computer_use = __esm({
       "Fill ONLY the values in this sheet (they come from annonce.md); never invent content.",
       "Stop on the final review step (\xAB Avant de publier \xBB / \xAB Je confirme l'exactitude\u2026 \xBB): do NOT click the final \xAB Continuer \xBB / \xAB D\xE9poser mon annonce \xBB unless the user explicitly asked for full-auto.",
       "A DataDome captcha / \xAB V\xE9rification \xBB page is solved by the human, never by the agent: pause and ask.",
-      "Verify every step (dev-browser snapshot, or a screenshot) before moving on.",
-      "dev-browser must stay attached to the scraper window (`dev-browser --connect <port>`): never let it launch its own browser (not logged in, automation flags).",
+      "Work in the user's own browser (`leboncoin open <slug> --real`), where they are already logged in: never type their password, never log in for them.",
+      "Take a screenshot before every step and check it before moving on.",
+      "Advanced CDP engine only: dev-browser must stay attached to the scraper window (`dev-browser --connect <port>`): never let it launch its own browser (not logged in, automation flags).",
       "Once the ad is live, run `leboncoin record <slug> --url <ad url>` so annonce.md is updated."
     ];
     DEV_BROWSER_BIN = "dev-browser";
@@ -6292,7 +6506,74 @@ var init_computer_use = __esm({
       shipping: "shipping"
     };
     fold = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s*\*$/, "").trim();
-    RECORD_STATUSES = ["published", "sold", "paused", "deleted"];
+    CU_ACTIONS = ["publish", "edit", "delete", "renew", "mark-sold", "deactivate", "reactivate"];
+    IRREVERSIBLE_STOP = "Irreversible: ask the user to confirm in the chat (this exact ad, by title and price) before the click and its confirmation. Their explicit go-ahead is the consent.";
+    REVERSIBLE_STOP = "Reversible: the user's request is the consent. Still check the ad (title, price) on a screenshot before the click.";
+    ACTION_PLANS = {
+      edit: {
+        allow: ["published", "paused"],
+        summary: "Re-open the ad's modify form and make it match annonce.md (photos stay as they are).",
+        control: MANAGE.editButton,
+        proof: ["after saving, the ad page shows the new values (title, price, description)"],
+        stop: `Stop before ${labels(MANAGE.saveButton)}: screenshot the filled form and let the user review and save it, unless they explicitly asked you to save.`,
+        record: "published"
+      },
+      delete: {
+        allow: ["published", "paused"],
+        summary: "Remove the ad from Leboncoin. Irreversible.",
+        control: MANAGE.deleteButton,
+        confirm: MANAGE.confirmButton,
+        proof: [`the page says one of: ${anyOf(MANAGE.deletedMarkers)}`, `or, reloading the ad URL, it shows one of: ${anyOf(MANAGE.goneMarkers)}`],
+        stop: IRREVERSIBLE_STOP,
+        record: "deleted"
+      },
+      renew: {
+        allow: ["published"],
+        summary: "Bump the ad (\xAB Remettre en avant \xBB); no status change.",
+        control: MANAGE.renewButton,
+        confirm: MANAGE.manageConfirmButton,
+        proof: ["Leboncoin shows no reliable confirmation text for a bump: check that \xAB Mes annonces \xBB lists the ad as freshly put forward."],
+        stop: "A bump may open a paid-option page (a price, \xAB options \xBB, a payment form): stop there and ask the user. Never pay and never type payment details.",
+        record: "renewed"
+      },
+      "mark-sold": {
+        allow: ["published", "paused"],
+        summary: "Mark the ad as sold (it leaves the search results). Irreversible.",
+        control: MANAGE.markSoldButton,
+        confirm: MANAGE.manageConfirmButton,
+        proof: [`the page says one of: ${anyOf(MANAGE.soldMarkers)}`],
+        stop: IRREVERSIBLE_STOP,
+        record: "sold"
+      },
+      deactivate: {
+        allow: ["published"],
+        summary: "Pause the ad without deleting it (reversible with reactivate).",
+        control: MANAGE.deactivateButton,
+        confirm: MANAGE.manageConfirmButton,
+        proof: [`the page says one of: ${anyOf(MANAGE.pausedMarkers)}`, `or the ad now offers ${labels(MANAGE.reactivateButton)}`],
+        stop: REVERSIBLE_STOP,
+        record: "paused"
+      },
+      reactivate: {
+        allow: ["paused"],
+        summary: "Put a paused ad back online.",
+        control: MANAGE.reactivateButton,
+        confirm: MANAGE.manageConfirmButton,
+        proof: [`the page says one of: ${anyOf(MANAGE.reactivatedMarkers)}`, `or the ad now offers ${labels(MANAGE.deactivateButton)}`],
+        stop: REVERSIBLE_STOP,
+        record: "published",
+        listingFirst: true
+      }
+    };
+    ACTION_SAFETY = [
+      "Act only on the ad described in this sheet: check its title and price on a screenshot before any click.",
+      "Work in the user's own browser (`leboncoin open <slug> --real --action <action>`), where they are already logged in: never type their password, never log in for them. A login page means: stop and ask the user to log in themselves.",
+      "Take a screenshot before every step and check it before moving on.",
+      "A DataDome captcha / \xAB V\xE9rification \xBB page is solved by the human, never by the agent: pause and ask.",
+      "Never pay, never accept a paid option, never type payment details.",
+      "No proof of success \u2192 do NOT run `record`: screenshot, tell the user, and let them check \xAB Mes annonces \xBB."
+    ];
+    RECORD_STATUSES = ["published", "sold", "paused", "deleted", "renewed"];
   }
 });
 
@@ -8016,9 +8297,9 @@ Usage:
   leboncoin edit <slug> [--no-screenshot] [--yes]
   leboncoin renew|mark-sold|deactivate|reactivate <slug> [--yes]
   leboncoin list [--status draft|published|deleted|sold|paused]
-  leboncoin cu-sheet <slug> [--json]
-  leboncoin open [<slug>] [--url <u>] [--deposit] [--json]
-  leboncoin record <slug> --url <ad url> [--status published|sold|paused|deleted]
+  leboncoin cu-sheet <slug> [--action publish|edit|delete|renew|mark-sold|deactivate|reactivate] [--json]
+  leboncoin open [<slug>] [--real] [--action <a>] [--url <u>] [--deposit] [--json]
+  leboncoin record <slug> --url <ad url> [--status published|sold|paused|deleted|renewed]
   leboncoin scrape --query "<query|url>" [scraper options]
 
 Commands:
@@ -8063,16 +8344,22 @@ Commands:
                 Controls are looked up on the ad page, in its \xAB \u2026 \xBB menu, then in its card on
                 \xAB mes annonces \xBB; the local status changes only with proof from the site.
   list/status   Show local annonces and their published state.
-  cu-sheet      Computer-use fill sheet: annonces/<slug>/computer-use.md (--json prints it) with the
-                deposit URL, every value in form order, absolute photo paths, each step's labels
-                (from form-map.json) and a resume block (from handoff.json). Refuses an invalid
-                annonce (exit 1).
-  open          Launch/reuse the scraper browser on --url, else the slug's live ad (unless
-                --deposit), else the deposit form \u2014 drives nothing, leaves the window open and
-                prints the CDP port + http://127.0.0.1:<port>, and dev-browser --connect <port> when
-                dev-browser is on PATH (recommended driver, optional) \u2014 else computer use.
+  cu-sheet      Computer-use sheet: annonces/<slug>/computer-use.md (--json prints it). Default
+                --action publish: the deposit URL, every value in form order, absolute photo
+                paths + the OS file-dialog recipe, each step's labels (from form-map.json) and a
+                resume block (from handoff.json); refuses an invalid annonce (exit 1). Other
+                actions: an ordered playbook (start URL, how to find the ad, the controls to
+                click, the proof of success, the stop rule, the record command to run after).
+  open          --real: open --url, else the --action's start page, else the slug's live ad /
+                the deposit form, in YOUR OWN browser through the OS (macOS open -a <remembered
+                browser>, else the default browser; Linux xdg-open) \u2014 no CDP, no scraper profile.
+                The default way to do any account action by computer use.
+                Without --real (advanced, CDP engine): launch/reuse the scraper browser there,
+                leave the window open and print the CDP port + http://127.0.0.1:<port>, and
+                dev-browser --connect <port> when dev-browser is on PATH (optional driver).
   record        Write back an action done by computer use: leboncoin_url/_id (parsed from the ad
-                URL), status (default published) and its timestamp. Removes handoff.json.
+                URL), status (default published; renewed = stays published + renewed_at) and its
+                timestamp. Removes handoff.json.
   scrape        The original read-only scraper (search results + ad details).
 
 Common options:
@@ -8145,7 +8432,8 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "cookies-file",
   "out",
   "timeout-login",
-  "url"
+  "url",
+  "action"
 ]);
 var BOOL_FLAGS = /* @__PURE__ */ new Set([
   "json",
@@ -8162,7 +8450,8 @@ var BOOL_FLAGS = /* @__PURE__ */ new Set([
   "shots",
   "force",
   "copy-profile",
-  "deposit"
+  "deposit",
+  "real"
 ]);
 var SHORT = {
   q: "query",
@@ -8370,8 +8659,15 @@ async function main(argv = process.argv.slice(2)) {
     }
     case "cu-sheet": {
       const slug = requireSlug(p);
-      const { runCuSheet: runCuSheet2 } = await Promise.resolve().then(() => (init_computer_use(), computer_use_exports));
-      const r = runCuSheet2(annoncesDirOf(p), slug);
+      const { parseCuAction: parseCuAction2, runCuSheet: runCuSheet2 } = await Promise.resolve().then(() => (init_computer_use(), computer_use_exports));
+      let action;
+      try {
+        action = parseCuAction2(p.values.action);
+      } catch (e) {
+        fail(e.message);
+      }
+      const r = runCuSheet2(annoncesDirOf(p), slug, action);
+      if (r.error) fail(r.error);
       if (!r.ok) {
         process.stdout.write(formatValidationReport(r.validation) + "\n");
         fail(`refusing to build a computer-use sheet for an invalid annonce \u2014 fix it, then: leboncoin validate ${slug}`);
@@ -8380,14 +8676,39 @@ async function main(argv = process.argv.slice(2)) {
       else {
         process.stderr.write(`leboncoin: wrote ${r.path}
 `);
-        if (r.sheet?.handoff) process.stderr.write(`  resume from the CDP handoff (${r.sheet.handoff.reason}) \u2014 see the top of the sheet
+        const sheet = r.sheet;
+        if (sheet?.action === "publish" && sheet.handoff)
+          process.stderr.write(`  resume from the CDP handoff (${sheet.handoff.reason}) \u2014 see the top of the sheet
+`);
+        if (sheet) process.stderr.write(`  next: leboncoin open ${slug} --real${action === "publish" ? "" : ` --action ${action}`}
 `);
       }
       return;
     }
     case "open": {
-      const { DEV_BROWSER_INSTALL_HINT: DEV_BROWSER_INSTALL_HINT2, runOpen: runOpen2 } = await Promise.resolve().then(() => (init_computer_use(), computer_use_exports));
-      const r = await runOpen2(annoncesDirOf(p), p.positional[0], { url: p.values.url, deposit: p.bools.has("deposit") });
+      const { DEV_BROWSER_INSTALL_HINT: DEV_BROWSER_INSTALL_HINT2, parseCuAction: parseCuAction2, runOpen: runOpen2, runOpenReal: runOpenReal2 } = await Promise.resolve().then(() => (init_computer_use(), computer_use_exports));
+      let opts;
+      try {
+        opts = { url: p.values.url, deposit: p.bools.has("deposit"), ...p.values.action ? { action: parseCuAction2(p.values.action) } : {} };
+      } catch (e) {
+        fail(e.message);
+      }
+      if (p.bools.has("real")) {
+        let real;
+        try {
+          real = await runOpenReal2(annoncesDirOf(p), p.positional[0], opts);
+        } catch (e) {
+          fail(e.message);
+        }
+        if (json) process.stdout.write(JSON.stringify(real, null, 2) + "\n");
+        else {
+          process.stdout.write(`leboncoin: opened ${real.url} in ${real.browser === "default" ? "your default browser" : real.browser}
+`);
+          process.stdout.write("  your own browser, no CDP: drive it by computer use (screenshot before each step)\n");
+        }
+        return;
+      }
+      const r = await runOpen2(annoncesDirOf(p), p.positional[0], opts);
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       else {
         process.stdout.write(`leboncoin: opened ${r.url}

@@ -22,6 +22,12 @@ same Leboncoin session tokens and Leboncoin may log your real browser out. `--po
 browser already listening for CDP. Every live command first applies `~/.lbc-scraper/site.json` (site-drift
 overrides, see `deposit-form-mapping.md`).
 
+**Account actions** (publish, edit, delete, renew, mark-sold, deactivate, reactivate) are done by
+default by computer use in the user's own, already logged-in browser: `cu-sheet <slug> --action
+<a>` → `open <slug> --real --action <a>` → the agent acts → `record`. That needs no scraper
+profile and no login anywhere else. The CDP write commands (`publish`, `delete`, `edit`, …) are
+the advanced alternative: they need the isolated scraper profile logged in once (`login`).
+
 ## `doctor [<slug>]`  *(CDP, read-only)*
 Health check against the live site: `login` (session recognised), `search` (results found, and
 from which source — `next-data` / `json-script` / `network` / `dom-links`), `ad-detail`, and
@@ -83,7 +89,7 @@ attributes, review) stay hidden — `publish --diagnostic` walks them all.
 - `--json` returns the `FormMap` (`{ url, step, fields: FieldDescriptor[] }`).
 - Exit 0; 2 if `login-required`.
 
-## `publish <slug>`  *(CDP, write)*
+## `publish <slug>`  *(advanced, CDP, write)*
 Drive the deposit **wizard** step by step: fill each step by field meaning, pick the category
 card, upload photos, click « Continuer », and **stop on the final review** (recognised by its
 content, never clicked past). Writes `annonces/<slug>/`: `publish-preview.png` (Read it),
@@ -122,7 +128,7 @@ content, never clicked past). Writes `annonces/<slug>/`: `publish-preview.png` (
 - Exit 0 published / diagnostic / dry-run; 2 if `login-required` / `not-published` /
   `incomplete` / `form-error`; 1 on a fatal error.
 
-## `delete <slug>`  *(CDP, write)*
+## `delete <slug>`  *(advanced, CDP, write)*
 Navigate to the published ad (by stored `leboncoin_id`/`leboncoin_url`), find « Supprimer »
 (ad page → « … » menu → the ad's card on « mes annonces »), confirm, and set `status: deleted`
 **only with proof** (a deletion message, or the ad page reloaded and gone); otherwise
@@ -131,7 +137,7 @@ Navigate to the published ad (by stored `leboncoin_id`/`leboncoin_url`), find «
   of silently failing to find the delete control).
 - Exit 0 deleted; 2 if aborted / login-required / control-not-found / unconfirmed; 1 on a fatal error.
 
-## `edit` / `renew` / `mark-sold` / `deactivate` / `reactivate` `<slug>`  *(CDP, write)*
+## `edit` / `renew` / `mark-sold` / `deactivate` / `reactivate` `<slug>`  *(advanced, CDP, write)*
 Manage an existing ad. All pre-flight the login check; all confirm `y/N` unless `--yes`.
 Controls are found on the ad page, in its « … » menu, then in its card on « mes annonces »;
 `mark-sold` / `deactivate` / `reactivate` change the local status **only with proof** (a
@@ -147,24 +153,54 @@ confirmation sentence, or the opposite control appearing), else `unconfirmed` +
 - Exit 0 on success; 2 if `aborted` / `login-required` / `action-failed` / `unconfirmed`; 1 (throws) on a wrong
   starting status or a never-published ad.
 
-## `cu-sheet <slug>`  *(pure, no CDP)*
-Build a fill sheet for an agent that fills the deposit wizard by **computer use** (screenshots,
-clicks, typing) instead of CDP. Writes `annonces/<slug>/computer-use.md`: the deposit URL, then
-in form order title, category, the full description, price, zipcode/city, condition/shipping,
-every attribute (key → value) and the absolute photo paths; per step, the visible labels and
-which are required (when `form-map.json` exists — run `inspect` or `publish --diagnostic`
-first); a resume block at the top when `handoff.json` exists; and the safety rules.
-- `--json` prints the sheet (`{ slug, deposit_url, handoff, values, form_steps, safety }`).
-- Exit 0; 1 (prints the validation report) if `validate` fails. Playbook:
-  `references/computer-use.md`.
+## `cu-sheet <slug> [--action <a>]`  *(pure, no CDP)*
+Build the sheet an agent follows to do an account action by **computer use** (screenshots,
+clicks, typing) in the user's own, already logged-in browser. Writes
+`annonces/<slug>/computer-use.md`. `--action` is `publish` (default) | `edit` | `delete` |
+`renew` | `mark-sold` | `deactivate` | `reactivate`.
+- `publish`: the deposit URL, then in form order title, category, the full description, price,
+  zipcode/city, condition/shipping, every attribute (key → value) and the absolute photo paths;
+  the photos folder and the OS file-dialog recipe; per step, the visible labels and which are
+  required (when `form-map.json` exists — run `inspect` or `publish --diagnostic` first); a
+  resume block at the top when `handoff.json` exists; and the safety rules. `--json` prints
+  `{ slug, action, deposit_url, start_url, handoff, values (incl. photos_dir), form_steps, safety }`.
+  Refuses an invalid annonce (`validate`).
+- Other actions: an ordered playbook — the start URL (the ad's `leboncoin_url`; « Mes annonces »
+  `https://www.leboncoin.fr/compte/part/mes-annonces` when it is unknown, and always for
+  `reactivate`), how to recognise the ad (title, price, `leboncoin_id`), the controls to click
+  (the same labels the CDP engine looks for: ad page, then its « … » menu, then its card in
+  « Mes annonces »), the confirmation dialog, the **proof of success** (the same proof the CDP
+  engine requires), the **stop rule** (`delete` / `mark-sold`: the user confirms in the chat
+  before the click; `edit`: stop before « Enregistrer » unless the user asked; `renew`: stop on
+  any paid-option page) and the exact `record` command to run afterwards. `edit` also lists
+  every value from `annonce.md` the form must end up with. `--json` prints
+  `{ slug, action, summary, start_url, ad, steps, changes?, proof, stop_rule, record, notes, safety }`.
+- Rule for an ad the annonce does not know: a missing `leboncoin_url` / `leboncoin_id`, or a
+  local status that does not match the action, never refuses — it becomes a « Check first »
+  note (find the ad in « Mes annonces » by title and price, copy its URL for `record`). Only a
+  `deleted` annonce is refused. `edit` refuses invalid values (the `validate` gate without its
+  `status: draft` rule); the other actions have no content gate.
+- Exit 0; 1 on an unknown `--action`, a refused annonce, or (prints the validation report) an
+  invalid one. Playbook: `references/computer-use.md`.
 
-## `open [<slug>]`  *(CDP, read-only)*
-Launch (or reuse) the scraper browser and navigate to `--url <u>`, else the slug's
-`leboncoin_url` when it is `published`/`paused` (unless `--deposit`), else the deposit form.
-Drives nothing else; disconnects and **leaves the window open**. Prints the CDP port and
+## `open [<slug>] --real [--action <a>]`  *(no CDP)*
+Open the page in the user's **own** browser through the OS — no CDP, no scraper profile, no
+remote-debugging port: macOS `open -a "<App>" <url>`, with the app name taken from the
+remembered / detected browser binary (`--browser brave` once →
+`/Applications/Brave Browser.app/…` → `Brave Browser`), else plain `open <url>` (the default
+browser); Linux `xdg-open <url>`. Spawned with an argument array (no shell). Other platforms:
+exit 1 (open the URL by hand).
+- Target: `--url <u>` > the `--action`'s start page (see `cu-sheet`; `publish` = the deposit
+  form) > the slug's `leboncoin_url` when `published`/`paused` (unless `--deposit`) > the
+  deposit form.
+- `--json` prints `{ url, mode: "real", browser }` (`browser` = the macOS app, or `default`).
+
+## `open [<slug>]`  *(advanced, CDP, read-only)*
+Without `--real`: launch (or reuse) the isolated scraper browser and navigate to the same
+target. Drives nothing else; disconnects and **leaves the window open**. Prints the CDP port and
 `http://127.0.0.1:<port>`, then `driver → dev-browser --connect <port>` when `dev-browser` is on
-`PATH` (the recommended driver — optional, not a dependency; never let it launch its own browser),
-else an install hint (`npm i -g dev-browser`); computer use on that window is the last resort.
+`PATH` (optional, not a dependency; never let it launch its own browser), else an install hint
+(`npm i -g dev-browser`). The scraper profile must be logged in once (`login`).
 - Takes the browser options (`--browser`, `--chrome-path`, `--port`, `--reset-profile`,
   `--copy-profile`). `--json` prints `{ url, port, endpoint, devBrowser: { available, command } }`.
 
@@ -172,9 +208,11 @@ else an install hint (`npm i -g dev-browser`); computer use on that window is th
 Write back an action done by computer use: `leboncoin_url`, `leboncoin_id` (parsed from
 `https://www.leboncoin.fr/ad/<category>/<id>` or `…/<id>.htm`, the same patterns `publish`
 uses), `status` and its timestamp (`published_at` only when it becomes `published` and is not
-set yet; `sold_at` / `paused_at` / `deleted_at` likewise). Removes `handoff.json`.
-- `--status <published|sold|paused|deleted>` (default `published`).
-- Exit 0; 1 if `--url` is missing or not a leboncoin.fr ad URL.
+set yet; `sold_at` / `paused_at` / `deleted_at` likewise; `paused_at` is cleared when a paused
+ad goes back to `published`). Removes `handoff.json`.
+- `--status <published|sold|paused|deleted|renewed>` (default `published`). `renewed` (after a
+  bump) keeps `status: published` and stamps `renewed_at`.
+- Exit 0; 1 if `--url` is missing or not a leboncoin.fr ad URL, or on an unknown `--status`.
 
 ## `list` (alias `status`)
 List local annonces with status, price and title.

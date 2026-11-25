@@ -38,6 +38,7 @@ lists beyond what is shown.
 | `deleted_at` | ISO string | (set by delete) | |
 | `sold_at` | ISO string | (set by mark-sold) | |
 | `paused_at` | ISO string | (set by deactivate; cleared on reactivate) | |
+| `renewed_at` | ISO string | (set by `record --status renewed`) | Last bump (« Remettre en avant ») done by computer use; `status` stays `published`. |
 
 The markdown **body** (everything after the closing `---`) is the description.
 
@@ -58,6 +59,9 @@ draft  --publish-->  published  --delete-->     deleted
 - `edit` re-opens the modify form for a `published`/`paused` ad and re-fills it (status unchanged).
 - `renew` bumps a `published` ad (no status change). `mark-sold` → `sold` (+`sold_at`),
   `deactivate` → `paused` (+`paused_at`), `reactivate` → `published`. All require a `leboncoin_id`.
+- Done by computer use instead, the same transitions are written by `record <slug> --url <ad url>
+  --status published|sold|paused|deleted|renewed` (`renewed` keeps `published` and stamps
+  `renewed_at`; `published` after `paused` clears `paused_at`).
 
 ## Example (valid draft)
 

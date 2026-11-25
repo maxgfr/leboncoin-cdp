@@ -1,36 +1,58 @@
-# Computer use — filling the deposit wizard by screen
+# Computer use — account actions in your own browser
 
-The CDP engine (`publish`) fills the wizard with in-page JavaScript. Computer use does the same
-job with screenshots, clicks and typing, in the **same scraper window** and from the **same
-values** (`annonce.md`). Use it when the user asks for it, or to finish a CDP run that handed off.
+Every account action — publish, edit, delete, renew, mark-sold, deactivate, reactivate — is done
+by default by **computer use**: the agent controls the user's own, already logged-in browser
+(e.g. Brave) with screenshots, clicks and typing, from the values in `annonce.md`. No CDP, no
+scraper profile, no remote-debugging port, no login anywhere else. Read-only research (`scrape`,
+`comparables`) stays on the CDP engine, which needs no login.
 
-**Driver, in order of preference:** (1) [dev-browser](https://github.com/sawyerhood/dev-browser) attached to the scraper window —
-accessibility snapshot + refs, see [Recommended driver: dev-browser](#recommended-driver-dev-browser);
-(2) pixel computer use (sections 2–5 below) as the last resort. The rules and steps are the same.
+The loop for any action:
+
+```
+node scripts/leboncoin.mjs cu-sheet <slug> --action <a>   # → annonces/<slug>/computer-use.md
+node scripts/leboncoin.mjs open <slug> --real --action <a> # the start page, in the user's own browser
+# … the agent performs the action by computer use, following the sheet …
+node scripts/leboncoin.mjs record <slug> --url <ad url> --status <s>
+```
+
+`<a>` is `publish` (default) | `edit` | `delete` | `renew` | `mark-sold` | `deactivate` |
+`reactivate`. `open --real` uses the OS (`open -a "<App>"` on macOS with the remembered browser —
+`--browser brave` once —, else the default browser; `xdg-open` on Linux).
+
+The CDP write engine (`publish`, `edit`, `delete`, …) is the advanced alternative: it needs the
+isolated scraper profile logged in once (`login`). Its windows can also be driven by
+[dev-browser](#advanced-dev-browser-on-the-cdp-scraper-window) — never the user's own browser,
+which exposes no CDP port.
 
 Rules first (they override everything below):
 
 - Type **only** the values from the sheet. Never invent a title, price, attribute or text.
-- **Stop on the final review step.** Never click its « Continuer » / « Déposer mon annonce »
-  unless the user explicitly asked for full-auto. The human submits.
+- **Take a screenshot before every step** and check it before acting; again after every action
+  that changes the page.
+- **The user is logged in already.** Never type their password, never log in for them: a login
+  page means stop and ask them to log in themselves.
+- **The human owns the final / irreversible click.** Publish: stop on the final review, never
+  click its « Continuer » / « Déposer mon annonce » unless the user explicitly asked for
+  full-auto. Delete and mark-sold: the user confirms in the chat before the click. Edit: stop
+  before « Enregistrer » unless the user asked you to save.
 - **DataDome** (« Vérification », a slider or puzzle, a `captcha-delivery` frame): stop and ask
   the human to solve it. Never try to solve it yourself.
-- Take a screenshot after every action that changes the page, and check it before moving on.
+- **Never pay**: a bump may lead to a paid-option page — stop there and ask.
+- No proof of success → no `record`.
 
-## 1. Prepare
+## 1. Prepare (publish)
 
 ```
 node scripts/leboncoin.mjs validate <slug>        # must pass
 node scripts/leboncoin.mjs cu-sheet <slug>        # → annonces/<slug>/computer-use.md
-node scripts/leboncoin.mjs open <slug> --deposit  # scraper window on the deposit form + CDP port
+node scripts/leboncoin.mjs open <slug> --real     # the deposit form, in the user's own browser
 ```
 
 Read `computer-use.md`: it lists, in form order, title, category, the full description, price,
-location, condition/shipping, every attribute (label → value) and the **absolute** photo paths.
-If `form-map.json` exists (`inspect`, or better `publish --diagnostic`, which walks every step),
-the sheet also lists per step the visible labels and which are **required** — that is what to
-look for on screen. The window `open` launches uses the scraper profile, which must be logged
-in (`login`; the user logs in once by hand there).
+location, condition/shipping, every attribute (label → value), the **absolute** photo paths and
+the photos folder. If `form-map.json` exists (`inspect`, or better `publish --diagnostic`, which
+walks every step), the sheet also lists per step the visible labels and which are **required** —
+that is what to look for on screen.
 
 ## 2. Find fields by their visible label
 
@@ -58,14 +80,16 @@ guess silently.
 
 ## 4. Photos (OS file dialog)
 
-Click the photo area (« Ajouter des photos »). The OS file dialog opens:
+The sheet gives the photos folder (absolute path) and the files in order. Click the photo area
+(« Ajouter des photos »). The OS file dialog opens:
 
-- macOS: press `Cmd+Shift+G`, type the **absolute** path from the sheet, Enter, then « Ouvrir ».
-- Linux (GTK): press `Ctrl+L`, type the absolute path, Enter.
+- macOS: press `Cmd+Shift+G`, paste the **folder** path, Enter; then `Cmd+A` to select every
+  photo of that folder (or `Cmd`-click only the listed files if it holds others); « Ouvrir ».
+- Linux (GTK): press `Ctrl+L`, type the folder path, Enter; then `Ctrl+A` (or `Ctrl`-click the
+  listed files); « Open ».
 
-Upload in the sheet's order; several files of one folder can be selected together. Wait for each
-thumbnail to appear, then compare the count with the sheet. In a handoff, upload only
-`remaining_photos`.
+Wait for the thumbnails, then compare the count with the sheet; reorder them on the page if the
+order matters. In a handoff, upload only `remaining_photos`.
 
 ## 5. Advance and recognise the final step
 
@@ -80,11 +104,48 @@ repeats title + description + price + address on one page (the same markers as
 its content, never by the button label. **Stop there**, screenshot it, and tell the user to review
 and submit.
 
-## 6. Fallback: finish a CDP handoff
+## 6. The other account actions
 
-When `publish` logs `handoff → computer use: read annonces/<slug>/handoff.json …`, the window is
-still open on the step it reached. Do not restart the deposit. Read `handoff.json` (or run
-`cu-sheet`, which puts it on top):
+`cu-sheet <slug> --action <a>` writes an ordered playbook instead of a fill sheet. Each one:
+
+1. `open <slug> --real --action <a>` — the start page: the ad's `leboncoin_url`, or « Mes annonces »
+   (`https://www.leboncoin.fr/compte/part/mes-annonces`) when it is unknown, and always for
+   `reactivate` (a paused ad's page may be hidden). Screenshot; a login page or a captcha → the
+   user handles it.
+2. **Find the ad** by its title and price (and `leboncoin_id` when known). On the ad page, check
+   it is the right one; in « Mes annonces », find its card.
+3. **Find the control** on the ad page, else in its « … » menu (« Plus d'actions » / « Gérer
+   l'annonce »…), else on its card in « Mes annonces » — the same places and labels the CDP
+   engine uses.
+4. Apply the **stop rule**, click, then click the confirmation if a dialog asks. Screenshot.
+5. Look for the **proof of success** — the same proof the CDP engine requires before it changes
+   the local status. With it, run the sheet's `record` command; without it, screenshot, tell the
+   user, record nothing.
+
+| Action | Control (first labels tried) | Confirmation | Proof of success | Stop rule | `record --status` |
+|---|---|---|---|---|---|
+| `edit` | « Modifier l'annonce » / « Modifier » | — | the ad page shows the new values | stop before « Enregistrer les modifications » / « Enregistrer » unless the user asked | current (`published` or `paused`) |
+| `delete` | « Supprimer l'annonce » / « Supprimer » | « Confirmer la suppression » / « Oui, supprimer » | « annonce supprimée »…, or the ad URL reloads to « n'existe plus » / « page introuvable » | irreversible: the user confirms in the chat first | `deleted` |
+| `renew` | « Remettre en avant » / « Remonter l'annonce » | « Confirmer » / « Valider » | no reliable text: « Mes annonces » shows it put forward | a paid-option page → stop and ask; never pay | `renewed` |
+| `mark-sold` | « Marquer comme vendu » / « C'est vendu » | « Confirmer » / « Oui » | « annonce vendue » / « marquée comme vendue » | irreversible: the user confirms in the chat first | `sold` |
+| `deactivate` | « Mettre en pause » / « Pause » / « Désactiver » | « Confirmer » / « Oui » | « annonce mise en pause »…, or « Réactiver » now shows | reversible: the request is the consent | `paused` |
+| `reactivate` | « Réactiver l'annonce » / « Remettre en ligne » | « Confirmer » / « Oui » | « annonce réactivée »…, or « Mettre en pause » now shows | reversible: the request is the consent | `published` |
+
+The sheet lists every label and proof phrase in full. For `edit` it also lists every value from
+`annonce.md` the modify form must end up with (title, the description verbatim, price, location,
+condition, shipping, attributes); the photos stay as they are unless the user asked.
+
+**An ad the annonce does not know.** When `annonce.md` has no `leboncoin_url` (it was published
+by hand, or never recorded) or its status does not match the action, the sheet does not refuse:
+it starts in « Mes annonces », adds a « Check first » note (find the ad by title and price, check
+the action applies, copy its URL from the address bar), and its `record` command carries an
+`<ad url>` placeholder to fill in. Only a `deleted` annonce is refused.
+
+## 7. Advanced: finish a CDP handoff
+
+When the CDP `publish` logs `handoff → computer use: read annonces/<slug>/handoff.json …`, the
+scraper window (not the user's own browser) is still open on the step it reached. Do not restart
+the deposit. Read `handoff.json` (or run `cu-sheet`, which puts it on top):
 
 - `reason` / `wizard_stop` / `error` — why CDP stopped (`incomplete`, `form-error`,
   `not-published`; `missing-required`, `stuck`, `no-next`, `max-steps`…).
@@ -95,9 +156,9 @@ still open on the step it reached. Do not restart the deposit. Read `handoff.jso
 
 Finish only what remains, then continue with step 5 as usual.
 
-## 7. Record the result
+## 8. Record the result
 
-When the ad is live (the human submitted; the page shows the ad or « mes annonces » lists it),
+When the ad is live (the human submitted; the page shows the ad or « Mes annonces » lists it),
 copy its URL (`https://www.leboncoin.fr/ad/<category>/<id>`) and run:
 
 ```
@@ -105,13 +166,17 @@ node scripts/leboncoin.mjs record <slug> --url <ad url>
 ```
 
 It writes `leboncoin_url`, `leboncoin_id`, `status: published` and `published_at` into
-`annonce.md`, and removes `handoff.json`. For a change made by hand on the site, pass
-`--status sold|paused|deleted`.
+`annonce.md`, and removes `handoff.json`. After the other actions, run the command their sheet
+prints: `--status deleted` (`deleted_at`), `sold` (`sold_at`), `paused` (`paused_at`),
+`published` after a reactivation (clears `paused_at`), `renewed` after a bump (stays `published`,
+stamps `renewed_at`).
 
-## Recommended driver: dev-browser
+## Advanced: dev-browser on the CDP scraper window
 
 [dev-browser](https://github.com/sawyerhood/dev-browser) (MIT, `npm i -g dev-browser`) runs Puppeteer scripts in a warm daemon. It is
-**optional**, not a dependency of the skill. `open` detects it on `PATH` and prints
+**optional**, not a dependency of the skill, and only for the CDP engine: it needs a CDP port,
+which only the scraper window opened by `open` (without `--real`) exposes — the user's own
+browser has none. `open` detects it on `PATH` and prints
 `driver → dev-browser --connect <port>` (or an install hint); `--json` reports it as
 `devBrowser: { available, command }`, `handoff.json` carries the same command as `driver_hint`,
 and `computer-use.md` has a "How to drive" block. `dev-browser --help` prints its full guide.
