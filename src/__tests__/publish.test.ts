@@ -178,6 +178,54 @@ describe("runPublish over the live wizard", () => {
     expect(res.reason).toBe("login-required");
   });
 
+  it("hands off to computer use on a not-ok run: handoff.json with the step, missing fields + values, port; readiness points at it", async () => {
+    const { dir, root } = setupDraft({ condition: undefined });
+    const { cdp } = liveSite();
+    const res = await runPublish(root, "ad", { timeoutSubmitMs: 10 }, { connect: async () => cdp as never, cdpPort: 41234 });
+    expect(res.reason).toBe("not-published");
+    const file = join(dir, "handoff.json");
+    expect(res.handoff).toBe(file);
+    const h = JSON.parse(readFileSync(file, "utf8"));
+    expect(h).toMatchObject({
+      reason: "not-published",
+      wizard_stop: "missing-required",
+      step: { index: 2 },
+      cdp_port: 41234,
+      driver_hint: "dev-browser --connect 41234",
+      remaining_photos: [],
+    });
+    expect(h.missing).toEqual(expect.arrayContaining([expect.objectContaining({ field: "État", required: true, value: null })]));
+    // Fields the wizard never reached carry the annonce value to type by hand.
+    expect(h.missing).toEqual(expect.arrayContaining([expect.objectContaining({ field: "price", value: "650" })]));
+    expect(h.blockers).toEqual(res.missing);
+    expect(h.preview_png).toBe(join(dir, "publish-preview.png"));
+    expect(JSON.parse(readFileSync(join(dir, "push-readiness.json"), "utf8")).handoff).toBe(file);
+  });
+
+  it("--strict (incomplete) also hands off; --diagnostic never writes handoff.json", async () => {
+    const strict = setupDraft({ condition: undefined });
+    const r1 = await runPublish(strict.root, "ad", { strict: true, timeoutSubmitMs: 10 }, { connect: async () => liveSite().cdp as never });
+    expect(r1.reason).toBe("incomplete");
+    expect(existsSync(join(strict.dir, "handoff.json"))).toBe(true);
+
+    const diag = setupDraft({ condition: undefined });
+    const r2 = await runPublish(diag.root, "ad", { diagnostic: true }, { connect: async () => liveSite().cdp as never });
+    expect(r2.reason).toBe("diagnostic");
+    expect(r2.handoff).toBeUndefined();
+    expect(existsSync(join(diag.dir, "handoff.json"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(diag.dir, "push-readiness.json"), "utf8")).handoff).toBeNull();
+  });
+
+  it("removes a stale handoff.json on a successful publish", async () => {
+    const { dir, root } = setupDraft();
+    writeFileSync(join(dir, "handoff.json"), "{}");
+    const { cdp } = liveSite({ publishedUrl: "https://www.leboncoin.fr/ad/informatique/3138258318" });
+    const res = await runPublish(root, "ad", { yes: true, timeoutSubmitMs: 5_000 }, { connect: async () => cdp as never });
+    expect(res.ok).toBe(true);
+    expect(res.handoff).toBeUndefined();
+    expect(existsSync(join(dir, "handoff.json"))).toBe(false);
+  });
+
   it("refuses to publish a non-draft annonce", async () => {
     const { root } = setupDraft({ status: "published", leboncoin_id: "1" });
     const { cdp } = liveSite();

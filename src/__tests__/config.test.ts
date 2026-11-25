@@ -6,8 +6,10 @@ import {
   createWrapperDataDir,
   getBrowserPath,
   loadBrowserChoice,
+  config,
   resetScraperProfile,
   saveBrowserChoice,
+  selectBrowser,
 } from "../config";
 import type { BrowserType } from "../config";
 import os from "os";
@@ -92,7 +94,36 @@ describe("detectUserDataDir", () => {
 });
 
 describe("createWrapperDataDir", () => {
-  test("creates wrapper by copying profile", () => {
+  test("creates a FRESH, isolated profile by default (never copies the real one: shared session tokens log the real browser out)", () => {
+    resetScraperProfile();
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), "lbc-real-"));
+    fs.writeFileSync(path.join(real, "Local State"), '{"real":true}');
+    fs.mkdirSync(path.join(real, "Default"));
+    fs.writeFileSync(path.join(real, "Default", "Cookies"), "session");
+
+    const wrapper = createWrapperDataDir(real);
+    expect(fs.existsSync(path.join(wrapper, "Local State"))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(wrapper, "Local State"), "utf8")).real).toBeUndefined();
+    expect(fs.existsSync(path.join(wrapper, "Default", "Cookies"))).toBe(false);
+
+    // An existing profile is reused as-is (fast path), even with the copy opt-in.
+    fs.writeFileSync(path.join(wrapper, "marker"), "kept");
+    expect(createWrapperDataDir(real, "chrome", true)).toBe(wrapper);
+    expect(fs.existsSync(path.join(wrapper, "marker"))).toBe(true);
+    expect(fs.existsSync(path.join(wrapper, "Default", "Cookies"))).toBe(false);
+
+    fs.rmSync(real, { recursive: true });
+    fs.rmSync(wrapper, { recursive: true });
+  });
+
+  test("selectBrowser({ copyProfile }) is the only way to turn the copy on", () => {
+    expect(config.browser.copyProfile).toBe(false);
+    selectBrowser({ chromePath: config.browser.chromePath, copyProfile: true, remember: false });
+    expect(config.browser.copyProfile).toBe(true);
+    config.browser.copyProfile = false;
+  });
+
+  test("copies the real profile only with the explicit opt-in (--copy-profile)", () => {
     // Ensure no pre-existing scraper profile interferes
     resetScraperProfile();
 
@@ -102,7 +133,7 @@ describe("createWrapperDataDir", () => {
     fs.writeFileSync(path.join(tmpDir, "testfile"), "content");
     fs.mkdirSync(path.join(tmpDir, "Default"));
 
-    const wrapper = createWrapperDataDir(tmpDir);
+    const wrapper = createWrapperDataDir(tmpDir, "chrome", true);
     expect(fs.existsSync(wrapper)).toBe(true);
 
     // Local State should exist and be a regular file (copied, not symlink)
@@ -126,7 +157,7 @@ describe("createWrapperDataDir", () => {
   });
 
   test("handles non-existent dir gracefully", () => {
-    const wrapper = createWrapperDataDir("/nonexistent/path/1234");
+    const wrapper = createWrapperDataDir("/nonexistent/path/1234", "chrome", true);
     expect(fs.existsSync(wrapper)).toBe(true);
 
     // Should still create a valid wrapper with Local State
@@ -162,13 +193,13 @@ describe("per-browser profiles (Brave support)", () => {
     expect(browserKey("/usr/bin/google-chrome")).toBe("chrome");
     const real = fs.mkdtempSync(path.join(os.tmpdir(), "lbc-real-"));
     fs.writeFileSync(path.join(real, "Local State"), "{}");
-    const brave = createWrapperDataDir(real, "brave");
+    const brave = createWrapperDataDir(real, "brave", true);
     expect(path.basename(brave)).toBe("profile-brave");
     fs.rmSync(brave, { recursive: true });
     fs.rmSync(real, { recursive: true });
   });
 
-  test("the profile copy skips caches and lock files but keeps cookies", () => {
+  test("the opt-in profile copy skips caches and lock files but keeps cookies", () => {
     const real = fs.mkdtempSync(path.join(os.tmpdir(), "lbc-real-"));
     fs.mkdirSync(path.join(real, "Default", "Cache"), { recursive: true });
     fs.mkdirSync(path.join(real, "Default", "Code Cache"), { recursive: true });
@@ -176,7 +207,7 @@ describe("per-browser profiles (Brave support)", () => {
     fs.writeFileSync(path.join(real, "Default", "Cookies"), "c");
     fs.writeFileSync(path.join(real, "SingletonLock"), "");
     fs.writeFileSync(path.join(real, "Local State"), "{}");
-    const wrapper = createWrapperDataDir(real, "chromium");
+    const wrapper = createWrapperDataDir(real, "chromium", true);
     expect(fs.existsSync(path.join(wrapper, "Default", "Cookies"))).toBe(true);
     expect(fs.existsSync(path.join(wrapper, "Default", "Cache"))).toBe(false);
     expect(fs.existsSync(path.join(wrapper, "Default", "Code Cache"))).toBe(false);

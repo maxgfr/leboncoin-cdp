@@ -22,6 +22,8 @@ export interface ComparablesOptions {
   withDetails?: boolean;
   browser?: BrowserType;
   chromePath?: string;
+  /** Seed a NEW scraper profile from the real browser profile (may log the real browser out). */
+  copyProfile?: boolean;
   debuggingPort?: number;
   pageTimeout?: number;
 }
@@ -38,7 +40,7 @@ export async function runComparables(
     throw new Error(`cannot build a comparables query for "${slug}" — add a title/zipcode or pass --query`);
   }
 
-  selectBrowser({ browser: opts.browser, chromePath: opts.chromePath });
+  selectBrowser({ browser: opts.browser, chromePath: opts.chromePath, copyProfile: opts.copyProfile });
   if (opts.debuggingPort) config.browser.debuggingPort = opts.debuggingPort;
   if (opts.pageTimeout) config.browser.timeout = opts.pageTimeout;
   config.scraping.maxPages = opts.maxPages && opts.maxPages > 0 ? opts.maxPages : 1;
