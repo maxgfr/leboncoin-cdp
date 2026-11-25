@@ -12,6 +12,7 @@
  * contains a literal Leboncoin selector.
  */
 import type { CDPClient } from "./cdp";
+import { ADDRESS_MIN_OVERLAP } from "./field-match";
 import type { FieldDescriptor } from "./form-introspect";
 import type { ButtonSelector } from "./selectors";
 import { delay } from "./utils";
@@ -20,17 +21,20 @@ import { delay } from "./utils";
 const NORM_JS = `(s) => String(s == null ? '' : s).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()`;
 /** In-page visibility test (layout box present, not aria-hidden). */
 const VISIBLE_JS = `(el) => !!el && el.getAttribute('aria-hidden') !== 'true' && !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length))`;
-/** In-page option picker, identical tiers to field-match.ts pickOption. */
-const PICK_JS = `(labels, wanted) => {
+/** In-page option picker, identical tiers to field-match.ts pickOption (`minOverlap` > 0 = its `strict` mode). */
+const PICK_JS = `(labels, wanted, minOverlap) => {
   const n = ${NORM_JS};
   const w = n(wanted);
   if (!w || !labels.length) return -1;
+  const strict = !!minOverlap;
   const L = labels.map(n);
-  const tiers = [(o) => o === w, (o) => o.startsWith(w) || (o.length > 2 && w.startsWith(o)), (o) => o.includes(w) || (o.length > 2 && w.includes(o))];
-  for (const t of tiers) { const i = L.findIndex((o) => o && t(o)); if (i >= 0) return i; }
+  const nums = strict ? w.split(' ').filter((t) => /^\\d+$/.test(t)) : [];
+  const ok = (o) => !!o && nums.every((x) => (' ' + o + ' ').includes(' ' + x + ' '));
+  const tiers = [(o) => o === w, (o) => o.startsWith(w) || (!strict && o.length > 2 && w.startsWith(o)), (o) => o.includes(w) || (!strict && o.length > 2 && w.includes(o))];
+  for (const t of tiers) { const i = L.findIndex((o) => ok(o) && t(o)); if (i >= 0) return i; }
   const wt = new Set(w.split(' ').filter((x) => x.length > 1));
-  let best = -1, bs = 0;
-  L.forEach((o, i) => { const s = Array.from(new Set(o.split(' '))).filter((x) => wt.has(x)).length; if (s > bs || (s === bs && s > 0 && o.length < L[best].length)) { best = i; bs = s; } });
+  let best = -1, bs = (strict ? Math.max(1, Math.ceil(wt.size * minOverlap)) : 1) - 1;
+  L.forEach((o, i) => { if (!ok(o)) return; const s = Array.from(new Set(o.split(' '))).filter((x) => wt.has(x)).length; if (s > bs || (s === bs && s > 0 && best >= 0 && o.length < L[best].length)) { best = i; bs = s; } });
   return best;
 }`;
 
@@ -192,15 +196,33 @@ export interface FillResult {
   reason?: "gone" | "no-option" | "not-applied" | "unsupported" | "error";
 }
 
+export interface FillOptions {
+  /** Max wait for a typed combobox's (async) suggestions (ms, default 6 000). */
+  optionWaitMs?: number;
+  /**
+   * The value is a street address for a geocoding combobox: always type it, and
+   * only take a suggestion with the same numbers and most of its words (never the
+   * bare city, never a stale suggestion).
+   */
+  address?: boolean;
+}
+
 /**
  * Write `value` into one introspected control, dispatching on its type:
- * text/textarea (native setter + events), select (option by label), ARIA
- * combobox (type, wait for the listbox, click the best option — `hint` breaks
- * ties, e.g. the city for an address), radio group (click the matching
- * option), checkbox/switch (click only if the state differs), contenteditable.
+ * text (native setter + events), textarea (native setter, then select-all +
+ * insertText if React did not keep it — verified EXACTLY), select (option by
+ * label), ARIA combobox, radio group (click the matching option),
+ * checkbox/switch (click only if the state differs), contenteditable.
+ *
+ * Comboboxes come in two kinds. A LIST combobox (its options exist before
+ * anything is typed — live 2026-11 « État », « Marque »…) is set by meaning: pick
+ * the option whose text best matches (« 12 à 14 » → « 12 à 14” (33cm à 37cm) »),
+ * clear a different value (« Effacer »), open the list, click the option, and
+ * verify the input now shows it. A TYPED combobox (address geocoding) gets the
+ * value typed, waits for a MATCHING suggestion, clicks it (`hint` breaks ties).
  * Targets the `data-lbc-ref` handle, so no name/id is needed.
  */
-export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: string, hint?: string, opts: { optionWaitMs?: number } = {}): Promise<FillResult> {
+export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: string, hint?: string, opts: FillOptions = {}): Promise<FillResult> {
   const sel = d.ref ? `[data-lbc-ref="${d.ref}"]` : d.selector;
   if (!sel) return { ok: false, reason: "gone" };
   if (d.type === "file") return { ok: false, reason: "unsupported" };
@@ -213,6 +235,7 @@ export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: strin
         const visible = ${VISIBLE_JS};
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const TYPE = ${JSON.stringify(d.type)}, VALUE = ${JSON.stringify(value)}, HINT = ${JSON.stringify(hint ?? "")};
+        const ADDRESS = ${opts.address === true}, MINR = ADDRESS ? ${ADDRESS_MIN_OVERLAP} : 0;
         const el = document.querySelector(${JSON.stringify(sel)});
         if (!el) return { ok: false, reason: 'gone' };
         const txt = (e) => ((e && (e.innerText || e.textContent)) || '').replace(/\\s+/g, ' ').trim();
@@ -223,13 +246,28 @@ export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: strin
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
         };
+        const block = (s) => String(s == null ? '' : s).replace(/\\r\\n?/g, '\\n').trim();
         const truthy = /^(true|1|oui|yes|on)$/i.test(VALUE.trim());
         if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
-        if (TYPE === 'text' || TYPE === 'textarea') {
+        if (TYPE === 'text') {
           if (el.focus) el.focus();
           setVal(el, VALUE);
           el.dispatchEvent(new Event('blur', { bubbles: true }));
           return norm(el.value) === norm(VALUE) ? { ok: true, detail: el.value } : { ok: false, reason: 'not-applied', detail: el.value };
+        }
+        if (TYPE === 'textarea') {
+          // Replaces whatever is there (live 2026-11: Leboncoin's own AI description).
+          if (el.focus) el.focus();
+          setVal(el, VALUE);
+          await sleep(100);
+          if (block(el.value) !== block(VALUE) && document.execCommand) {
+            el.focus();
+            if (el.select) el.select();
+            document.execCommand('insertText', false, VALUE);
+            await sleep(100);
+          }
+          el.dispatchEvent(new Event('blur', { bubbles: true }));
+          return block(el.value) === block(VALUE) ? { ok: true, detail: 'exact (' + el.value.length + ' chars)' } : { ok: false, reason: 'not-applied', detail: el.value.slice(0, 80) };
         }
         if (TYPE === 'select') {
           const opts = Array.from(el.options);
@@ -242,6 +280,54 @@ export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: strin
         }
         if (TYPE === 'combobox') {
           const input = el.matches('input, textarea') ? el : (el.querySelector('input') || el);
+          const lbId = input.getAttribute('aria-controls') || el.getAttribute('aria-controls') || '';
+          // The listbox is mounted but hidden until opened: read its options regardless of visibility.
+          const listOptions = () => {
+            const lb = lbId ? document.getElementById(lbId) : null;
+            return Array.from((lb || document).querySelectorAll('[role="option"]')).filter((o) => o.getAttribute('aria-disabled') !== 'true' && (lb || visible(o)));
+          };
+          const shows = (label) => norm(input.value) !== '' && norm(input.value) === norm(label);
+          const settle = async (label) => { for (let t = 0; t < 10; t++) { if (shows(label)) return true; await sleep(150); } return false; };
+          const open = async () => {
+            if (input.focus) input.focus();
+            input.click();
+            await sleep(250);
+            if (input.getAttribute('aria-expanded') !== 'true') {
+              const toggle = lbId ? Array.from(document.querySelectorAll('button[aria-controls]')).find((b) => b.getAttribute('aria-controls') === lbId) : null;
+              if (toggle) { toggle.click(); await sleep(250); }
+            }
+          };
+          const choose = async (o, label) => {
+            o.click();
+            if (await settle(label)) return true;
+            // Some lists react to the pointer sequence, not to click() alone.
+            for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) o.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+            return settle(label);
+          };
+          if (!ADDRESS && input.matches('input, textarea')) {
+            // ── list combobox: by meaning, no typing ──
+            let labels = listOptions().map(txt);
+            const i = pick(labels, VALUE);
+            if (labels.length && i < 0) return { ok: false, reason: 'no-option', detail: labels.slice(0, 8).join(' | ') };
+            if (i >= 0) {
+              const want = labels[i];
+              if (shows(want)) return { ok: true, detail: want };
+              if (input.value) {
+                // A different (prefilled) value filters the list: clear it first.
+                const box = input.closest('[data-rhf-name]') || (input.parentElement && input.parentElement.parentElement) || document;
+                const clear = Array.from(box.querySelectorAll('button[aria-label]')).find((b) => /^effacer/.test(norm(b.getAttribute('aria-label'))));
+                if (clear) { clear.click(); await sleep(250); }
+                if (input.value) { setVal(input, ''); await sleep(150); }
+              }
+              await open();
+              const options = listOptions();
+              labels = options.map(txt);
+              let j = labels.findIndex((l) => norm(l) === norm(want));
+              if (j < 0) j = pick(labels, VALUE);
+              if (j >= 0 && (await choose(options[j], labels[j]))) return { ok: true, detail: labels[j] };
+              // Fall through: type it, like a free-text combobox.
+            }
+          }
           if (input.focus) input.focus();
           input.click();
           await sleep(150);
@@ -250,22 +336,21 @@ export async function fillField(cdp: CDPClient, d: FieldDescriptor, value: strin
           // list first shows STALE entries: poll until an option MATCHES (~6 s max).
           let options = [], labels = [], i = -1;
           for (let t = 0; t < ${Math.max(1, Math.ceil((opts.optionWaitMs ?? 6_000) / 200))}; t++) {
-            const lb = document.getElementById(input.getAttribute('aria-controls') || el.getAttribute('aria-controls') || '');
-            options = Array.from((lb || document).querySelectorAll('[role="option"]')).filter((o) => visible(o) && o.getAttribute('aria-disabled') !== 'true');
+            options = listOptions().filter(visible);
             labels = options.map(txt);
-            i = pick(labels, VALUE);
-            if (i < 0 && HINT) i = pick(labels, HINT);
+            i = pick(labels, VALUE, MINR);
+            if (i < 0 && HINT) i = pick(labels, HINT, MINR);
             if (i >= 0) break;
             await sleep(200);
           }
           if (!options.length) {
-            // Free-text combobox: the typed value stands.
-            return input.value ? { ok: true, detail: input.value } : { ok: false, reason: 'no-option' };
+            // Free-text combobox: the typed value stands (an address must be PICKED).
+            return input.value && !ADDRESS ? { ok: true, detail: input.value } : { ok: false, reason: 'no-option' };
           }
           if (i < 0) return { ok: false, reason: 'no-option', detail: labels.slice(0, 8).join(' | ') };
-          options[i].click();
-          await sleep(300);
-          return { ok: true, detail: labels[i] };
+          if (await choose(options[i], labels[i])) return { ok: true, detail: labels[i] };
+          // The input may show a formatted variant of the label: accept it when it still matches.
+          return input.value && pick([input.value], VALUE, MINR) === 0 ? { ok: true, detail: input.value } : { ok: false, reason: 'not-applied', detail: input.value };
         }
         if (TYPE === 'radiogroup' || TYPE === 'radio') {
           const group = TYPE === 'radio' ? (el.closest('[role="radiogroup"]') || el.parentElement) : el;

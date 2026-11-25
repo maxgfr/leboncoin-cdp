@@ -185,6 +185,7 @@ const REPORT_TO_LOGICAL: Record<string, LogicalFieldName> = {
   description: "description",
   price: "price",
   zipcode: "location",
+  address: "location",
   condition: "condition",
   shipping: "shipping",
 };

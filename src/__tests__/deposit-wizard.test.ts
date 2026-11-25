@@ -15,6 +15,7 @@ const annonce: Annonce = {
   category: "Vélos",
   price: 650,
   zipcode: "75012",
+  address: "10 rue de Lyon, 75012 Paris",
   city: "Paris",
   condition: "Très bon état",
   shipping: true,

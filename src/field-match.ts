@@ -14,7 +14,7 @@
  * form-map.json.
  */
 import type { FieldDescriptor, FormMap } from "./form-introspect";
-import { LOGICAL_FIELDS, type LogicalField, type LogicalFieldName } from "./selectors";
+import { ATTRIBUTE_LABELS, LOGICAL_FIELDS, type LogicalField, type LogicalFieldName } from "./selectors";
 import type { Annonce } from "./types";
 
 export type MatchTarget = { kind: "logical"; name: LogicalFieldName } | { kind: "attribute"; key: string };
@@ -59,27 +59,39 @@ function tokens(s: string): string[] {
     .filter((t) => t.length > 1);
 }
 
+/** Street-address suggestions: same numbers and ≥ 60 % of the words (pickOption `strict`). */
+export const ADDRESS_MIN_OVERLAP = 0.6;
+
 /**
  * Index of the option that best matches `wanted`: exact > prefix (either way) >
  * contains (either way) > best token overlap. -1 when nothing is close.
+ *
+ * `strict` (street addresses): every number of `wanted` must be in the option
+ * (« 10 rue de Lyon » never takes « 1 Rue de Lyon »), an option is never taken
+ * just because `wanted` contains it (the bare city), and a token-overlap pick
+ * must cover at least `minOverlap` of the wanted tokens.
  */
-export function pickOption(options: string[], wanted: string): number {
+export function pickOption(options: string[], wanted: string, strict?: { minOverlap: number }): number {
   const w = normalizeText(wanted);
   if (!w || options.length === 0) return -1;
   const norm = options.map(normalizeText);
+  const numbers = strict ? w.split(" ").filter((t) => /^\d+$/.test(t)) : [];
+  const allowed = (o: string) => !!o && numbers.every((n) => ` ${o} `.includes(` ${n} `));
   const tiers: ((o: string) => boolean)[] = [
     (o) => o === w,
-    (o) => o.startsWith(w) || (o.length > 2 && w.startsWith(o)),
-    (o) => o.includes(w) || (o.length > 2 && w.includes(o)),
+    (o) => o.startsWith(w) || (!strict && o.length > 2 && w.startsWith(o)),
+    (o) => o.includes(w) || (!strict && o.length > 2 && w.includes(o)),
   ];
   for (const tier of tiers) {
-    const i = norm.findIndex((o) => o && tier(o));
+    const i = norm.findIndex((o) => allowed(o) && tier(o));
     if (i >= 0) return i;
   }
   const wt = new Set(tokens(wanted));
+  const minScore = strict ? Math.max(1, Math.ceil(wt.size * strict.minOverlap)) : 1;
   let best = -1;
-  let bestScore = 0;
+  let bestScore = minScore - 1;
   norm.forEach((o, i) => {
+    if (!allowed(o)) return;
     const score = [...new Set(tokens(o))].filter((t) => wt.has(t)).length;
     // Ties go to the shortest label: « Paris (75012) » over « Avenue de Paris, Paris (75012) ».
     if (score > bestScore || (score === bestScore && score > 0 && o.length < (norm[best] ?? "").length)) {
@@ -121,10 +133,31 @@ export function truthy(v: string): boolean {
   return /^(true|1|oui|yes|on)$/i.test(v.trim());
 }
 
-/** True when the control already shows `wanted` — the wizard then leaves it alone. */
+/** A textarea's value as React keeps it (line endings folded, outer blanks trimmed). */
+export function textBlock(s: string | undefined | null): string {
+  return String(s ?? "")
+    .replace(/\r\n?/g, "\n")
+    .trim();
+}
+
+/**
+ * True when the control already shows `wanted` — the wizard then leaves it alone
+ * (and reports it "prefilled"). A list control (select / combobox with options)
+ * counts as set when the option `wanted` would pick is the one shown — « 12 à
+ * 14 » is satisfied by « 12 à 14” (33cm à 37cm) ». A textarea must match exactly.
+ */
 export function valueAlreadySet(f: FieldDescriptor, wanted: string): boolean {
   if (f.type === "checkbox" || f.type === "switch") return (f.checked === true) === truthy(wanted);
-  return normalizeText(f.value) !== "" && normalizeText(f.value) === normalizeText(wanted);
+  if (f.type === "textarea") return textBlock(f.value) !== "" && textBlock(f.value) === textBlock(wanted);
+  const shown = normalizeText(f.value);
+  if (!shown) return false;
+  if (shown === normalizeText(wanted)) return true;
+  const labels = (f.options ?? []).map((o) => o.label);
+  if ((f.type === "combobox" || f.type === "select") && labels.length) {
+    const i = pickOption(labels, wanted);
+    return i >= 0 && normalizeText(labels[i]) === shown;
+  }
+  return false;
 }
 
 /** The annonce value behind a logical field (null = nothing to write). */
@@ -137,10 +170,12 @@ export function logicalValue(a: Annonce, name: LogicalFieldName): { value: strin
     case "price":
       return a.price > 0 ? { value: String(a.price) } : null;
     case "location":
-      // « 75012 Paris » makes the address autocomplete offer the city itself first
-      // (« Paris (75012) »); the zipcode alone yields streets.
-      if (a.zipcode) return { value: a.city ? `${a.zipcode} ${a.city}` : a.zipcode, hint: a.zipcode };
-      return a.city ? { value: a.city } : null;
+      // Live (2026-11) « À quelle adresse se trouve le bien ? » only accepts a full
+      // street address picked among its suggestions: no `address` = nothing to type
+      // (the agent asks the user; a city or a geolocation is never substituted).
+      return a.address?.trim() ? { value: a.address.trim() } : null;
+    case "donation":
+      return a.price > 0 ? { value: "Je vends" } : null;
     case "category":
       return a.category ? { value: a.category } : null;
     case "condition":
@@ -185,8 +220,20 @@ function scoreAttribute(f: FieldDescriptor, key: string): { confidence: number; 
   if (rawIds.some((id) => id.endsWith(`_${kSnake}`))) return { confidence: 0.85, via: "suffix" };
   const labels = labelTexts(f);
   if (labels.some((t) => t === k || t.startsWith(`${k} `))) return { confidence: 0.8, via: "label" };
+  const aliases = attributeLabels(key).map(normalizeText);
+  if (aliases.some((al) => labels.some((t) => t === al))) return { confidence: 0.75, via: "label" };
   if (normalizeText(f.placeholder) === k) return { confidence: 0.6, via: "placeholder" };
   return null;
+}
+
+/** The live labels of a technical attribute key: `computer_screen_size` → « Taille d'écran » (via `screen_size`). */
+export function attributeLabels(key: string): string[] {
+  const parts = key.trim().toLowerCase().split("_").filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    const hit = ATTRIBUTE_LABELS[parts.slice(i).join("_")];
+    if (hit) return hit;
+  }
+  return [];
 }
 
 /**

@@ -427,7 +427,7 @@ var init_logger = __esm({
 });
 
 // src/selectors.ts
-var BASE_URL, DEPOSIT, TEXTISH, LOGICAL_FIELDS, AUTH, ELEMENT_TARGETS, MANAGE;
+var BASE_URL, DEPOSIT, TEXTISH, LOGICAL_FIELDS, ATTRIBUTE_LABELS, AUTH, ELEMENT_TARGETS, MANAGE;
 var init_selectors = __esm({
   "src/selectors.ts"() {
     "use strict";
@@ -526,7 +526,20 @@ var init_selectors = __esm({
        * the ad (« Un dernier aperçu avant de publier… », « En cliquant sur
        * "Continuer", je confirme l'exactitude… »). The wizard never clicks past it.
        */
-      finalStepMarkers: ["avant de publier", "je confirme l'exactitude", "deposer mon annonce", "publier mon annonce"],
+      finalStepMarkers: [
+        "avant de publier",
+        "un dernier aper\xE7u",
+        "je confirme l'exactitude",
+        "en cliquant sur continuer je confirme",
+        "deposer mon annonce",
+        "publier mon annonce"
+      ],
+      /**
+       * Logical fields only the FINAL review shows (live 2026-11: « Description de
+       * l'annonce », « Prix de vente souhaité », the « Location » address combobox).
+       * Any ONE of them on a step marks it final, whatever its heading says.
+       */
+      finalStepFields: ["description", "price", "location"],
       /** The current step's heading (step fingerprint). */
       stepTitle: ["#step-title", "main h2", "form h2", "h2", "h1"],
       /** A published ad URL carries the numeric list_id. */
@@ -555,7 +568,17 @@ var init_selectors = __esm({
         types: ["checkbox", "switch", "radiogroup"],
         required: false
       },
+      /** « Je vends » / « Je donne » on the final review (« Je vends » for a priced annonce). */
+      donation: { names: ["donation"], labels: ["je vends"], css: [], types: ["radiogroup"], required: false },
       photos: { names: ["images", "photos", "pictures"], labels: ["photo", "photos"], css: DEPOSIT.photoFileInput, types: ["file"], required: true }
+    };
+    ATTRIBUTE_LABELS = {
+      condition: ["\xC9tat"],
+      type: ["Type"],
+      brand: ["Marque"],
+      screen_size: ["Taille d'\xE9cran"],
+      usage: ["Usage"],
+      year: ["Ann\xE9e de fabrication"]
     };
     AUTH = {
       /** Authenticated route; redirects to auth.leboncoin.fr/login when the session is dead. */
@@ -599,6 +622,16 @@ var init_selectors = __esm({
       /** « Mes annonces » (moved from /mes-annonces, which now lands on /favorites). */
       listingUrl: `${BASE_URL}/compte/part/mes-annonces`,
       adUrl: (id) => `${BASE_URL}/ad/${id}`,
+      /**
+       * « Mes annonces » as seen live (2026-11): tabs « En ligne » / « Expirées », a
+       * search box « Recherchez dans vos annonces », and a bulk bar « Pause » /
+       * « Réactiver » / « Supprimer » acting on the TICKED ads. The engine only ever
+       * acts inside one ad's own card; the other tab is tried when the ad is not
+       * listed on the default one.
+       */
+      listingTabs: [{ textCandidates: ["Expir\xE9es"], css: ['[role="tab"][aria-label*="expir" i]'] }],
+      /** Controls never clicked on « Mes annonces »: ticking every ad would make a bulk action hit all of them. */
+      neverClick: ["S\xE9lectionner toutes les annonces"],
       deleteButton: {
         textCandidates: ["Supprimer l'annonce", "Supprimer mon annonce", "Supprimer"],
         css: ['button[data-qa-id*="delete"]', 'button[aria-label*="supprimer" i]', 'a[href*="delete"]']
@@ -5830,23 +5863,27 @@ function hasWord(haystack, needle) {
 function tokens(s) {
   return normalizeText(s).split(" ").filter((t) => t.length > 1);
 }
-function pickOption(options, wanted) {
+function pickOption(options, wanted, strict) {
   const w = normalizeText(wanted);
   if (!w || options.length === 0) return -1;
   const norm = options.map(normalizeText);
+  const numbers = strict ? w.split(" ").filter((t) => /^\d+$/.test(t)) : [];
+  const allowed = (o) => !!o && numbers.every((n) => ` ${o} `.includes(` ${n} `));
   const tiers = [
     (o) => o === w,
-    (o) => o.startsWith(w) || o.length > 2 && w.startsWith(o),
-    (o) => o.includes(w) || o.length > 2 && w.includes(o)
+    (o) => o.startsWith(w) || !strict && o.length > 2 && w.startsWith(o),
+    (o) => o.includes(w) || !strict && o.length > 2 && w.includes(o)
   ];
   for (const tier of tiers) {
-    const i = norm.findIndex((o) => o && tier(o));
+    const i = norm.findIndex((o) => allowed(o) && tier(o));
     if (i >= 0) return i;
   }
   const wt = new Set(tokens(wanted));
+  const minScore = strict ? Math.max(1, Math.ceil(wt.size * strict.minOverlap)) : 1;
   let best = -1;
-  let bestScore = 0;
+  let bestScore = minScore - 1;
   norm.forEach((o, i) => {
+    if (!allowed(o)) return;
     const score = [...new Set(tokens(o))].filter((t) => wt.has(t)).length;
     if (score > bestScore || score === bestScore && score > 0 && o.length < (norm[best] ?? "").length) {
       best = i;
@@ -5876,9 +5913,21 @@ function isFieldFilled(f) {
 function truthy(v) {
   return /^(true|1|oui|yes|on)$/i.test(v.trim());
 }
+function textBlock(s) {
+  return String(s ?? "").replace(/\r\n?/g, "\n").trim();
+}
 function valueAlreadySet(f, wanted) {
   if (f.type === "checkbox" || f.type === "switch") return f.checked === true === truthy(wanted);
-  return normalizeText(f.value) !== "" && normalizeText(f.value) === normalizeText(wanted);
+  if (f.type === "textarea") return textBlock(f.value) !== "" && textBlock(f.value) === textBlock(wanted);
+  const shown = normalizeText(f.value);
+  if (!shown) return false;
+  if (shown === normalizeText(wanted)) return true;
+  const labels2 = (f.options ?? []).map((o) => o.label);
+  if ((f.type === "combobox" || f.type === "select") && labels2.length) {
+    const i = pickOption(labels2, wanted);
+    return i >= 0 && normalizeText(labels2[i]) === shown;
+  }
+  return false;
 }
 function logicalValue(a, name) {
   switch (name) {
@@ -5889,8 +5938,9 @@ function logicalValue(a, name) {
     case "price":
       return a.price > 0 ? { value: String(a.price) } : null;
     case "location":
-      if (a.zipcode) return { value: a.city ? `${a.zipcode} ${a.city}` : a.zipcode, hint: a.zipcode };
-      return a.city ? { value: a.city } : null;
+      return a.address?.trim() ? { value: a.address.trim() } : null;
+    case "donation":
+      return a.price > 0 ? { value: "Je vends" } : null;
     case "category":
       return a.category ? { value: a.category } : null;
     case "condition":
@@ -5930,8 +5980,18 @@ function scoreAttribute(f, key) {
   if (rawIds.some((id) => id.endsWith(`_${kSnake}`))) return { confidence: 0.85, via: "suffix" };
   const labels2 = labelTexts(f);
   if (labels2.some((t) => t === k || t.startsWith(`${k} `))) return { confidence: 0.8, via: "label" };
+  const aliases = attributeLabels(key).map(normalizeText);
+  if (aliases.some((al) => labels2.some((t) => t === al))) return { confidence: 0.75, via: "label" };
   if (normalizeText(f.placeholder) === k) return { confidence: 0.6, via: "placeholder" };
   return null;
+}
+function attributeLabels(key) {
+  const parts = key.trim().toLowerCase().split("_").filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    const hit = ATTRIBUTE_LABELS[parts.slice(i).join("_")];
+    if (hit) return hit;
+  }
+  return [];
 }
 function matchFields(map, a, logical = LOGICAL_FIELDS) {
   const candidates = [];
@@ -5968,10 +6028,12 @@ function matchFields(map, a, logical = LOGICAL_FIELDS) {
   const unmatchedAttributes = attrs.map(([k]) => k).filter((k) => !usedTargets.has(`a:${k}`));
   return { matches, unmatchedAttributes };
 }
+var ADDRESS_MIN_OVERLAP;
 var init_field_match = __esm({
   "src/field-match.ts"() {
     "use strict";
     init_selectors();
+    ADDRESS_MIN_OVERLAP = 0.6;
   }
 });
 
@@ -6043,7 +6105,8 @@ async function buildReadiness(cdp, report, href) {
     });
   }
   const blockers = checks.filter((c) => !c.ok).map((c) => `${c.name} (${c.detail})`);
-  return { ready: blockers.length === 0, checks, blockers, handoff: null };
+  const notes = [...report.warnings ?? [], ...report.notes ?? []];
+  return { ready: blockers.length === 0, checks, blockers, ...notes.length ? { notes } : {}, handoff: null };
 }
 function writeReadiness(absPath, readiness) {
   try {
@@ -6749,6 +6812,7 @@ var init_computer_use = __esm({
       description: "description",
       price: "price",
       zipcode: "location",
+      address: "location",
       condition: "condition",
       shipping: "shipping"
     };
@@ -6920,6 +6984,7 @@ async function fillField(cdp, d, value, hint, opts = {}) {
         const visible = ${VISIBLE_JS};
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const TYPE = ${JSON.stringify(d.type)}, VALUE = ${JSON.stringify(value)}, HINT = ${JSON.stringify(hint ?? "")};
+        const ADDRESS = ${opts.address === true}, MINR = ADDRESS ? ${ADDRESS_MIN_OVERLAP} : 0;
         const el = document.querySelector(${JSON.stringify(sel)});
         if (!el) return { ok: false, reason: 'gone' };
         const txt = (e) => ((e && (e.innerText || e.textContent)) || '').replace(/\\s+/g, ' ').trim();
@@ -6930,13 +6995,28 @@ async function fillField(cdp, d, value, hint, opts = {}) {
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
         };
+        const block = (s) => String(s == null ? '' : s).replace(/\\r\\n?/g, '\\n').trim();
         const truthy = /^(true|1|oui|yes|on)$/i.test(VALUE.trim());
         if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
-        if (TYPE === 'text' || TYPE === 'textarea') {
+        if (TYPE === 'text') {
           if (el.focus) el.focus();
           setVal(el, VALUE);
           el.dispatchEvent(new Event('blur', { bubbles: true }));
           return norm(el.value) === norm(VALUE) ? { ok: true, detail: el.value } : { ok: false, reason: 'not-applied', detail: el.value };
+        }
+        if (TYPE === 'textarea') {
+          // Replaces whatever is there (live 2026-11: Leboncoin's own AI description).
+          if (el.focus) el.focus();
+          setVal(el, VALUE);
+          await sleep(100);
+          if (block(el.value) !== block(VALUE) && document.execCommand) {
+            el.focus();
+            if (el.select) el.select();
+            document.execCommand('insertText', false, VALUE);
+            await sleep(100);
+          }
+          el.dispatchEvent(new Event('blur', { bubbles: true }));
+          return block(el.value) === block(VALUE) ? { ok: true, detail: 'exact (' + el.value.length + ' chars)' } : { ok: false, reason: 'not-applied', detail: el.value.slice(0, 80) };
         }
         if (TYPE === 'select') {
           const opts = Array.from(el.options);
@@ -6949,6 +7029,54 @@ async function fillField(cdp, d, value, hint, opts = {}) {
         }
         if (TYPE === 'combobox') {
           const input = el.matches('input, textarea') ? el : (el.querySelector('input') || el);
+          const lbId = input.getAttribute('aria-controls') || el.getAttribute('aria-controls') || '';
+          // The listbox is mounted but hidden until opened: read its options regardless of visibility.
+          const listOptions = () => {
+            const lb = lbId ? document.getElementById(lbId) : null;
+            return Array.from((lb || document).querySelectorAll('[role="option"]')).filter((o) => o.getAttribute('aria-disabled') !== 'true' && (lb || visible(o)));
+          };
+          const shows = (label) => norm(input.value) !== '' && norm(input.value) === norm(label);
+          const settle = async (label) => { for (let t = 0; t < 10; t++) { if (shows(label)) return true; await sleep(150); } return false; };
+          const open = async () => {
+            if (input.focus) input.focus();
+            input.click();
+            await sleep(250);
+            if (input.getAttribute('aria-expanded') !== 'true') {
+              const toggle = lbId ? Array.from(document.querySelectorAll('button[aria-controls]')).find((b) => b.getAttribute('aria-controls') === lbId) : null;
+              if (toggle) { toggle.click(); await sleep(250); }
+            }
+          };
+          const choose = async (o, label) => {
+            o.click();
+            if (await settle(label)) return true;
+            // Some lists react to the pointer sequence, not to click() alone.
+            for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) o.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+            return settle(label);
+          };
+          if (!ADDRESS && input.matches('input, textarea')) {
+            // \u2500\u2500 list combobox: by meaning, no typing \u2500\u2500
+            let labels = listOptions().map(txt);
+            const i = pick(labels, VALUE);
+            if (labels.length && i < 0) return { ok: false, reason: 'no-option', detail: labels.slice(0, 8).join(' | ') };
+            if (i >= 0) {
+              const want = labels[i];
+              if (shows(want)) return { ok: true, detail: want };
+              if (input.value) {
+                // A different (prefilled) value filters the list: clear it first.
+                const box = input.closest('[data-rhf-name]') || (input.parentElement && input.parentElement.parentElement) || document;
+                const clear = Array.from(box.querySelectorAll('button[aria-label]')).find((b) => /^effacer/.test(norm(b.getAttribute('aria-label'))));
+                if (clear) { clear.click(); await sleep(250); }
+                if (input.value) { setVal(input, ''); await sleep(150); }
+              }
+              await open();
+              const options = listOptions();
+              labels = options.map(txt);
+              let j = labels.findIndex((l) => norm(l) === norm(want));
+              if (j < 0) j = pick(labels, VALUE);
+              if (j >= 0 && (await choose(options[j], labels[j]))) return { ok: true, detail: labels[j] };
+              // Fall through: type it, like a free-text combobox.
+            }
+          }
           if (input.focus) input.focus();
           input.click();
           await sleep(150);
@@ -6957,22 +7085,21 @@ async function fillField(cdp, d, value, hint, opts = {}) {
           // list first shows STALE entries: poll until an option MATCHES (~6 s max).
           let options = [], labels = [], i = -1;
           for (let t = 0; t < ${Math.max(1, Math.ceil((opts.optionWaitMs ?? 6e3) / 200))}; t++) {
-            const lb = document.getElementById(input.getAttribute('aria-controls') || el.getAttribute('aria-controls') || '');
-            options = Array.from((lb || document).querySelectorAll('[role="option"]')).filter((o) => visible(o) && o.getAttribute('aria-disabled') !== 'true');
+            options = listOptions().filter(visible);
             labels = options.map(txt);
-            i = pick(labels, VALUE);
-            if (i < 0 && HINT) i = pick(labels, HINT);
+            i = pick(labels, VALUE, MINR);
+            if (i < 0 && HINT) i = pick(labels, HINT, MINR);
             if (i >= 0) break;
             await sleep(200);
           }
           if (!options.length) {
-            // Free-text combobox: the typed value stands.
-            return input.value ? { ok: true, detail: input.value } : { ok: false, reason: 'no-option' };
+            // Free-text combobox: the typed value stands (an address must be PICKED).
+            return input.value && !ADDRESS ? { ok: true, detail: input.value } : { ok: false, reason: 'no-option' };
           }
           if (i < 0) return { ok: false, reason: 'no-option', detail: labels.slice(0, 8).join(' | ') };
-          options[i].click();
-          await sleep(300);
-          return { ok: true, detail: labels[i] };
+          if (await choose(options[i], labels[i])) return { ok: true, detail: labels[i] };
+          // The input may show a formatted variant of the label: accept it when it still matches.
+          return input.value && pick([input.value], VALUE, MINR) === 0 ? { ok: true, detail: input.value } : { ok: false, reason: 'not-applied', detail: input.value };
         }
         if (TYPE === 'radiogroup' || TYPE === 'radio') {
           const group = TYPE === 'radio' ? (el.closest('[role="radiogroup"]') || el.parentElement) : el;
@@ -7063,19 +7190,23 @@ var NORM_JS, VISIBLE_JS, PICK_JS;
 var init_deposit_form = __esm({
   "src/deposit-form.ts"() {
     "use strict";
+    init_field_match();
     init_utils();
     NORM_JS = `(s) => String(s == null ? '' : s).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()`;
     VISIBLE_JS = `(el) => !!el && el.getAttribute('aria-hidden') !== 'true' && !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length))`;
-    PICK_JS = `(labels, wanted) => {
+    PICK_JS = `(labels, wanted, minOverlap) => {
   const n = ${NORM_JS};
   const w = n(wanted);
   if (!w || !labels.length) return -1;
+  const strict = !!minOverlap;
   const L = labels.map(n);
-  const tiers = [(o) => o === w, (o) => o.startsWith(w) || (o.length > 2 && w.startsWith(o)), (o) => o.includes(w) || (o.length > 2 && w.includes(o))];
-  for (const t of tiers) { const i = L.findIndex((o) => o && t(o)); if (i >= 0) return i; }
+  const nums = strict ? w.split(' ').filter((t) => /^\\d+$/.test(t)) : [];
+  const ok = (o) => !!o && nums.every((x) => (' ' + o + ' ').includes(' ' + x + ' '));
+  const tiers = [(o) => o === w, (o) => o.startsWith(w) || (!strict && o.length > 2 && w.startsWith(o)), (o) => o.includes(w) || (!strict && o.length > 2 && w.includes(o))];
+  for (const t of tiers) { const i = L.findIndex((o) => ok(o) && t(o)); if (i >= 0) return i; }
   const wt = new Set(w.split(' ').filter((x) => x.length > 1));
-  let best = -1, bs = 0;
-  L.forEach((o, i) => { const s = Array.from(new Set(o.split(' '))).filter((x) => wt.has(x)).length; if (s > bs || (s === bs && s > 0 && o.length < L[best].length)) { best = i; bs = s; } });
+  let best = -1, bs = (strict ? Math.max(1, Math.ceil(wt.size * minOverlap)) : 1) - 1;
+  L.forEach((o, i) => { if (!ok(o)) return; const s = Array.from(new Set(o.split(' '))).filter((x) => wt.has(x)).length; if (s > bs || (s === bs && s > 0 && best >= 0 && o.length < L[best].length)) { best = i; bs = s; } });
   return best;
 }`;
   }
@@ -7455,7 +7586,8 @@ function introspectScript(probes, stepTitle) {
       rhfName: rhfBox ? attr(rhfBox, 'data-rhf-name') : undefined,
       type,
       placeholder: el.placeholder || undefined,
-      value: type === 'switch' || type === 'checkbox' ? '' : String(value).slice(0, 200),
+      // A textarea is kept whole (\u2264 4000 chars live) so the description can be verified exactly.
+      value: type === 'switch' || type === 'checkbox' ? '' : String(value).slice(0, type === 'textarea' ? 5000 : 200),
       checked: type === 'switch' || type === 'checkbox' || type === 'radio' ? value === 'true' || !!el.checked : undefined,
       options: optionsOf(el, type),
       required: !!reqSrc,
@@ -7600,15 +7732,25 @@ async function chooseCategory(cdp, wanted, needed) {
   if (!card || !await clickRef(cdp, card.ref)) return null;
   return { picked: card.name, family: card.family, guessed: pick.guessed || !wanted };
 }
-async function isFinalStep(cdp, markers, buttons) {
+function finalReviewSignals(map, fields = DEPOSIT.finalStepFields) {
+  const core = new Set(fields);
+  const onStep = matchFields(map, PROBE_ANNONCE).matches.map((m) => m.target.kind === "logical" ? m.target.name : "").filter((n) => core.has(n));
+  return [...new Set(onStep)];
+}
+function looksLikeFinalReview(map) {
+  return finalReviewSignals(map).length > 0;
+}
+async function isOnFinalStep(cdp, opts = {}, map) {
+  const markers = opts.finalMarkers ?? DEPOSIT.finalStepMarkers;
+  const buttons = opts.finalButtons ?? [DEPOSIT.publishButton];
+  if (looksLikeFinalReview(map ?? await introspectForm(cdp))) return true;
   if (markers.length && await pageHasText(cdp, markers)) return true;
   for (const b of buttons) if (await hasButton(cdp, b)) return true;
   return false;
 }
-function looksLikeFinalReview(map) {
-  const core = /* @__PURE__ */ new Set(["title", "description", "price", "location"]);
-  const onStep = matchFields(map, PROBE_ANNONCE).matches.map((m) => m.target.kind === "logical" ? m.target.name : "").filter((n) => core.has(n));
-  return new Set(onStep).size >= 3;
+async function clickNextStep(cdp, next, opts = {}) {
+  if (await isOnFinalStep(cdp, opts)) return "final";
+  return await clickButton(cdp, next) ? "clicked" : "no-next";
 }
 function isPaidOption(f) {
   return [f.label, ...f.altLabels ?? []].some((l) => /\d\s*(?:[,.]\d{1,2})?\s*€|€\s*\d/.test(l ?? ""));
@@ -7621,11 +7763,101 @@ function blocksStep(f) {
 function describe(f) {
   return f.label || f.altLabels?.[0] || f.key;
 }
+function holds(f, target, value) {
+  if (target === "location") return !!String(f.value ?? "").trim() && pickOption([f.value], value, { minOverlap: ADDRESS_MIN_OVERLAP }) === 0;
+  return valueAlreadySet(f, value);
+}
+function bare(label) {
+  return label.replace(/\s*\*\s*$/, "").trim();
+}
+function prefilledUnasked(map, matchedRefs) {
+  return map.fields.filter((f) => f.type !== "file" && !(f.ref && matchedRefs.has(f.ref)) && !isPaidOption(f)).filter((f) => f.type === "checkbox" || f.type === "switch" ? f.checked === true : String(f.value ?? "").trim() !== "").map((f) => `\xAB ${bare(describe(f))} \xBB = \xAB ${f.type === "checkbox" || f.type === "switch" ? "oui" : String(f.value).trim()} \xBB`);
+}
+async function fillPass(cdp, a, map, st) {
+  const { matches, unmatchedAttributes } = matchFields(map, a);
+  for (const m of matches) {
+    const target = m.target.kind === "logical" ? m.target.name : `attr:${m.target.key}`;
+    if (target === "photos") continue;
+    if (m.field.ref) st.matchedRefs.add(m.field.ref);
+    if (st.fills.some((f) => f.target === target && f.ok)) continue;
+    if (isPaidOption(m.field)) {
+      logger.warn(`Skipped \xAB ${describe(m.field)} \xBB: a paid option is never set automatically.`);
+      continue;
+    }
+    const label = describe(m.field);
+    const prior = st.fills.findIndex((f) => f.target === target);
+    if (prior >= 0) st.fills.splice(prior, 1);
+    if (holds(m.field, target, m.value)) {
+      st.fills.push({ target, field: label, value: m.value, ok: true, via: m.via, detail: "prefilled", ref: m.field.ref });
+      st.written.add(target);
+      st.failed.delete(target);
+      continue;
+    }
+    const r = await fillField(cdp, m.field, m.value, m.hint, { address: target === "location" });
+    st.fills.push({ target, field: label, value: m.value, ok: r.ok, via: m.via, detail: r.detail, reason: r.reason, ref: m.field.ref });
+    if (r.ok) {
+      st.written.add(target);
+      st.failed.delete(target);
+    } else if (!st.written.has(target)) {
+      st.failed.add(target);
+      logger.warn(`Could not set \xAB ${label} \xBB to "${m.value}"${r.reason ? ` (${r.reason}${r.detail ? `: ${r.detail}` : ""})` : ""}.`);
+    }
+    await delay(300);
+  }
+  return unmatchedAttributes;
+}
+async function verifyPass(cdp, st, settleMs) {
+  await delay(Math.min(settleMs, 1e3));
+  let map = await introspectForm(cdp);
+  const drifted = st.fills.filter((f) => {
+    if (!f.ok || !f.ref || f.target === "photos" || f.target === "category") return false;
+    const now = map.fields.find((x) => x.ref === f.ref);
+    return !!now && !holds(now, f.target, f.value);
+  });
+  if (!drifted.length) return map;
+  for (const f of drifted) {
+    const now = map.fields.find((x) => x.ref === f.ref);
+    if (!now) continue;
+    const r = await fillField(cdp, now, f.value, void 0, { address: f.target === "location" });
+    f.detail = r.ok ? `rewritten (the site had changed it)${r.detail ? `: ${r.detail}` : ""}` : r.detail;
+    f.ok = r.ok;
+    f.reason = r.reason;
+  }
+  await delay(Math.min(settleMs, 1e3));
+  map = await introspectForm(cdp);
+  for (const f of drifted) {
+    const now = map.fields.find((x) => x.ref === f.ref);
+    if (now && !holds(now, f.target, f.value)) {
+      f.ok = false;
+      f.reason = "not-applied";
+      f.detail = `the form keeps \xAB ${String(now.value).slice(0, 60)} \xBB`;
+    }
+    if (f.ok) continue;
+    st.written.delete(f.target);
+    st.failed.add(f.target);
+    logger.warn(`\xAB ${f.field} \xBB did not keep "${f.value.slice(0, 60)}" (${f.detail ?? "changed by the site"}).`);
+  }
+  return map;
+}
+async function settleForm(cdp, before, pollMs, expectMore = false) {
+  let prev = before.step?.fingerprint;
+  let map = before;
+  let stable = 0;
+  const onlyFile = (m) => m.fields.every((f) => f.type === "file");
+  for (let i = 0; i < 26; i++) {
+    const waiting = expectMore && onlyFile(map);
+    if (stable >= 2 && !waiting || i >= 10 && !waiting) break;
+    await delay(pollMs);
+    map = await introspectForm(cdp);
+    stable = map.step?.fingerprint === prev ? stable + 1 : 0;
+    prev = map.step?.fingerprint;
+  }
+  return map;
+}
 async function runWizard(cdp, a, opts) {
   const maxSteps = opts.maxSteps ?? 15;
   const settle = opts.settleMs ?? 1500;
-  const finalMarkers = opts.finalMarkers ?? DEPOSIT.finalStepMarkers;
-  const finalButtons = opts.finalButtons ?? [DEPOSIT.publishButton];
+  const finalOpts = { finalMarkers: opts.finalMarkers, finalButtons: opts.finalButtons };
   const nextButton = opts.nextButton ?? DEPOSIT.nextButton;
   const result = {
     steps: [],
@@ -7634,10 +7866,12 @@ async function runWizard(cdp, a, opts) {
     expectedPhotos: opts.photos.length,
     written: [],
     failed: [],
-    unmatchedAttributes: Object.keys(a.attributes ?? {})
+    unmatchedAttributes: Object.keys(a.attributes ?? {}),
+    prefilled: []
   };
   const written = /* @__PURE__ */ new Set();
   const failed = /* @__PURE__ */ new Set();
+  const prefilled = /* @__PURE__ */ new Set();
   let categoryAttempts = 0;
   for (let index = 1; index <= maxSteps; index++) {
     await delay(settle);
@@ -7652,34 +7886,13 @@ async function runWizard(cdp, a, opts) {
       result.stop = "login-required";
       break;
     }
-    const fills = [];
-    const map = await introspectForm(cdp);
-    const { matches, unmatchedAttributes } = matchFields(map, a);
-    result.unmatchedAttributes = result.unmatchedAttributes.filter((k) => unmatchedAttributes.includes(k));
-    for (const m of matches) {
-      const target = m.target.kind === "logical" ? m.target.name : `attr:${m.target.key}`;
-      if (target === "photos") continue;
-      if (isPaidOption(m.field)) {
-        logger.warn(`Skipped \xAB ${describe(m.field)} \xBB: a paid option is never set automatically.`);
-        continue;
-      }
-      const label = describe(m.field);
-      if (valueAlreadySet(m.field, m.value)) {
-        fills.push({ target, field: label, value: m.value, ok: true, via: m.via, detail: "already" });
-        written.add(target);
-        continue;
-      }
-      const r = await fillField(cdp, m.field, m.value, m.hint);
-      fills.push({ target, field: label, value: m.value, ok: r.ok, via: m.via, detail: r.detail, reason: r.reason });
-      if (r.ok) {
-        written.add(target);
-        failed.delete(target);
-      } else if (!written.has(target)) {
-        failed.add(target);
-        logger.warn(`Could not set \xAB ${label} \xBB to "${m.value}"${r.reason ? ` (${r.reason}${r.detail ? `: ${r.detail}` : ""})` : ""}.`);
-      }
-      await delay(300);
-    }
+    const st = { fills: [], matchedRefs: /* @__PURE__ */ new Set(), written, failed };
+    let map = await introspectForm(cdp);
+    const finalAtEntry = await isOnFinalStep(cdp, finalOpts, map);
+    const unmatched = (u) => {
+      result.unmatchedAttributes = result.unmatchedAttributes.filter((k) => u.includes(k));
+    };
+    unmatched(await fillPass(cdp, a, map, st));
     if (opts.photos.length && result.uploadedPhotos === 0 && map.fields.some((f) => f.type === "file")) {
       result.uploadedPhotos = await uploadPhotos(cdp, DEPOSIT.photoFileInput, opts.photos, DEPOSIT.photoThumbnails);
       if (result.uploadedPhotos < opts.photos.length) {
@@ -7688,7 +7901,7 @@ async function runWizard(cdp, a, opts) {
           result.uploadedPhotos = Math.max(result.uploadedPhotos, await uploadPhotos(cdp, DEPOSIT.photoFileInput, opts.photos, DEPOSIT.photoThumbnails));
         }
       }
-      fills.push({
+      st.fills.push({
         target: "photos",
         field: "photos",
         value: `${opts.photos.length} file(s)`,
@@ -7699,14 +7912,19 @@ async function runWizard(cdp, a, opts) {
       if (result.uploadedPhotos > 0) written.add("photos");
       await delay(1500);
     }
-    if (categoryAttempts < 2) {
+    const settled = await settleForm(cdp, map, Math.min(settle, 750), result.uploadedPhotos > 0 && st.fills.some((f) => f.target === "photos"));
+    if (settled.step?.fingerprint !== map.step?.fingerprint) {
+      map = settled;
+      unmatched(await fillPass(cdp, a, map, st));
+    }
+    if (categoryAttempts < 2 && !finalAtEntry) {
       const allowTree = !written.has("category") && written.has("title") && !await hasButton(cdp, nextButton);
       const chosen = await chooseCategory(cdp, a.category, allowTree);
       if (chosen) {
         categoryAttempts++;
         result.category = chosen;
         written.add("category");
-        fills.push({
+        st.fills.push({
           target: "category",
           field: "cat\xE9gorie",
           value: a.category,
@@ -7718,17 +7936,18 @@ async function runWizard(cdp, a, opts) {
         await delay(settle);
         const after = await introspectForm(cdp);
         if (after.step?.fingerprint !== map.step?.fingerprint) {
-          result.steps.push({ index, title: map.step?.title ?? "", url, fills, unresolvedRequired: [], final: false, formMap: map });
+          result.steps.push({ index, title: map.step?.title ?? "", url, fills: st.fills, unresolvedRequired: [], final: false, formMap: map });
           await opts.shotLog?.shot(cdp, `step-${String(index).padStart(2, "0")}`);
           continue;
         }
       }
     }
-    const filledMap = await introspectForm(cdp);
+    const filledMap = await verifyPass(cdp, st, settle);
+    for (const p of prefilledUnasked(filledMap, st.matchedRefs)) prefilled.add(p);
     const photosOk = result.uploadedPhotos > 0 || await countElements(cdp, DEPOSIT.photoThumbnails) > 0;
     const unresolvedRequired = filledMap.fields.filter((f) => blocksStep(f) && !(f.type === "file" ? photosOk : isFieldFilled(f))).map((f) => `${describe(f)} (required on the live form \u2014 ${f.requiredSource ?? "required"})`);
-    const final = looksLikeFinalReview(filledMap) || await isFinalStep(cdp, finalMarkers, finalButtons);
-    result.steps.push({ index, title: filledMap.step?.title ?? "", url, fills, unresolvedRequired, final, formMap: filledMap });
+    const final = finalAtEntry || await isOnFinalStep(cdp, finalOpts, filledMap);
+    result.steps.push({ index, title: filledMap.step?.title ?? "", url, fills: st.fills, unresolvedRequired, final, formMap: filledMap });
     await opts.shotLog?.shot(cdp, `step-${String(index).padStart(2, "0")}`);
     if (final) {
       result.stop = "final";
@@ -7738,17 +7957,21 @@ async function runWizard(cdp, a, opts) {
       result.stop = "missing-required";
       break;
     }
-    if (await isFinalStep(cdp, finalMarkers, finalButtons)) {
+    const next = await clickNextStep(cdp, nextButton, finalOpts);
+    if (next === "final") {
       result.stop = "final";
       result.steps[result.steps.length - 1].final = true;
       break;
     }
-    if (!await clickButton(cdp, nextButton)) {
+    if (next === "no-next") {
       result.stop = "no-next";
       break;
     }
-    await delay(settle);
-    const moved = await introspectForm(cdp);
+    let moved = filledMap;
+    for (let t = 0; t < 3 && moved.step?.fingerprint === filledMap.step?.fingerprint; t++) {
+      await delay(settle);
+      moved = await introspectForm(cdp);
+    }
     if (moved.step?.fingerprint === filledMap.step?.fingerprint && await currentUrl(cdp) === url) {
       result.stop = "stuck";
       result.error = await readFormError(cdp) ?? "the form did not move to the next step";
@@ -7757,6 +7980,7 @@ async function runWizard(cdp, a, opts) {
   }
   result.written = [...written];
   result.failed = [...failed].filter((t) => !written.has(t));
+  result.prefilled = [...prefilled];
   return result;
 }
 var PROBE_ANNONCE;
@@ -7777,6 +8001,7 @@ var init_deposit_wizard = __esm({
       category: "x",
       price: 1,
       zipcode: "75001",
+      address: "1 rue x",
       attributes: {},
       photos: [],
       status: "draft",
@@ -7788,6 +8013,7 @@ var init_deposit_wizard = __esm({
 // src/publish.ts
 var publish_exports = {};
 __export(publish_exports, {
+  ADDRESS_MISSING: () => ADDRESS_MISSING,
   fillForm: () => fillForm,
   runPublish: () => runPublish
 });
@@ -7813,19 +8039,27 @@ async function fillForm(cdp, a, photos, shotLog, wizardOpts = {}) {
     const filled = written.has(logical);
     fields.push({ field: name, required, hasValue, filled });
     if (!required) {
-      if (hasValue && !filled) warnings.push(`${name}: could not be set \u2014 set it in the browser if the form offers it`);
+      if (hasValue && !filled)
+        warnings.push(
+          logical === "shipping" ? `shipping: the delivery choice (\xAB ${a.shipping ? "Activer" : "D\xE9sactiver"} la livraison \xBB) could not be set \u2014 ${a.address ? "check \xAB Remise du bien \xBB in the browser" : "Leboncoin shows the delivery options only once the address is set"}` : `${name}: could not be set \u2014 set it in the browser if the form offers it`
+        );
       continue;
     }
-    if (!hasValue) missing.push(`${name} (missing in annonce)`);
-    else if (!filled) missing.push(reached ? `${name} (form field not found)` : `${name} (not reached \u2014 wizard stopped: ${wizard.stop})`);
+    if (!hasValue) missing.push(logical === "location" ? ADDRESS_MISSING : `${name} (missing in annonce)`);
+    else if (!filled)
+      missing.push(
+        !reached ? `${name} (not reached \u2014 wizard stopped: ${wizard.stop})` : wizard.failed.includes(logical) ? `${name} (value not accepted by the form${logical === "location" ? " \u2014 no matching address suggestion: check the address with the user" : ""})` : `${name} (form field not found)`
+      );
   }
   for (const key of Object.keys(a.attributes ?? {})) {
     fields.push({ field: `attr:${key}`, required: false, hasValue: true, filled: written.has(`attr:${key}`) });
   }
   const last = wizard.steps.at(-1);
+  const reported = REPORTED_FIELDS.filter(([, name]) => missing.some((m) => m.startsWith(`${name} (`))).map(([l]) => l);
+  const covered = (label) => reported.some((l) => LOGICAL_FIELDS[l].labels.some((w) => ` ${normalizeText(label)} `.includes(` ${normalizeText(w)} `)));
   for (const u of last?.unresolvedRequired ?? []) {
     const label = u.split(" (")[0]?.toLowerCase() ?? u;
-    if (missing.some((m) => m.toLowerCase().includes(label))) continue;
+    if (missing.some((m) => m.toLowerCase().includes(label)) || covered(label)) continue;
     fields.push({ field: u.split(" (")[0] ?? u, required: true, hasValue: false, filled: false });
     missing.push(u);
   }
@@ -7836,12 +8070,14 @@ async function fillForm(cdp, a, photos, shotLog, wizardOpts = {}) {
     warnings.push(`category: \xAB ${a.category || "(none)"} \xBB not offered \u2014 the site's suggestion \xAB ${wizard.category.picked} \xBB was picked; check it`);
   for (const k of wizard.unmatchedAttributes) warnings.push(`attribute \xAB ${k} \xBB: no matching field on the form (use a label from form-map.json)`);
   for (const t of wizard.failed) if (t.startsWith("attr:")) warnings.push(`attribute \xAB ${t.slice(5)} \xBB: value not accepted by the form`);
+  const notes = wizard.prefilled.map((p) => `prefilled by Leboncoin, not in annonce.md: ${p} \u2014 check it with the user`);
   if (wizard.uploadedPhotos === 0 && photos.length) logger.warn("Could not upload photos automatically \u2014 add them manually in the browser.");
   else if (photos.length) logger.info(`Uploaded ${wizard.uploadedPhotos}/${photos.length} photo(s).`);
   return {
     fields,
     missing,
     warnings,
+    notes,
     uploadedPhotos: wizard.uploadedPhotos,
     expectedPhotos: photos.length,
     wizard: { stop: wizard.stop, error: wizard.error, steps: wizard.steps.length, category: wizard.category },
@@ -7859,6 +8095,7 @@ function logFillReport(r) {
   logger.info(`  ${r.uploadedPhotos === r.expectedPhotos ? "\u2713" : "\u2717"} photos: ${r.uploadedPhotos}/${r.expectedPhotos}`);
   if (r.wizard) logger.info(`Wizard: ${r.wizard.steps} step(s), stopped: ${r.wizard.stop}${r.wizard.error ? ` (${r.wizard.error})` : ""}`);
   for (const w of r.warnings ?? []) logger.warn(w);
+  for (const n of r.notes ?? []) logger.info(`Note: ${n}`);
   if (r.missing.length) logger.warn(`Ask the user about: ${r.missing.join(", ")}`);
 }
 async function waitForPublished(cdp, timeoutMs) {
@@ -7966,6 +8203,10 @@ async function drive(cdp, dir, a, photos, opts) {
       );
       return { ok: false, reason: "form-error", error: `wizard stopped before the final step (${report.wizard?.stop})`, report, missing: report.missing };
     }
+    if (!await isOnFinalStep(cdp)) {
+      logger.error("The page is no longer the final review \u2014 not submitting. Review it in the browser.");
+      return { ok: false, reason: "form-error", error: "not on the final step at submit time", report, missing: report.missing };
+    }
     logger.info("Auto-submitting (--yes)\u2026");
     const submitControl = await hasButton(cdp, DEPOSIT.publishButton) ? DEPOSIT.publishButton : DEPOSIT.nextButton;
     if (!await clickButton(cdp, submitControl)) {
@@ -8001,7 +8242,7 @@ async function drive(cdp, dir, a, photos, opts) {
   logger.success(`Published: ${published.url}`);
   return { ok: true, leboncoin_id: published.id || void 0, leboncoin_url: published.url, report };
 }
-var DEFAULT_SUBMIT_TIMEOUT_MS, REPORTED_FIELDS;
+var DEFAULT_SUBMIT_TIMEOUT_MS, REPORTED_FIELDS, ADDRESS_MISSING;
 var init_publish = __esm({
   "src/publish.ts"() {
     "use strict";
@@ -8024,10 +8265,11 @@ var init_publish = __esm({
       ["title", "title", true],
       ["description", "description", true],
       ["price", "price", true],
-      ["location", "zipcode", true],
+      ["location", "address", true],
       ["condition", "condition", false],
       ["shipping", "shipping", false]
     ];
+    ADDRESS_MISSING = "address (missing in annonce \u2014 Leboncoin needs the full street address: number, street, city, picked among its suggestions; ask the user and write it as `address:` in annonce.md \u2014 never invent it, never use \xAB G\xE9olocaliser ma position \xBB)";
   }
 });
 
@@ -8053,7 +8295,9 @@ async function clickInAdCard(cdp, adId, button) {
           if (card.matches('li, article, [role="listitem"], [role="row"]') || card.querySelectorAll('button, [role="button"]').length >= 1) break;
         }
         const wanted = ${JSON.stringify(button.textCandidates)}.map(n);
-        const els = Array.from(card.querySelectorAll('button, [role="button"], [role="menuitem"], a')).filter((e) => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true');
+        const never = ${JSON.stringify(MANAGE.neverClick)}.map(n);
+        const forbidden = (e) => [n(e.innerText || e.textContent), n(e.getAttribute('aria-label'))].some((t) => t && never.some((x) => t.includes(x)));
+        const els = Array.from(card.querySelectorAll('button, [role="button"], [role="menuitem"], a')).filter((e) => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true' && !forbidden(e));
         for (const w of wanted) {
           const el = els.find((e) => { const t = n(e.innerText || e.textContent); const a = n(e.getAttribute('aria-label')); return t === w || a === w || t.startsWith(w + ' ') || a.startsWith(w + ' '); });
           if (el) { el.click(); return true; }
@@ -8066,10 +8310,17 @@ async function clickInAdCard(cdp, adId, button) {
 async function clickManageControl(cdp, adId, button) {
   if (await clickButtonOrMenu(cdp, button, MANAGE.overflowMenu)) return true;
   await navigate(cdp, MANAGE.listingUrl);
-  if (await clickInAdCard(cdp, adId, button)) return true;
-  if (!await clickInAdCard(cdp, adId, MANAGE.overflowMenu)) return false;
-  await delay(600);
-  return clickInOpenMenu(cdp, button);
+  for (const tab of [null, ...MANAGE.listingTabs]) {
+    if (tab) {
+      if (!await clickButton(cdp, tab)) continue;
+      await delay(1500);
+    }
+    if (await clickInAdCard(cdp, adId, button)) return true;
+    if (!await clickInAdCard(cdp, adId, MANAGE.overflowMenu)) continue;
+    await delay(600);
+    return clickInOpenMenu(cdp, button);
+  }
+  return false;
 }
 async function clickInOpenMenu(cdp, button) {
   return cdp.evaluate(
@@ -8078,8 +8329,10 @@ async function clickInOpenMenu(cdp, button) {
         const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
         const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]')).filter(visible);
         const wanted = ${JSON.stringify(button.textCandidates)}.map(n);
+        const never = ${JSON.stringify(MANAGE.neverClick)}.map(n);
+        const forbidden = (e) => [n(e.innerText || e.textContent), n(e.getAttribute('aria-label'))].some((t) => t && never.some((x) => t.includes(x)));
         for (const m of menus) {
-          const els = Array.from(m.querySelectorAll('button, [role="menuitem"], [role="option"], a')).filter(visible);
+          const els = Array.from(m.querySelectorAll('button, [role="menuitem"], [role="option"], a')).filter((e) => visible(e) && !forbidden(e));
           for (const w of wanted) {
             const el = els.find((e) => n(e.innerText || e.textContent) === w || n(e.getAttribute('aria-label')) === w);
             if (el) { el.click(); return true; }
@@ -8117,14 +8370,43 @@ var init_manage_actions = __esm({
 // src/doctor.ts
 var doctor_exports = {};
 __export(doctor_exports, {
+  bundledExampleDir: () => bundledExampleDir,
   fieldResolutions: () => fieldResolutions,
   runDoctor: () => runDoctor
 });
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync4 } from "fs";
 import path12 from "path";
+import { fileURLToPath } from "url";
 async function defaultConnect4(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
+}
+function bundledExampleDir() {
+  return fileURLToPath(new URL("../assets/example-annonce", import.meta.url));
+}
+function annonceAt(dir) {
+  const a = parseAnnonce(dir);
+  return { a, photos: resolvePhotoPaths(dir, a) };
+}
+function probeAnnonce() {
+  try {
+    return annonceAt(bundledExampleDir());
+  } catch {
+    return {
+      a: {
+        slug: "doctor-probe",
+        title: "Test de diagnostic \u2014 ne pas publier",
+        category: "",
+        price: 1,
+        zipcode: "75001",
+        attributes: {},
+        photos: [],
+        status: "draft",
+        description: "Test."
+      },
+      photos: []
+    };
+  }
 }
 function fieldResolutions(w, a) {
   const out = {};
@@ -8134,6 +8416,7 @@ function fieldResolutions(w, a) {
     else if (fills.length) out[name] = "semantic";
     else if (name === "category" && w.category) out[name] = "semantic";
     else if (w.stop !== "final") out[name] = "not-reached";
+    else if (name !== "category" && name !== "photos" && logicalValue(a, name) === null) out[name] = "no-value";
     else
       out[name] = LOGICAL_FIELDS[name].required || (name === "condition" ? !!a.condition : name === "shipping" ? typeof a.shipping === "boolean" : false) ? "unresolved" : "not-reached";
   }
@@ -8176,8 +8459,7 @@ async function runDoctor(opts = {}, deps = {}) {
     if (login.loggedOut) {
       report.checks.push({ name: "deposit", ok: false, detail: "skipped \u2014 log in first (`leboncoin login`)" });
     } else {
-      const a = opts.slug ? parseAnnonce(path12.join(opts.annoncesDir ?? "annonces", opts.slug)) : PROBE;
-      const photos = opts.slug ? resolvePhotoPaths(path12.join(opts.annoncesDir ?? "annonces", opts.slug), a) : [];
+      const { a, photos } = opts.slug ? annonceAt(path12.join(opts.annoncesDir ?? "annonces", opts.slug)) : probeAnnonce();
       await navigate(cdp, DEPOSIT.startUrl);
       const w = await runWizard(cdp, a, { photos });
       report.fields = fieldResolutions(w, a);
@@ -8186,12 +8468,11 @@ async function runDoctor(opts = {}, deps = {}) {
         error: w.error,
         steps: w.steps.map((s) => ({ title: s.title, fields: s.formMap.fields.length, final: s.final, unresolvedRequired: s.unresolvedRequired }))
       };
-      const expectedStop = opts.slug ? "final" : "missing-required";
-      const ok = w.stop === "final" || w.stop === expectedStop && w.steps.length >= 2;
+      const ok = w.stop === "final" || photos.length === 0 && w.stop === "missing-required" && w.steps.length >= 2;
       report.checks.push({
         name: "deposit",
         ok,
-        detail: `${w.steps.length} step(s): ${w.steps.map((s) => `\xAB ${s.title || "?"} \xBB`).join(" \u2192 ")}; stopped: ${w.stop}${w.error ? ` (${w.error})` : ""} \u2014 nothing submitted`
+        detail: `${w.steps.length} step(s): ${w.steps.map((s) => `\xAB ${s.title || "?"} \xBB`).join(" \u2192 ")}; photos ${w.uploadedPhotos}/${photos.length}; stopped: ${w.stop}${w.error ? ` (${w.error})` : ""} \u2014 nothing submitted`
       });
       await navigate(cdp, "about:blank", 300);
     }
@@ -8216,31 +8497,19 @@ async function runDoctor(opts = {}, deps = {}) {
     cdp.disconnect();
   }
 }
-var PROBE;
 var init_doctor = __esm({
   "src/doctor.ts"() {
     "use strict";
     init_auth();
     init_captcha();
     init_deposit_wizard();
+    init_field_match();
     init_logger();
     init_manage_actions();
     init_markdown();
     init_page_payload();
     init_selectors();
     init_site_overrides();
-    PROBE = {
-      slug: "doctor-probe",
-      title: "Test de diagnostic \u2014 ne pas publier",
-      category: "",
-      price: 1,
-      zipcode: "75001",
-      city: "Paris",
-      attributes: {},
-      photos: [],
-      status: "draft",
-      description: "Annonce de test du diagnostic leboncoin-cdp. Elle n'est jamais publi\xE9e."
-    };
   }
 });
 
@@ -8494,7 +8763,7 @@ var init_manage = __esm({
 // src/cli.ts
 import { realpathSync } from "fs";
 import { resolve } from "path";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath as fileURLToPath2, pathToFileURL } from "url";
 
 // src/annonce.ts
 init_markdown();
@@ -9119,7 +9388,7 @@ async function main(argv = process.argv.slice(2)) {
 function isInvokedDirectly() {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
-  const modulePath = fileURLToPath(import.meta.url);
+  const modulePath = fileURLToPath2(import.meta.url);
   try {
     if (realpathSync(argv1) === realpathSync(modulePath)) return true;
   } catch {

@@ -36,7 +36,14 @@ function liveSite(opts: { loggedIn?: boolean } = {}) {
         state.page = "step2";
         return fixture("deposit-step-2.html");
       }
-      if (label === "Continuer" && state.page === "step3") state.submitted = true;
+      if (label === "Continuer" && state.page === "step3") {
+        state.submitted = true;
+        return undefined;
+      }
+      if (label === "Continuer" && state.page === "step2") {
+        state.page = "step3";
+        return fixture("deposit-step-3-live.html");
+      }
       return undefined;
     },
   });
@@ -57,12 +64,16 @@ describe("runDoctor", () => {
     ]);
     expect(r.ok).toBe(true);
     expect(state.submitted).toBe(false);
-    expect(r.deposit?.stop).toBe("missing-required"); // the probe has no photos
+    // Without a slug the walk uses the bundled example annonce and its photo: it gets past
+    // the photo step, up to the final review — and stops there.
+    expect(state.page).toBe("step3");
+    expect(r.deposit?.stop).toBe("final");
+    expect(cdp.uploaded).toEqual([expect.stringMatching(/assets[/\\]example-annonce[/\\]photos[/\\]macbook\.jpg$/)]);
     expect(r.fields.title).toBe("selector");
     expect(r.fields.category).toBe("semantic");
-    expect(r.fields.description).toBe("not-reached");
+    expect(r.fields.description).toBe("selector");
     expect(JSON.parse(readFileSync(out, "utf8")).checks).toHaveLength(4);
-  });
+  }, 30_000);
 
   it("skips the deposit walk (and fails) when logged out", async () => {
     const out = join(mkdtempSync(join(tmpdir(), "lbc-doc-")), "r.json");

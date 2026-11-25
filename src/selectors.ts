@@ -138,7 +138,21 @@ export const DEPOSIT = {
    * the ad (« Un dernier aperçu avant de publier… », « En cliquant sur
    * "Continuer", je confirme l'exactitude… »). The wizard never clicks past it.
    */
-  finalStepMarkers: ["avant de publier", "je confirme l'exactitude", "deposer mon annonce", "publier mon annonce"],
+  finalStepMarkers: [
+    "avant de publier",
+    "un dernier aperçu",
+    "je confirme l'exactitude",
+    "en cliquant sur continuer je confirme",
+    "deposer mon annonce",
+    "publier mon annonce",
+  ],
+
+  /**
+   * Logical fields only the FINAL review shows (live 2026-11: « Description de
+   * l'annonce », « Prix de vente souhaité », the « Location » address combobox).
+   * Any ONE of them on a step marks it final, whatever its heading says.
+   */
+  finalStepFields: ["description", "price", "location"] as LogicalFieldName[],
 
   /** The current step's heading (step fingerprint). */
   stepTitle: ["#step-title", "main h2", "form h2", "h2", "h1"],
@@ -165,7 +179,7 @@ export interface LogicalField {
   required: boolean;
 }
 
-export type LogicalFieldName = "title" | "description" | "price" | "location" | "category" | "condition" | "shipping" | "photos";
+export type LogicalFieldName = "title" | "description" | "price" | "location" | "category" | "condition" | "shipping" | "donation" | "photos";
 
 const TEXTISH = ["text", "textarea", "combobox", "other"];
 
@@ -189,7 +203,25 @@ export const LOGICAL_FIELDS: Record<LogicalFieldName, LogicalField> = {
     types: ["checkbox", "switch", "radiogroup"],
     required: false,
   },
+  /** « Je vends » / « Je donne » on the final review (« Je vends » for a priced annonce). */
+  donation: { names: ["donation"], labels: ["je vends"], css: [], types: ["radiogroup"], required: false },
   photos: { names: ["images", "photos", "pictures"], labels: ["photo", "photos"], css: DEPOSIT.photoFileInput, types: ["file"], required: true },
+};
+
+/**
+ * Visible labels of category attributes, by technical key (live 2026-11, the
+ * « Ordinateurs » step: `computer_type` → « Type »…). An annonce can then use the
+ * technical key (`brand`) or the label (`Marque`) even if the form's
+ * react-hook-form names drift. A key also matches through its last `_` segment
+ * (`computer_brand` → `brand`).
+ */
+export const ATTRIBUTE_LABELS: Record<string, string[]> = {
+  condition: ["État"],
+  type: ["Type"],
+  brand: ["Marque"],
+  screen_size: ["Taille d'écran"],
+  usage: ["Usage"],
+  year: ["Année de fabrication"],
 };
 
 /**
@@ -249,6 +281,17 @@ export const MANAGE = {
   /** « Mes annonces » (moved from /mes-annonces, which now lands on /favorites). */
   listingUrl: `${BASE_URL}/compte/part/mes-annonces`,
   adUrl: (id: string): string => `${BASE_URL}/ad/${id}`,
+
+  /**
+   * « Mes annonces » as seen live (2026-11): tabs « En ligne » / « Expirées », a
+   * search box « Recherchez dans vos annonces », and a bulk bar « Pause » /
+   * « Réactiver » / « Supprimer » acting on the TICKED ads. The engine only ever
+   * acts inside one ad's own card; the other tab is tried when the ad is not
+   * listed on the default one.
+   */
+  listingTabs: [{ textCandidates: ["Expirées"], css: ['[role="tab"][aria-label*="expir" i]'] }] as ButtonSelector[],
+  /** Controls never clicked on « Mes annonces »: ticking every ad would make a bulk action hit all of them. */
+  neverClick: ["Sélectionner toutes les annonces"],
 
   deleteButton: {
     textCandidates: ["Supprimer l'annonce", "Supprimer mon annonce", "Supprimer"],

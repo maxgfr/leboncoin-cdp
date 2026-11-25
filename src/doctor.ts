@@ -9,19 +9,21 @@
  *                    review without submitting; reports, per logical field,
  *                    whether it was found by `selector` (selectors.ts fast path),
  *                    `semantic` (label/name matching), or not at all.
- * Without a slug the deposit check uses a throw-away probe annonce and stops at
- * the first step that needs photos; with `doctor <slug>` it uses that annonce
- * (and its photos) and reaches the final review.
+ * Without a slug the deposit check uses the bundled example annonce (and its
+ * photo); with `doctor <slug>` it uses that annonce (and its photos). Either way
+ * it must reach the final review — and stop there, submitting nothing.
  *
  * The report is written to <scraper home>/doctor-report.json — the first file to
  * read when something breaks (see SKILL.md, "When Leboncoin changes").
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { checkLogin } from "./auth";
 import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
 import type { CDPClient } from "./cdp";
 import { type WizardResult, runWizard } from "./deposit-wizard";
+import { logicalValue } from "./field-match";
 import { logger } from "./logger";
 import { navigate } from "./manage-actions";
 import { parseAnnonce, resolvePhotoPaths } from "./markdown";
@@ -30,7 +32,8 @@ import { AUTH, BASE_URL, DEPOSIT, LOGICAL_FIELDS, type LogicalFieldName } from "
 import { applySiteOverrides } from "./site-overrides";
 import type { Annonce } from "./types";
 
-export type FieldResolution = "selector" | "semantic" | "unresolved" | "not-reached";
+/** `no-value`: the annonce has nothing to write there (e.g. no `address`), so nothing was looked for. */
+export type FieldResolution = "selector" | "semantic" | "unresolved" | "not-reached" | "no-value";
 
 export interface DoctorCheck {
   name: "login" | "search" | "ad-detail" | "deposit";
@@ -69,19 +72,43 @@ async function defaultConnect(url: string): Promise<CDPClient> {
   return connectAndNavigate(url);
 }
 
-/** A throw-away annonce for the deposit walk — it is never submitted. */
-const PROBE: Annonce = {
-  slug: "doctor-probe",
-  title: "Test de diagnostic — ne pas publier",
-  category: "",
-  price: 1,
-  zipcode: "75001",
-  city: "Paris",
-  attributes: {},
-  photos: [],
-  status: "draft",
-  description: "Annonce de test du diagnostic leboncoin-cdp. Elle n'est jamais publiée.",
-};
+/**
+ * The bundled example annonce (assets/example-annonce: a MacBook, one photo) —
+ * the deposit walk without a slug uses it, so it gets past the photo step and the
+ * category attributes up to the final review. It is never submitted. Resolved
+ * from this module: src/doctor.ts and the scripts/leboncoin.mjs bundle both sit
+ * one level below the package root.
+ */
+export function bundledExampleDir(): string {
+  return fileURLToPath(new URL("../assets/example-annonce", import.meta.url));
+}
+
+function annonceAt(dir: string): { a: Annonce; photos: string[] } {
+  const a = parseAnnonce(dir);
+  return { a, photos: resolvePhotoPaths(dir, a) };
+}
+
+/** The probe annonce + photos for a slug-less deposit walk (a minimal photo-less probe if the example is missing). */
+function probeAnnonce(): { a: Annonce; photos: string[] } {
+  try {
+    return annonceAt(bundledExampleDir());
+  } catch {
+    return {
+      a: {
+        slug: "doctor-probe",
+        title: "Test de diagnostic — ne pas publier",
+        category: "",
+        price: 1,
+        zipcode: "75001",
+        attributes: {},
+        photos: [],
+        status: "draft",
+        description: "Test.",
+      },
+      photos: [],
+    };
+  }
+}
 
 /** Summarise how each logical field was resolved across the wizard steps. */
 export function fieldResolutions(w: WizardResult, a: Annonce): Partial<Record<LogicalFieldName, FieldResolution>> {
@@ -92,6 +119,7 @@ export function fieldResolutions(w: WizardResult, a: Annonce): Partial<Record<Lo
     else if (fills.length) out[name] = "semantic";
     else if (name === "category" && w.category) out[name] = "semantic";
     else if (w.stop !== "final") out[name] = "not-reached";
+    else if (name !== "category" && name !== "photos" && logicalValue(a, name) === null) out[name] = "no-value";
     else
       out[name] =
         LOGICAL_FIELDS[name].required || (name === "condition" ? !!a.condition : name === "shipping" ? typeof a.shipping === "boolean" : false)
@@ -152,8 +180,7 @@ export async function runDoctor(opts: DoctorOptions = {}, deps: Partial<DoctorDe
     if (login.loggedOut) {
       report.checks.push({ name: "deposit", ok: false, detail: "skipped — log in first (`leboncoin login`)" });
     } else {
-      const a = opts.slug ? parseAnnonce(path.join(opts.annoncesDir ?? "annonces", opts.slug)) : PROBE;
-      const photos = opts.slug ? resolvePhotoPaths(path.join(opts.annoncesDir ?? "annonces", opts.slug), a) : [];
+      const { a, photos } = opts.slug ? annonceAt(path.join(opts.annoncesDir ?? "annonces", opts.slug)) : probeAnnonce();
       await navigate(cdp, DEPOSIT.startUrl);
       const w = await runWizard(cdp, a, { photos });
       report.fields = fieldResolutions(w, a);
@@ -162,13 +189,12 @@ export async function runDoctor(opts: DoctorOptions = {}, deps: Partial<DoctorDe
         error: w.error,
         steps: w.steps.map((s) => ({ title: s.title, fields: s.formMap.fields.length, final: s.final, unresolvedRequired: s.unresolvedRequired })),
       };
-      // Without photos the probe legitimately stops at the photo step.
-      const expectedStop = opts.slug ? "final" : "missing-required";
-      const ok = w.stop === "final" || (w.stop === expectedStop && w.steps.length >= 2);
+      // Reaching (and stopping on) the final review is the pass; a photo-less probe may only get to the photo step.
+      const ok = w.stop === "final" || (photos.length === 0 && w.stop === "missing-required" && w.steps.length >= 2);
       report.checks.push({
         name: "deposit",
         ok,
-        detail: `${w.steps.length} step(s): ${w.steps.map((s) => `« ${s.title || "?"} »`).join(" → ")}; stopped: ${w.stop}${w.error ? ` (${w.error})` : ""} — nothing submitted`,
+        detail: `${w.steps.length} step(s): ${w.steps.map((s) => `« ${s.title || "?"} »`).join(" → ")}; photos ${w.uploadedPhotos}/${photos.length}; stopped: ${w.stop}${w.error ? ` (${w.error})` : ""} — nothing submitted`,
       });
       // Leave the half-filled form: nothing is submitted, and the page is discarded.
       await navigate(cdp, "about:blank", 300);
