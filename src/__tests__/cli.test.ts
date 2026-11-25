@@ -12,6 +12,22 @@ vi.mock("../browser", () => ({
   },
 }));
 
+// `open --real` must never run the OS opener in tests: record what it would spawn.
+const spawned: [string, string[]][] = [];
+vi.mock("node:child_process", () => ({
+  spawn: (cmd: string, args: string[]) => {
+    spawned.push([cmd, args]);
+    const handlers: Record<string, () => void> = {};
+    setTimeout(() => handlers.spawn?.(), 0);
+    return {
+      once: (event: string, fn: () => void) => {
+        handlers[event] = fn;
+      },
+      unref: () => {},
+    };
+  },
+}));
+
 import { main, parseArgs } from "../cli";
 
 /** Run parseArgs with process.exit/stdout/stderr trapped, returning either the
@@ -136,6 +152,10 @@ describe("parseArgs", () => {
     expect(open.result?.command).toBe("open");
     expect(open.result?.bools.has("deposit")).toBe(true);
     expect(open.result?.values.url).toBe("https://www.leboncoin.fr/compte");
+    const real = run(["open", "macbook", "--real", "--action", "delete"]);
+    expect(real.result?.bools.has("real")).toBe(true);
+    expect(real.result?.values.action).toBe("delete");
+    expect(run(["cu-sheet", "macbook", "--action", "edit"]).result?.values.action).toBe("edit");
     const rec = run(["record", "macbook", "--url", "https://www.leboncoin.fr/ad/x/1234567", "--status", "sold"]);
     expect(rec.result?.values).toMatchObject({ url: "https://www.leboncoin.fr/ad/x/1234567", status: "sold" });
     expect(run(["login", "--copy-profile"]).result?.bools.has("copy-profile")).toBe(true);
@@ -191,6 +211,34 @@ describe("main dispatch (computer use)", () => {
       devBrowser: { command: "dev-browser --connect 41234" },
     });
     expect(typeof out.devBrowser.available).toBe("boolean");
+  });
+
+  it("cu-sheet --action writes the action playbook; an unknown action exits 1", async () => {
+    const r = await runMain(["cu-sheet", "ex", "--annonces-dir", root, "--action", "delete", "--json"]);
+    expect(r.exitCode).toBe(0);
+    const sheet = JSON.parse(r.out);
+    expect(sheet).toMatchObject({ action: "delete", start_url: "https://www.leboncoin.fr/compte/part/mes-annonces" });
+    expect(sheet.record).toBe("leboncoin record ex --url <ad url> --status deleted");
+    expect(readFileSync(join(root, "ex", "computer-use.md"), "utf8")).toContain("Computer-use playbook — delete — ex");
+    const bad = await runMain(["cu-sheet", "ex", "--annonces-dir", root, "--action", "boost"]);
+    expect(bad.exitCode).toBe(1);
+    expect(bad.err).toContain("--action must be one of");
+  });
+
+  it("open --real hands the URL to the (mocked) OS opener — no CDP navigation", async () => {
+    const before = navigated.length;
+    const brave = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+    const r = await runMain(["open", "ex", "--real", "--action", "mark-sold", "--chrome-path", brave, "--annonces-dir", root, "--json"]);
+    expect(r.exitCode).toBe(0);
+    const listing = "https://www.leboncoin.fr/compte/part/mes-annonces";
+    expect(navigated.length).toBe(before);
+    if (process.platform === "darwin") {
+      expect(JSON.parse(r.out)).toEqual({ url: listing, mode: "real", browser: "Brave Browser" });
+      expect(spawned.at(-1)).toEqual(["open", ["-a", "Brave Browser", listing]]);
+    } else if (process.platform === "linux") {
+      expect(JSON.parse(r.out)).toEqual({ url: listing, mode: "real", browser: "default" });
+      expect(spawned.at(-1)).toEqual(["xdg-open", [listing]]);
+    }
   });
 
   it("record writes the ad back, and exits 1 on a missing or non-Leboncoin URL", async () => {

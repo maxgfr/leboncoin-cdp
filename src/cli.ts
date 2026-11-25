@@ -24,9 +24,9 @@ Usage:
   leboncoin edit <slug> [--no-screenshot] [--yes]
   leboncoin renew|mark-sold|deactivate|reactivate <slug> [--yes]
   leboncoin list [--status draft|published|deleted|sold|paused]
-  leboncoin cu-sheet <slug> [--json]
-  leboncoin open [<slug>] [--url <u>] [--deposit] [--json]
-  leboncoin record <slug> --url <ad url> [--status published|sold|paused|deleted]
+  leboncoin cu-sheet <slug> [--action publish|edit|delete|renew|mark-sold|deactivate|reactivate] [--json]
+  leboncoin open [<slug>] [--real] [--action <a>] [--url <u>] [--deposit] [--json]
+  leboncoin record <slug> --url <ad url> [--status published|sold|paused|deleted|renewed]
   leboncoin scrape --query "<query|url>" [scraper options]
 
 Commands:
@@ -71,16 +71,22 @@ Commands:
                 Controls are looked up on the ad page, in its « … » menu, then in its card on
                 « mes annonces »; the local status changes only with proof from the site.
   list/status   Show local annonces and their published state.
-  cu-sheet      Computer-use fill sheet: annonces/<slug>/computer-use.md (--json prints it) with the
-                deposit URL, every value in form order, absolute photo paths, each step's labels
-                (from form-map.json) and a resume block (from handoff.json). Refuses an invalid
-                annonce (exit 1).
-  open          Launch/reuse the scraper browser on --url, else the slug's live ad (unless
-                --deposit), else the deposit form — drives nothing, leaves the window open and
-                prints the CDP port + http://127.0.0.1:<port>, and dev-browser --connect <port> when
-                dev-browser is on PATH (recommended driver, optional) — else computer use.
+  cu-sheet      Computer-use sheet: annonces/<slug>/computer-use.md (--json prints it). Default
+                --action publish: the deposit URL, every value in form order, absolute photo
+                paths + the OS file-dialog recipe, each step's labels (from form-map.json) and a
+                resume block (from handoff.json); refuses an invalid annonce (exit 1). Other
+                actions: an ordered playbook (start URL, how to find the ad, the controls to
+                click, the proof of success, the stop rule, the record command to run after).
+  open          --real: open --url, else the --action's start page, else the slug's live ad /
+                the deposit form, in YOUR OWN browser through the OS (macOS open -a <remembered
+                browser>, else the default browser; Linux xdg-open) — no CDP, no scraper profile.
+                The default way to do any account action by computer use.
+                Without --real (advanced, CDP engine): launch/reuse the scraper browser there,
+                leave the window open and print the CDP port + http://127.0.0.1:<port>, and
+                dev-browser --connect <port> when dev-browser is on PATH (optional driver).
   record        Write back an action done by computer use: leboncoin_url/_id (parsed from the ad
-                URL), status (default published) and its timestamp. Removes handoff.json.
+                URL), status (default published; renewed = stays published + renewed_at) and its
+                timestamp. Removes handoff.json.
   scrape        The original read-only scraper (search results + ad details).
 
 Common options:
@@ -156,6 +162,7 @@ const VALUE_FLAGS = new Set([
   "out",
   "timeout-login",
   "url",
+  "action",
 ]);
 
 const BOOL_FLAGS = new Set([
@@ -174,6 +181,7 @@ const BOOL_FLAGS = new Set([
   "force",
   "copy-profile",
   "deposit",
+  "real",
 ]);
 
 const SHORT: Record<string, string> = {
@@ -414,8 +422,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
     case "cu-sheet": {
       const slug = requireSlug(p);
-      const { runCuSheet } = await import("./computer-use");
-      const r = runCuSheet(annoncesDirOf(p), slug);
+      const { parseCuAction, runCuSheet } = await import("./computer-use");
+      let action: ReturnType<typeof parseCuAction>;
+      try {
+        action = parseCuAction(p.values.action);
+      } catch (e) {
+        fail((e as Error).message);
+      }
+      const r = runCuSheet(annoncesDirOf(p), slug, action);
+      if (r.error) fail(r.error);
       if (!r.ok) {
         process.stdout.write(formatValidationReport(r.validation) + "\n");
         fail(`refusing to build a computer-use sheet for an invalid annonce — fix it, then: leboncoin validate ${slug}`);
@@ -423,14 +438,37 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       if (json) process.stdout.write(JSON.stringify(r.sheet, null, 2) + "\n");
       else {
         process.stderr.write(`leboncoin: wrote ${r.path}\n`);
-        if (r.sheet?.handoff) process.stderr.write(`  resume from the CDP handoff (${r.sheet.handoff.reason}) — see the top of the sheet\n`);
+        const sheet = r.sheet;
+        if (sheet?.action === "publish" && sheet.handoff)
+          process.stderr.write(`  resume from the CDP handoff (${sheet.handoff.reason}) — see the top of the sheet\n`);
+        if (sheet) process.stderr.write(`  next: leboncoin open ${slug} --real${action === "publish" ? "" : ` --action ${action}`}\n`);
       }
       return;
     }
 
     case "open": {
-      const { DEV_BROWSER_INSTALL_HINT, runOpen } = await import("./computer-use");
-      const r = await runOpen(annoncesDirOf(p), p.positional[0], { url: p.values.url, deposit: p.bools.has("deposit") });
+      const { DEV_BROWSER_INSTALL_HINT, parseCuAction, runOpen, runOpenReal } = await import("./computer-use");
+      let opts: { url?: string; deposit: boolean; action?: ReturnType<typeof parseCuAction> };
+      try {
+        opts = { url: p.values.url, deposit: p.bools.has("deposit"), ...(p.values.action ? { action: parseCuAction(p.values.action) } : {}) };
+      } catch (e) {
+        fail((e as Error).message);
+      }
+      if (p.bools.has("real")) {
+        let real: Awaited<ReturnType<typeof runOpenReal>>;
+        try {
+          real = await runOpenReal(annoncesDirOf(p), p.positional[0], opts);
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        if (json) process.stdout.write(JSON.stringify(real, null, 2) + "\n");
+        else {
+          process.stdout.write(`leboncoin: opened ${real.url} in ${real.browser === "default" ? "your default browser" : real.browser}\n`);
+          process.stdout.write("  your own browser, no CDP: drive it by computer use (screenshot before each step)\n");
+        }
+        return;
+      }
+      const r = await runOpen(annoncesDirOf(p), p.positional[0], opts);
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       else {
         process.stdout.write(`leboncoin: opened ${r.url}\n`);

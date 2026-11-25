@@ -144,6 +144,7 @@ export function parseAnnonce(dir: string): Annonce {
     deleted_at: optStr(f.deleted_at),
     sold_at: optStr(f.sold_at),
     paused_at: optStr(f.paused_at),
+    renewed_at: optStr(f.renewed_at),
     description: body.trim(),
   };
 }
@@ -190,6 +191,7 @@ export function serializeAnnonce(a: Annonce): string {
   if (a.deleted_at) L.push(`deleted_at: ${q(a.deleted_at)}`);
   if (a.sold_at) L.push(`sold_at: ${q(a.sold_at)}`);
   if (a.paused_at) L.push(`paused_at: ${q(a.paused_at)}`);
+  if (a.renewed_at) L.push(`renewed_at: ${q(a.renewed_at)}`);
   L.push("---");
   L.push("");
   L.push(a.description.trim());

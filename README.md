@@ -1,8 +1,9 @@
 # leboncoin-cdp
 
-Manage your Leboncoin listings from **local markdown + photos**, then **publish and
-delete** them on your own account via the **Chrome DevTools Protocol** — built on the
-original zero-bot-detection CDP scraper. Shipped as a [skills.sh](https://skills.sh) agent
+Manage your Leboncoin listings from **local markdown + photos**, then publish, edit and
+delete them on your own account — by **computer use in your own, already logged-in browser**
+by default, or via the **Chrome DevTools Protocol** — built on the original zero-bot-detection
+CDP scraper. Shipped as a [skills.sh](https://skills.sh) agent
 skill (a thick `SKILL.md` playbook + a single zero-dependency CLI bundle).
 
 ```bash
@@ -10,12 +11,19 @@ npx skills add maxgfr/leboncoin-cdp
 ```
 
 Markdown is the source of truth. You (or your agent) write and enrich the description —
-grounded by comparable live listings — then the skill drives the « déposer une annonce »
-form in a logged-in browser window to publish. **Semi-automatic and safe by default:** it
-walks the deposit wizard, fills every step by field meaning and uploads the photos, then stops
-on the final review: you check it on screen and submit it yourself. Prefer computer use? `cu-sheet`
-+ `open` hand the same values to an agent that fills the wizard itself — ideally through the optional
-[dev-browser](https://github.com/sawyerhood/dev-browser) attached to that window (snapshot + refs), else by screenshots and clicks. When
+grounded by comparable live listings. Then every account action (publish, edit, delete, renew,
+mark-sold, deactivate, reactivate) goes through **computer use in your everyday browser**, where
+you are already logged in: `cu-sheet <slug> --action <a>` writes a step-by-step sheet (values,
+labels to click, proof of success, stop rule), `open <slug> --real --action <a>` opens the right
+page in your browser, the agent acts by screenshots, clicks and typing, and `record` writes the
+result back. The preferred driver is the Claude in Chrome extension (Chrome or Brave: its own
+tab, page refs, photo upload without the file dialog); else desktop computer use on the window
+`open --real` opened. No second login, no remote-debugging flag. **Safe by default:** the agent stops
+before the final publish and asks before any irreversible click (delete, mark-sold); a human
+solves captchas.
+
+The CDP write engine (`publish`, `edit`, `delete`, …) remains as an advanced alternative: it
+drives a separate browser window on its own scraper profile, which you log in to once. When
 Leboncoin changes something, `doctor` says what broke.
 
 ## Why CDP (and why it isn't detected)
@@ -25,27 +33,36 @@ client attached to a normal browser: real first navigation sets the cookies, and
 interaction runs as in-page JavaScript (`Runtime.evaluate`) — indistinguishable from the
 site's own frontend. The skill launches a **separate** browser instance on its own fresh,
 isolated profile (`~/.lbc-scraper`) and **never touches your running browser**. Reads (`scrape`,
-`comparables`) need no login, on any browser; for writes, log in once by hand in that window
-(`login` waits) — it keeps its own session, so your real browser stays logged in.
+`comparables`) need no login, on any browser. The CDP write engine (advanced) needs that window
+logged in once by hand (`login` waits) — it keeps its own session, so your real browser stays
+logged in.
 `--copy-profile` seeds it from your real profile instead (opt-in: the shared session tokens may
 log your real browser out of Leboncoin).
 
 ## The skill workflow
 
 ```bash
-node scripts/leboncoin.mjs login                           # once: log in by hand in the scraper window
 node scripts/leboncoin.mjs new macbook-air-m1 --title "MacBook Air M1" --category "Ordinateurs"
 # → drop photos into annonces/macbook-air-m1/photos/, write the description in annonce.md
 
-node scripts/leboncoin.mjs comparables macbook-air-m1      # scrape similar ads → comparables.md
+node scripts/leboncoin.mjs comparables macbook-air-m1      # scrape similar ads → comparables.md (no login)
 # → set price / category / attributes from the comparables
 
 node scripts/leboncoin.mjs validate macbook-air-m1         # structural gate (exit≠0 if invalid)
-node scripts/leboncoin.mjs publish  macbook-air-m1 --diagnostic   # walk the wizard, never submits
-node scripts/leboncoin.mjs publish  macbook-air-m1         # same, then you submit the final step
-node scripts/leboncoin.mjs doctor                          # read-only health check when something breaks
+
+# Publish by computer use, in your own logged-in browser:
+node scripts/leboncoin.mjs cu-sheet macbook-air-m1         # → computer-use.md: values, photos, file-dialog recipe
+node scripts/leboncoin.mjs open macbook-air-m1 --real      # the deposit form, in your browser (--browser brave once)
+# → the agent fills it by screenshots/clicks/typing and stops on the final review; you submit
+node scripts/leboncoin.mjs record macbook-air-m1 --url https://www.leboncoin.fr/ad/ordinateurs/1234567890
+
+# Any later action, same loop (edit, delete, renew, mark-sold, deactivate, reactivate):
+node scripts/leboncoin.mjs cu-sheet macbook-air-m1 --action mark-sold
+node scripts/leboncoin.mjs open macbook-air-m1 --real --action mark-sold
+node scripts/leboncoin.mjs record macbook-air-m1 --url <ad url> --status sold
+
 node scripts/leboncoin.mjs list                            # see local annonces + their state
-node scripts/leboncoin.mjs delete  macbook-air-m1          # remove a published ad
+node scripts/leboncoin.mjs doctor                          # read-only health check when something breaks
 ```
 
 | Command | What it does |
@@ -53,11 +70,12 @@ node scripts/leboncoin.mjs delete  macbook-air-m1          # remove a published 
 | `new <slug>` | Scaffold `annonces/<slug>/annonce.md` + `photos/` (a draft). |
 | `comparables <slug>` | Scrape similar live listings → `comparables.json` + `comparables.md` (grounding). |
 | `validate <slug>` | Required fields, ≥1 photo, real description, `status: draft`. |
-| `publish <slug>` | Fill the deposit form + upload photos via CDP. Semi-auto; `--yes` auto-submits; `--dry-run` fills only. |
-| `delete <slug>` | Remove a published ad (confirms unless `--yes`). |
-| `cu-sheet <slug>` | Computer-use fill sheet (`computer-use.md`, `--json`): values in form order, photo paths, step labels, handoff resume. |
-| `open [<slug>]` | Open the scraper browser on the deposit form / the ad / `--url`, leave it open, print the CDP port (+ `dev-browser --connect <port>` if installed). |
-| `record <slug> --url <u>` | Write back an ad published/changed by computer use (id, URL, status). |
+| `cu-sheet <slug> [--action <a>]` | Computer-use sheet (`computer-use.md`, `--json`). Publish: values in form order, photo paths + file-dialog recipe, step labels, handoff resume. Other actions: start URL, how to find the ad, controls, proof of success, stop rule, `record` command. |
+| `open [<slug>] --real [--action <a>]` | Open the action's page in **your own** browser through the OS (`open -a` / `xdg-open`) — no CDP. |
+| `record <slug> --url <u> [--status <s>]` | Write back an action done by computer use (id, URL, status: `published`, `sold`, `paused`, `deleted`, `renewed`). |
+| `publish <slug>` | Advanced, CDP: fill the deposit form + upload photos in the scraper window. Semi-auto; `--yes` auto-submits. |
+| `edit` / `delete` / `renew` / `mark-sold` / `deactivate` / `reactivate` `<slug>` | Advanced, CDP: the same actions in the scraper window (confirm unless `--yes`). |
+| `login` / `open [<slug>]` | Advanced, CDP: log in the scraper window once / open it on a page and print its CDP port (+ `dev-browser --connect <port>` if installed). |
 | `list` / `status` | Show local annonces and their published state. |
 | `scrape` | The original read-only scraper (search results + ad details). |
 
