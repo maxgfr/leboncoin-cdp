@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+# [1.7.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.6.0...v1.7.0) (2026-11-25)
+
+
+### Features
+
+* **computer-use:** match the live deposit wizard and run comparables in the user's browser ([12f80d2](https://github.com/maxgfr/leboncoin-cdp/commit/12f80d2e72596c8615defd0e030c680633ef9b8b))
+
 # [1.6.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.5.0...v1.6.0) (2026-11-25)
 
 
