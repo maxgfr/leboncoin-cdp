@@ -6,8 +6,8 @@
  * it is indistinguishable from the site's own JavaScript. We never fire a
  * synthetic authenticated XHR.
  *
- * The reliable way to be logged in is the once-copied real browser profile
- * (~/.lbc-scraper) — see config.ts. Cookie attach (Network.setCookie from an
+ * The reliable way to be logged in is a manual login, once, in the isolated
+ * scraper profile (~/.lbc-scraper) — see config.ts. Cookie attach (Network.setCookie from an
  * exported cookies.json) is a BEST-EFFORT escape hatch only: DataDome binds the
  * session to the device fingerprint and validates the token server-side, so an
  * injected cookie may set yet still bounce to /connexion. `runAuth` therefore
@@ -209,7 +209,7 @@ export async function runAuth(opts: AuthOptions = {}, deps: Partial<AuthDeps> = 
 
     let outPath = opts.out;
     if (!outPath) {
-      // Defer the config import (it copies the real browser profile on first run)
+      // Defer the config import (it resolves the scraper browser/profile)
       // to the default path only — keeps unit tests free of that side effect.
       const { getAuthStatePath } = await import("./config");
       outPath = getAuthStatePath();

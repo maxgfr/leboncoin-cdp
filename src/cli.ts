@@ -12,7 +12,7 @@ them on your own account via the Chrome DevTools Protocol. Markdown is the sourc
 of truth; you (or the agent) write the copy, the engine just drives the browser.
 
 Usage:
-  leboncoin login [--browser brave|chrome|chromium|opera] [--reset-profile] [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
+  leboncoin login [--browser brave|chrome|chromium|opera] [--reset-profile] [--copy-profile] [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
   leboncoin doctor [<slug>] [--query "<search>"] [--out <path>]
   leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
                        [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
@@ -24,6 +24,9 @@ Usage:
   leboncoin edit <slug> [--no-screenshot] [--yes]
   leboncoin renew|mark-sold|deactivate|reactivate <slug> [--yes]
   leboncoin list [--status draft|published|deleted|sold|paused]
+  leboncoin cu-sheet <slug> [--json]
+  leboncoin open [<slug>] [--url <u>] [--deposit] [--json]
+  leboncoin record <slug> --url <ad url> [--status published|sold|paused|deleted]
   leboncoin scrape --query "<query|url>" [scraper options]
 
 Commands:
@@ -31,9 +34,12 @@ Commands:
                 redirect), and save an auth-state screenshot. --cookies-file attaches an exported
                 cookies.json (best-effort escape hatch; always re-verified). If logged out, it
                 waits while you log in once in the browser. Run this before publish/delete.
-                --browser brave uses (and remembers) your Brave session: its profile is copied
-                once to ~/.lbc-scraper/profile-brave. --reset-profile re-copies it (after you
-                logged in again in the real browser).
+                The scraper profile (~/.lbc-scraper/profile, profile-brave with --browser brave…)
+                is a FRESH, isolated profile: log in to Leboncoin once by hand in that window and
+                it keeps its own session, independent of your real browser. Reads (scrape,
+                comparables) need no login, on any browser. --reset-profile deletes and
+                re-creates it. --copy-profile seeds it from your real profile instead (opt-in:
+                the shared session tokens may log your real browser out of Leboncoin).
   doctor        READ-ONLY health check against the live site: login, a search page, an ad page,
                 and a walk of the deposit wizard that stops on the final review WITHOUT
                 submitting. Reports how each field was found (selector / semantic / unresolved)
@@ -65,13 +71,24 @@ Commands:
                 Controls are looked up on the ad page, in its « … » menu, then in its card on
                 « mes annonces »; the local status changes only with proof from the site.
   list/status   Show local annonces and their published state.
+  cu-sheet      Computer-use fill sheet: annonces/<slug>/computer-use.md (--json prints it) with the
+                deposit URL, every value in form order, absolute photo paths, each step's labels
+                (from form-map.json) and a resume block (from handoff.json). Refuses an invalid
+                annonce (exit 1).
+  open          Launch/reuse the scraper browser on --url, else the slug's live ad (unless
+                --deposit), else the deposit form — drives nothing, leaves the window open and
+                prints the CDP port + http://127.0.0.1:<port> for another driver or computer use.
+  record        Write back an action done by computer use: leboncoin_url/_id (parsed from the ad
+                URL), status (default published) and its timestamp. Removes handoff.json.
   scrape        The original read-only scraper (search results + ad details).
 
 Common options:
   --annonces-dir <dir>   Root of the local store            (default: ./annonces)
   --browser <name>       chrome | brave | chromium | opera — remembered for next runs
   --chrome-path <bin>    Explicit browser binary (remembered too)
-  --reset-profile        Re-copy the selected browser's real profile into ~/.lbc-scraper
+  --reset-profile        Delete and re-create the selected browser's scraper profile
+  --copy-profile         Seed a NEW scraper profile from the real browser profile (may log the
+                         real browser out of Leboncoin — opt-in only)
   --json                 Machine-readable output
   -h, --help             Show this help
   -v, --version          Show version
@@ -84,6 +101,9 @@ Publish/delete safety:
   Semi-auto is the default — the engine never clicks the final publish for you unless
   you pass --yes. A DataDome captcha at submit always needs a human, so --yes is not
   fully headless. These actions hit your real account; see SKILL.md.
+  When publish ends not-ok for a reason a human can finish (incomplete, form-error,
+  not-published) it writes annonces/<slug>/handoff.json and leaves the window open:
+  finish there by computer use (leboncoin cu-sheet <slug>), then leboncoin record.
 `;
 
 export const COMMANDS = new Set([
@@ -104,6 +124,9 @@ export const COMMANDS = new Set([
   "deactivate",
   "reactivate",
   "doctor",
+  "cu-sheet",
+  "open",
+  "record",
 ]);
 
 const VALUE_FLAGS = new Set([
@@ -131,6 +154,7 @@ const VALUE_FLAGS = new Set([
   "cookies-file",
   "out",
   "timeout-login",
+  "url",
 ]);
 
 const BOOL_FLAGS = new Set([
@@ -147,6 +171,8 @@ const BOOL_FLAGS = new Set([
   "no-screenshot",
   "shots",
   "force",
+  "copy-profile",
+  "deposit",
 ]);
 
 const SHORT: Record<string, string> = {
@@ -266,7 +292,7 @@ function requireSlug(p: Parsed): string {
 }
 
 /** Commands that drive the browser and pick it up from --browser / --chrome-path / --reset-profile. */
-const BROWSER_COMMANDS = new Set(["login", "auth", "inspect", "publish", "delete", "edit", "renew", "mark-sold", "deactivate", "reactivate", "doctor"]);
+const BROWSER_COMMANDS = new Set(["login", "auth", "inspect", "publish", "delete", "edit", "renew", "mark-sold", "deactivate", "reactivate", "doctor", "open"]);
 
 /**
  * Before any live command: apply ~/.lbc-scraper/site.json (site-drift overrides,
@@ -277,9 +303,14 @@ async function prepareSite(p: Parsed): Promise<void> {
   const { applySiteOverrides } = await import("./site-overrides");
   applySiteOverrides();
   if (!BROWSER_COMMANDS.has(p.command)) return;
-  if (p.values.browser || p.values["chrome-path"] || p.bools.has("reset-profile")) {
+  if (p.values.browser || p.values["chrome-path"] || p.bools.has("reset-profile") || p.bools.has("copy-profile")) {
     const { selectBrowser } = await import("./config");
-    selectBrowser({ browser: p.values.browser as BrowserType | undefined, chromePath: p.values["chrome-path"], resetProfile: p.bools.has("reset-profile") });
+    selectBrowser({
+      browser: p.values.browser as BrowserType | undefined,
+      chromePath: p.values["chrome-path"],
+      resetProfile: p.bools.has("reset-profile"),
+      copyProfile: p.bools.has("copy-profile"),
+    });
   }
   const port = intOf(p.values.port);
   if (port) {
@@ -288,8 +319,8 @@ async function prepareSite(p: Parsed): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  const p = parseArgs(process.argv.slice(2));
+export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const p = parseArgs(argv);
   const json = p.bools.has("json");
   await prepareSite(p);
 
@@ -349,6 +380,7 @@ async function main(): Promise<void> {
         searchOnly: p.bools.has("search-only"),
         withDetails: p.bools.has("with-details"),
         resetProfile: p.bools.has("reset-profile"),
+        copyProfile: p.bools.has("copy-profile"),
         browser: p.values.browser as BrowserType | undefined,
         chromePath: p.values["chrome-path"],
         debuggingPort: intOf(p.values.port),
@@ -371,10 +403,55 @@ async function main(): Promise<void> {
         withDetails: p.bools.has("with-details"),
         browser: p.values.browser as BrowserType | undefined,
         chromePath: p.values["chrome-path"],
+        copyProfile: p.bools.has("copy-profile"),
         debuggingPort: intOf(p.values.port),
         pageTimeout: intOf(p.values.timeout),
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      return;
+    }
+
+    case "cu-sheet": {
+      const slug = requireSlug(p);
+      const { runCuSheet } = await import("./computer-use");
+      const r = runCuSheet(annoncesDirOf(p), slug);
+      if (!r.ok) {
+        process.stdout.write(formatValidationReport(r.validation) + "\n");
+        fail(`refusing to build a computer-use sheet for an invalid annonce — fix it, then: leboncoin validate ${slug}`);
+      }
+      if (json) process.stdout.write(JSON.stringify(r.sheet, null, 2) + "\n");
+      else {
+        process.stderr.write(`leboncoin: wrote ${r.path}\n`);
+        if (r.sheet?.handoff) process.stderr.write(`  resume from the CDP handoff (${r.sheet.handoff.reason}) — see the top of the sheet\n`);
+      }
+      return;
+    }
+
+    case "open": {
+      const { runOpen } = await import("./computer-use");
+      const r = await runOpen(annoncesDirOf(p), p.positional[0], { url: p.values.url, deposit: p.bools.has("deposit") });
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      else {
+        process.stdout.write(`leboncoin: opened ${r.url}\n`);
+        process.stdout.write(`  CDP port: ${r.port}\n  endpoint: ${r.endpoint}\n`);
+        process.stdout.write(`  the window stays open: use computer use on it, or attach a driver (e.g. dev-browser --connect ${r.endpoint})\n`);
+      }
+      return;
+    }
+
+    case "record": {
+      const slug = requireSlug(p);
+      if (!p.values.url) fail(`missing --url <ad url> (e.g. leboncoin record ${slug} --url https://www.leboncoin.fr/ad/informatique/1234567890)`);
+      const { runRecord } = await import("./computer-use");
+      let r: Awaited<ReturnType<typeof runRecord>>;
+      try {
+        r = runRecord(annoncesDirOf(p), slug, { url: p.values.url as string, status: p.values.status });
+      } catch (e) {
+        fail((e as Error).message);
+      }
+      if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+      else
+        process.stderr.write(`leboncoin: ${slug} → ${r.status} (${r.leboncoin_id}) ${r.leboncoin_url}${r.handoffRemoved ? " — handoff.json removed" : ""}\n`);
       return;
     }
 
@@ -401,6 +478,7 @@ async function main(): Promise<void> {
       });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       else {
+        if (r.handoff) process.stderr.write(`leboncoin: handoff → computer use: ${r.handoff} (leboncoin cu-sheet ${slug})\n`);
         if (r.missing && r.missing.length) process.stderr.write(`leboncoin: ask the user about → ${r.missing.join(", ")}\n`);
         for (const w of r.report?.warnings ?? []) process.stderr.write(`leboncoin: note → ${w}\n`);
       }

@@ -9,8 +9,9 @@ metadata:
 # leboncoin — manage your listings, publish/delete via CDP
 
 Markdown + photos in a folder are the **source of truth**. You help write the copy
-and fill the structured fields; the skill drives Chrome (via the Chrome DevTools
-Protocol, on the user's real logged-in profile) to **publish** and **delete** ads.
+and fill the structured fields; the skill drives a separate browser window (via the Chrome
+DevTools Protocol, on its own isolated scraper profile) to **publish** and **delete** ads —
+or hands the same values to you for **computer use**.
 It reuses the project's zero-bot-detection CDP core, so there are no automation
 flags and DataDome sees a normal browser.
 
@@ -38,7 +39,7 @@ node scripts/leboncoin.mjs <command> [options]
 
 | Command | What it does |
 |---|---|
-| `login` (alias `auth`) | Open the account page, **actively verify** you're logged in (DOM probe, not just a redirect), save `auth-state.png`. `--browser brave` uses the user's Brave session (remembered for every later command); `--reset-profile` re-copies it. `--cookies-file <p>` is a best-effort escape hatch. **Run before publish/delete.** |
+| `login` (alias `auth`) | Open the account page, **actively verify** you're logged in (DOM probe, not just a redirect), save `auth-state.png`; if logged out, wait while the user logs in once by hand in that window. `--browser <name>` is remembered; `--reset-profile` re-creates the profile; `--copy-profile` (opt-in, may log the real browser out) seeds it from the real one. `--cookies-file <p>` is a best-effort escape hatch. **Run before publish/delete.** |
 | `doctor [<slug>]` | **Read-only** health check: login, a search page, an ad page, and a walk of the deposit wizard that stops on the final review **without submitting**. Writes `~/.lbc-scraper/doctor-report.json` (per field: `selector` / `semantic` / `unresolved`). **Run first when anything breaks.** |
 | `new <slug>` | Scaffold `annonces/<slug>/annonce.md` + `photos/`. `--notes`/`--price`/`--zipcode`/`--condition`/`--attributes` prefill it. |
 | `comparables <slug>` | Scrape similar live listings → `comparables.json` + `comparables.md` (price/keyword/attribute grounding). |
@@ -48,6 +49,9 @@ node scripts/leboncoin.mjs <command> [options]
 | `edit <slug>` | Re-open the published ad's modify form, re-fill from `annonce.md`, screenshot; review and click « Enregistrer » yourself (`--yes` submits). |
 | `renew` / `mark-sold` / `deactivate` / `reactivate` `<slug>` | Bump / mark sold (→ `sold`) / pause (→ `paused`) / put back online (→ `published`). Confirm unless `--yes`. The status changes only when Leboncoin **proves** it; otherwise `unconfirmed` + a screenshot. |
 | `delete <slug>` | Remove a published ad (confirms unless `--yes`); marked `deleted` only with proof (message, or the ad page gone). |
+| `cu-sheet <slug>` | Computer-use fill sheet → `computer-use.md` (`--json`): deposit URL, values in form order, absolute photo paths, per-step labels (from `form-map.json`), resume block (from `handoff.json`). Refuses an invalid annonce. |
+| `open [<slug>]` | Launch/reuse the scraper window on `--url`, the live ad, or the deposit form (`--deposit`); drives nothing, leaves it open, prints the CDP port + endpoint. |
+| `record <slug> --url <u>` | After a computer-use action: write back `leboncoin_url`/`_id`, `status` (`--status`, default `published`), timestamp; removes `handoff.json`. |
 | `list` / `status` | Show local annonces and their state (`draft`/`published`/`sold`/`paused`/`deleted`). |
 | `scrape` | The original read-only scraper (search results + ad details). |
 
@@ -59,10 +63,11 @@ Full reference: `references/cli.md`.
 
 0. **Check login** — `login` opens the account page, verifies the session (it Reads an account
    marker, not just the URL), and saves `~/.lbc-scraper/auth-state.png`. **Read that PNG** to
-   confirm the account is shown before publishing/deleting. If the user is logged in to
-   Leboncoin in **Brave** (or another browser than Chrome), run `login --browser brave` once:
-   the choice is remembered. If logged out, log in once in the opened browser (the command
-   waits), then continue. `publish`/`delete`/`edit`/… also pre-flight this and stop early with
+   confirm the account is shown before publishing/deleting. The scraper window uses its own
+   fresh profile: if logged out, the user logs in once by hand there (the command waits); that
+   session is independent of their real browser. Reads (`scrape`, `comparables`) need no login,
+   on any browser (e.g. Chrome). Do not suggest `--copy-profile` unless asked: sharing the real
+   profile's tokens can log the user's real browser out of Leboncoin. `publish`/`delete`/`edit`/… also pre-flight this and stop early with
    `login-required` if the session is dead.
 1. **Create** — `new <slug> --title "<t>" --category "<c>" --notes "<rough description>"`.
    `--notes` seeds the body; you can also pass `--price`, `--zipcode`, `--condition`,
@@ -97,6 +102,21 @@ Full reference: `references/cli.md`.
    `delete` (uses the stored id). All pre-flight the login check and confirm unless `--yes`. An
    `unconfirmed` result means Leboncoin showed no proof: Read the saved screenshot and check
    « mes annonces » with the user before retrying.
+
+## Computer use
+
+Same values, same safety rules, but you fill the wizard by screenshots / clicks / typing.
+Playbook: `references/computer-use.md`.
+
+- **Full mode** — `validate` → `cu-sheet <slug>` (Read `computer-use.md`) → `open <slug> --deposit`
+  → fill each step in that window by visible label → **stop on the final review**; the human
+  submits it → `record <slug> --url <ad url>`.
+- **Fallback** — when `publish` prints `handoff → computer use`, Read `annonces/<slug>/handoff.json`
+  (or `cu-sheet`, which puts it on top) and finish **only what remains** in the same open window
+  (step reached, missing fields with their values, remaining photos), then `record`.
+- Never click the final submit unless the user explicitly asked for full-auto; a human solves
+  DataDome. Optional: attach another driver to the port `open` prints (e.g.
+  `dev-browser --connect http://127.0.0.1:<port>`) — not a dependency.
 
 ## When Leboncoin changes
 
@@ -134,10 +154,11 @@ Full contract + state machine: `references/markdown-schema.md`.
 - **DataDome** is solved by the human in the browser; the engine waits up to 5 min.
   A captcha at submit means `--yes` still needs a human there.
 - **Login**: publish/delete/edit/manage need the scraper profile (`~/.lbc-scraper/profile`, or
-  `profile-brave` with `--browser brave`) already logged in.
+  `profile-brave` with `--browser brave`) logged in once by hand. Reads do not.
   Run `login` first to **verify** (it Reads an account marker and saves `auth-state.png`); every
   write action also pre-flights it and stops early with `login-required`. The reliable session is
-  the once-copied real-browser profile. `--cookies-file` (attach an exported `cookies.json`) is a
+  that manual login in the isolated profile (`--copy-profile` is opt-in only: it may log the real
+  browser out). `--cookies-file` (attach an exported `cookies.json`) is a
   **best-effort escape hatch only** — DataDome binds the session to the device fingerprint and
   validates the token server-side, so injected cookies often set yet still bounce to login; the
   command always re-verifies and reports the *probe* result, never the set-count.
@@ -160,3 +181,4 @@ description and price defensible.
 - `references/enrichment-playbook.md` — how to write the copy, infer category, and price from `comparables.md`.
 - `references/deposit-form-mapping.md` — how fields are found (selectors → meaning → `site.json`), the live wizard, and the **site-drift runbook**.
 - `references/captcha-and-safety.md` — semi-auto vs `--yes`, DataDome behavior, the stealth profile, ToS notes.
+- `references/computer-use.md` — filling the wizard by computer use: labels, category picker, photo dialog, final step, `record`.

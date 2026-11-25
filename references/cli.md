@@ -12,9 +12,14 @@ Global options (any command): `--annonces-dir <dir>` (default `./annonces`),
 Browser options (every live command): `--browser <chrome|brave|chromium|opera>` and
 `--chrome-path <bin>` pick the browser whose session is used — **remembered** in
 `~/.lbc-scraper/browser` for later runs (also `$LBC_BROWSER`, `$CHROME_PATH`). Each browser
-gets its own copied profile (`~/.lbc-scraper/profile` for Chrome, `profile-brave`…), copied
-once without caches; `--reset-profile` re-copies it. `--port <n>` reuses a browser already
-listening for CDP. Every live command first applies `~/.lbc-scraper/site.json` (site-drift
+gets its own **fresh, isolated** scraper profile (`~/.lbc-scraper/profile` for Chrome,
+`profile-brave`…), created once and reused as-is: reads (`scrape`, `comparables`) work in it
+without any login, on any browser (e.g. Chrome); writes need it logged in once by hand (`login`
+waits for you in that window), which gives it its own session, independent of your real
+browser. `--reset-profile` deletes and re-creates it. `--copy-profile` (opt-in) seeds a *new*
+profile from the real browser profile instead — it prints a warning: two browsers then share the
+same Leboncoin session tokens and Leboncoin may log your real browser out. `--port <n>` reuses a
+browser already listening for CDP. Every live command first applies `~/.lbc-scraper/site.json` (site-drift
 overrides, see `deposit-form-mapping.md`).
 
 ## `doctor [<slug>]`  *(CDP, read-only)*
@@ -35,8 +40,11 @@ login-state screenshot (`~/.lbc-scraper/auth-state.png` by default) to Read.
   `{ cookies: [...] }`) via CDP `Network.setCookie`, scoped to `.leboncoin.fr`. **Best-effort
   escape hatch only**: always re-verified afterwards, and the result reflects the *probe*, not the
   set-count — DataDome device-binding + server-side token validation usually defeat injected
-  cookies, so the once-copied real profile remains the reliable path.
+  cookies, so a manual login in the scraper window remains the reliable path.
 - `--out <path>` — where to write the screenshot.
+- `--reset-profile` — delete and re-create the scraper profile (fresh, or copied with `--copy-profile`).
+- `--copy-profile` — opt-in: seed a new scraper profile from the real browser profile (may log the
+  real browser out of Leboncoin; prefer logging in once by hand).
 - `--timeout-login <ms>` — how long to wait/poll while you log in manually (default 300000 = 5 min).
 - Exit 0 if confirmed logged-in; 2 if still logged-out after the timeout.
 
@@ -55,7 +63,8 @@ Scrape similar live listings into the folder for grounding.
   annonce's `title` + `zipcode`.
 - `--max-pages <n>` — pages to scrape (default 1).
 - `--with-details` / `-d` — also fetch each ad's detail page.
-- `--browser <brave|chrome|opera|chromium>` / `-b`, `--chrome-path <p>`, `--port <n>` / `-p`.
+- `--browser <brave|chrome|opera|chromium>` / `-b`, `--chrome-path <p>`, `--port <n>` / `-p`,
+  `--copy-profile`. No login needed.
 - Writes `comparables.json` and `comparables.md`. `--json` prints `{count,jsonPath,mdPath}`.
 
 ## `validate <slug>`
@@ -79,8 +88,8 @@ Drive the deposit **wizard** step by step: fill each step by field meaning, pick
 card, upload photos, click « Continuer », and **stop on the final review** (recognised by its
 content, never clicked past). Writes `annonces/<slug>/`: `publish-preview.png` (Read it),
 `form-map.json` (`{ steps: [...] }` — every control per step, required + why, options, and the
-`fills` made), and `push-readiness.json` (`{ ready, checks[], blockers[] }`, incl. `final-step`
-— **Read it first**). Then:
+`fills` made), and `push-readiness.json` (`{ ready, checks[], blockers[], handoff }`, incl.
+`final-step` — **Read it first**). Then:
 - **default (semi-auto)**: wait for the user to review the final step and submit it.
 - `--diagnostic` — walk + screenshot + save the HTML (`publish-preview.html`) + print the field
   report; **never submits**. `--json` returns the `FillReport` (`{ fields, missing, warnings,
@@ -99,6 +108,16 @@ content, never clicked past). Writes `annonces/<slug>/`: `publish-preview.png` (
   the form, or where the wizard stopped) and `report.warnings[]` (non-blocking: guessed
   category, attributes with no matching field). In non-JSON mode the CLI prints
   `leboncoin: ask the user about → …` and `leboncoin: note → …`.
+- **Computer-use handoff**: when the run ends with `reason` `incomplete`, `form-error` or
+  `not-published` (wizard stuck / stopped early, photos not uploaded, required fields
+  unresolved, form rejected, or nobody submitted before the timeout), it writes
+  `annonces/<slug>/handoff.json` — `{ reason, error?, wizard_stop, step: { index, title },
+  missing: [{ field, required, value, note? }], blockers[], remaining_photos[], preview_png,
+  cdp_port, created_at }` — sets `push-readiness.json`'s `handoff` to its path, leaves the
+  browser window open and logs `handoff → computer use: read annonces/<slug>/handoff.json, then
+  finish in the open browser window (leboncoin cu-sheet <slug>)`. `login-required`,
+  `--diagnostic` and `--dry-run` (intentionally non-submitting) never write or remove it. A
+  successful publish deletes a stale one.
 - Exit 0 published / diagnostic / dry-run; 2 if `login-required` / `not-published` /
   `incomplete` / `form-error`; 1 on a fatal error.
 
@@ -127,6 +146,34 @@ confirmation sentence, or the opposite control appearing), else `unconfirmed` +
 - Exit 0 on success; 2 if `aborted` / `login-required` / `action-failed` / `unconfirmed`; 1 (throws) on a wrong
   starting status or a never-published ad.
 
+## `cu-sheet <slug>`  *(pure, no CDP)*
+Build a fill sheet for an agent that fills the deposit wizard by **computer use** (screenshots,
+clicks, typing) instead of CDP. Writes `annonces/<slug>/computer-use.md`: the deposit URL, then
+in form order title, category, the full description, price, zipcode/city, condition/shipping,
+every attribute (key → value) and the absolute photo paths; per step, the visible labels and
+which are required (when `form-map.json` exists — run `inspect` or `publish --diagnostic`
+first); a resume block at the top when `handoff.json` exists; and the safety rules.
+- `--json` prints the sheet (`{ slug, deposit_url, handoff, values, form_steps, safety }`).
+- Exit 0; 1 (prints the validation report) if `validate` fails. Playbook:
+  `references/computer-use.md`.
+
+## `open [<slug>]`  *(CDP, read-only)*
+Launch (or reuse) the scraper browser and navigate to `--url <u>`, else the slug's
+`leboncoin_url` when it is `published`/`paused` (unless `--deposit`), else the deposit form.
+Drives nothing else; disconnects and **leaves the window open**. Prints the CDP port and
+`http://127.0.0.1:<port>`, so an agent can use computer use on that window or attach another
+driver (e.g. `dev-browser --connect http://127.0.0.1:<port>` — optional, not a dependency).
+- Takes the browser options (`--browser`, `--chrome-path`, `--port`, `--reset-profile`,
+  `--copy-profile`). `--json` prints `{ url, port, endpoint }`.
+
+## `record <slug> --url <ad url>`  *(pure, no CDP)*
+Write back an action done by computer use: `leboncoin_url`, `leboncoin_id` (parsed from
+`https://www.leboncoin.fr/ad/<category>/<id>` or `…/<id>.htm`, the same patterns `publish`
+uses), `status` and its timestamp (`published_at` only when it becomes `published` and is not
+set yet; `sold_at` / `paused_at` / `deleted_at` likewise). Removes `handoff.json`.
+- `--status <published|sold|paused|deleted>` (default `published`).
+- Exit 0; 1 if `--url` is missing or not a leboncoin.fr ad URL.
+
 ## `list` (alias `status`)
 List local annonces with status, price and title.
 - `--status <draft|published|deleted|sold|paused>` — filter.
@@ -136,7 +183,7 @@ List local annonces with status, price and title.
 Preserves the original flags: `--query`/`-q`, `--output`/`-o`, `--config`/`-c`,
 `--with-details`/`-d`, `--details-only`, `--search-only`, `--max-pages`, `--rate-limit`,
 `--retries`, `--output-dir`, `--save-raw`, `--browser`/`-b`, `--chrome-path`,
-`--port`/`-p`, `--timeout`, `--reset-profile`. Writes JSON to `--output-dir` (default
+`--port`/`-p`, `--timeout`, `--reset-profile`, `--copy-profile`. No login needed. Writes JSON to `--output-dir` (default
 `./assets`). A bare `--query macbook` is a **text search** (`text=macbook`). Results are read from
 `__NEXT_DATA__`, else inline JSON, else the JSON the page downloads, else the `/ad/` links;
 pagination uses the `/_next/data` route and falls back to real `&page=N` navigation.

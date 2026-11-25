@@ -8,6 +8,8 @@ export interface Config {
   browser: {
     chromePath: string;
     userDataDir: string;
+    /** Opt-in (`--copy-profile`): seed a NEW scraper profile from the real browser profile. */
+    copyProfile: boolean;
     timeout: number;
     debuggingPort: number;
   };
@@ -97,7 +99,7 @@ function isExecutable(p: string): boolean {
 /**
  * Pick the browser binary: $CHROME_PATH > $LBC_BROWSER (chrome|brave|chromium|opera)
  * > the choice remembered from a previous `--browser` > auto-detect (Chrome, then
- * Brave, then Chromium). The session lives in that browser's copied profile, so
+ * Brave, then Chromium). The session lives in that browser's scraper profile, so
  * the choice is remembered: `login --browser brave` once, and every command then
  * runs in Brave.
  */
@@ -289,15 +291,24 @@ export function getAuthStatePath(): string {
   return path.join(getScraperHome(), "auth-state.png");
 }
 
+/** Warning printed whenever the real profile is copied (`--copy-profile`). */
+export const COPY_PROFILE_WARNING =
+  "⚠ --copy-profile: the scraper now shares your real browser's Leboncoin session tokens — Leboncoin may log your real browser out. Prefer the default isolated profile (log in once by hand in the scraper window).";
+
 /**
- * Create a PERSISTENT scraper profile by copying the real browser profile
- * ONCE. Subsequent runs reuse the existing profile so extensions, cookies,
- * and settings are preserved between sessions.
+ * Create the PERSISTENT scraper profile once; subsequent runs reuse it as-is so
+ * the session, cookies and settings survive between runs.
+ *
+ * Default: a FRESH, isolated profile (a minimal "Local State"). The user logs in
+ * once by hand in the scraper window, which gives it its own independent session.
+ * Copying the real profile (`copy: true`, `--copy-profile`) makes two browsers share
+ * the same Leboncoin session tokens, and Leboncoin then logs the real browser out —
+ * so it is an explicit opt-in only.
  *
  * The profile lives at ~/.lbc-scraper/profile/ (not /tmp).
- * Use --reset-profile to force a fresh copy from the real profile.
+ * Use --reset-profile to delete and re-create it.
  */
-export function createWrapperDataDir(realDir: string, key = "chrome"): string {
+export function createWrapperDataDir(realDir: string, key = "chrome", copy = false): string {
   const wrapper = path.join(getScraperHome(), perBrowser("profile", key));
 
   // If profile already exists → reuse it (fast path)
@@ -306,36 +317,37 @@ export function createWrapperDataDir(realDir: string, key = "chrome"): string {
     return wrapper;
   }
 
-  // First run (or after --reset-profile): copy from real profile
+  // First run (or after --reset-profile)
   fs.mkdirSync(wrapper, { recursive: true });
 
-  try {
-    if (fs.existsSync(realDir)) {
+  if (copy && fs.existsSync(realDir)) {
+    try {
+      console.warn(COPY_PROFILE_WARNING);
       fs.cpSync(realDir, wrapper, {
         recursive: true,
         // Skip lock files (conflicts) and caches (GBs of nothing the session needs).
         filter: (src) => !PROFILE_COPY_SKIP.has(path.basename(src)),
       });
       console.log(`✓ Profile copied from ${realDir} to ${wrapper}`);
-    } else {
-      // If real profile doesn't exist, create minimal profile
-      const localState = {
-        browser: { enabled_labs_experiments: [] },
-        profile: { info_cache: {} },
-      };
-      fs.writeFileSync(path.join(wrapper, "Local State"), JSON.stringify(localState, null, 2));
-      console.log(`✓ Created new profile at ${wrapper}`);
+      return wrapper;
+    } catch (error) {
+      console.warn(`⚠ Failed to copy profile, using minimal profile:`, error);
     }
-  } catch (error) {
-    console.warn(`⚠ Failed to copy profile, using minimal profile:`, error);
   }
 
+  // Fresh, isolated profile (the default)
+  const localState = {
+    browser: { enabled_labs_experiments: [] },
+    profile: { info_cache: {} },
+  };
+  fs.writeFileSync(path.join(wrapper, "Local State"), JSON.stringify(localState, null, 2));
+  console.log(`✓ Created a fresh, isolated scraper profile at ${wrapper} — log in to Leboncoin once in that window (leboncoin login)`);
   return wrapper;
 }
 
 /**
- * Delete the persistent scraper profile so it gets re-created from the
- * real browser profile on the next run.
+ * Delete the persistent scraper profile so it gets re-created on the next run
+ * (fresh by default, copied only with --copy-profile).
  */
 export function resetScraperProfile(key = currentKey()): void {
   const wrapper = path.join(getScraperHome(), perBrowser("profile", key));
@@ -373,9 +385,10 @@ export function clearCdpPort(): void {
 export const config: Config = {
   browser: {
     chromePath: detectBrowserPath(),
-    // Resolved lazily by ensureUserDataDir(): importing this module must not copy a
-    // multi-GB profile for a browser the command will not even use.
+    // Resolved lazily by ensureUserDataDir(): importing this module must not create
+    // a profile for a browser the command will not even use.
     userDataDir: "",
+    copyProfile: false,
     timeout: parseInt(process.env.PAGE_TIMEOUT || "30000", 10),
     debuggingPort: parseInt(process.env.DEBUGGING_PORT || "0", 10),
   },
@@ -395,29 +408,31 @@ export const config: Config = {
 };
 
 /**
- * The scraper profile for the selected browser, copied from the real profile on
- * first use (`profile` for Chrome, `profile-brave` for Brave…).
+ * The scraper profile for the selected browser (`profile` for Chrome,
+ * `profile-brave` for Brave…), created fresh on first use — or copied from the
+ * real profile with --copy-profile.
  */
 export function ensureUserDataDir(): string {
   if (!config.browser.userDataDir) {
     const p = config.browser.chromePath;
-    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(p), browserKey(p));
+    config.browser.userDataDir = createWrapperDataDir(detectUserDataDir(p), browserKey(p), config.browser.copyProfile);
   }
   return config.browser.userDataDir;
 }
 
 /**
  * Select the browser for this run (and remember it): `--browser brave` or
- * `--chrome-path <bin>`. `resetProfile` re-copies that browser's real profile
- * (e.g. after logging in again in the real browser).
+ * `--chrome-path <bin>`. `resetProfile` deletes that browser's scraper profile so
+ * it is re-created (fresh, or copied from the real profile with `copyProfile`).
  */
-export function selectBrowser(opts: { browser?: BrowserType; chromePath?: string; resetProfile?: boolean; remember?: boolean }): string {
+export function selectBrowser(opts: { browser?: BrowserType; chromePath?: string; resetProfile?: boolean; copyProfile?: boolean; remember?: boolean }): string {
   const chromePath = opts.browser ? getBrowserPath(opts.browser) : (opts.chromePath ?? config.browser.chromePath);
   if (chromePath !== config.browser.chromePath) {
     config.browser.chromePath = chromePath;
     config.browser.userDataDir = "";
     config.browser.debuggingPort = parseInt(process.env.DEBUGGING_PORT || "0", 10);
   }
+  if (opts.copyProfile) config.browser.copyProfile = true;
   if (opts.resetProfile) {
     resetScraperProfile(browserKey(chromePath));
     config.browser.userDataDir = "";

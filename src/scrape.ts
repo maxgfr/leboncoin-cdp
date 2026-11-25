@@ -23,6 +23,8 @@ export interface ScrapeOptions {
   searchOnly?: boolean;
   withDetails?: boolean;
   resetProfile?: boolean;
+  /** Seed a NEW scraper profile from the real browser profile (may log the real browser out). */
+  copyProfile?: boolean;
   browser?: BrowserType;
   chromePath?: string;
   debuggingPort?: number;
@@ -45,8 +47,9 @@ async function loadConfigFile(configPath: string): Promise<{ query: string; outp
 
 export async function runScrape(args: ScrapeOptions): Promise<void> {
   // Browser selection: --browser > --chrome-path > env > remembered choice > auto-detect.
-  // --reset-profile wipes that browser's scraper profile so it gets re-copied.
-  selectBrowser({ browser: args.browser, chromePath: args.chromePath, resetProfile: args.resetProfile });
+  // --reset-profile wipes that browser's scraper profile so it gets re-created
+  // (fresh, or copied from the real profile with --copy-profile).
+  selectBrowser({ browser: args.browser, chromePath: args.chromePath, resetProfile: args.resetProfile, copyProfile: args.copyProfile });
   if (args.debuggingPort) config.browser.debuggingPort = args.debuggingPort;
   if (args.pageTimeout) config.browser.timeout = args.pageTimeout;
   if (args.maxRetries) config.scraping.maxRetries = args.maxRetries;

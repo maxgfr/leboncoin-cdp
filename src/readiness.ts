@@ -22,6 +22,8 @@ export interface PushReadiness {
   ready: boolean;
   checks: ReadinessCheck[];
   blockers: string[];
+  /** handoff.json path when the run handed off to computer use (set by publish at the end of a failed run), else null. */
+  handoff: string | null;
 }
 
 /**
@@ -122,7 +124,7 @@ export async function buildReadiness(cdp: CDPClient, report: FillReport, href: s
   }
 
   const blockers = checks.filter((c) => !c.ok).map((c) => `${c.name} (${c.detail})`);
-  return { ready: blockers.length === 0, checks, blockers };
+  return { ready: blockers.length === 0, checks, blockers, handoff: null };
 }
 
 /** Persist the readiness verdict to `push-readiness.json` (best-effort). */

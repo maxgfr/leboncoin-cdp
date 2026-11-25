@@ -11,23 +11,28 @@ npx skills add maxgfr/leboncoin-cdp
 
 Markdown is the source of truth. You (or your agent) write and enrich the description —
 grounded by comparable live listings — then the skill drives the « déposer une annonce »
-form on your real, logged-in browser to publish. **Semi-automatic and safe by default:** it
+form in a logged-in browser window to publish. **Semi-automatic and safe by default:** it
 walks the deposit wizard, fills every step by field meaning and uploads the photos, then stops
-on the final review: you check it on screen and submit it yourself. Logged in with Brave?
-`login --browser brave` once. When Leboncoin changes something, `doctor` says what broke.
+on the final review: you check it on screen and submit it yourself. Prefer computer use? `cu-sheet`
++ `open` hand the same values to an agent that fills the wizard by screenshots and clicks. When
+Leboncoin changes something, `doctor` says what broke.
 
 ## Why CDP (and why it isn't detected)
 
 Instead of Puppeteer (flagged by DataDome), everything runs through a **raw WebSocket CDP**
-client attached to your *real* browser profile: real first navigation sets the cookies, and
-all interaction runs as in-page JavaScript (`Runtime.evaluate`) — indistinguishable from the
-site's own frontend. The skill launches a **separate** browser instance against a one-time
-copy of your profile (`~/.lbc-scraper`) and **never touches your running browser**.
+client attached to a normal browser: real first navigation sets the cookies, and all
+interaction runs as in-page JavaScript (`Runtime.evaluate`) — indistinguishable from the
+site's own frontend. The skill launches a **separate** browser instance on its own fresh,
+isolated profile (`~/.lbc-scraper`) and **never touches your running browser**. Reads (`scrape`,
+`comparables`) need no login, on any browser; for writes, log in once by hand in that window
+(`login` waits) — it keeps its own session, so your real browser stays logged in.
+`--copy-profile` seeds it from your real profile instead (opt-in: the shared session tokens may
+log your real browser out of Leboncoin).
 
 ## The skill workflow
 
 ```bash
-node scripts/leboncoin.mjs login --browser brave             # once: use (and remember) your Brave session
+node scripts/leboncoin.mjs login                           # once: log in by hand in the scraper window
 node scripts/leboncoin.mjs new macbook-air-m1 --title "MacBook Air M1" --category "Ordinateurs"
 # → drop photos into annonces/macbook-air-m1/photos/, write the description in annonce.md
 
@@ -49,6 +54,9 @@ node scripts/leboncoin.mjs delete  macbook-air-m1          # remove a published 
 | `validate <slug>` | Required fields, ≥1 photo, real description, `status: draft`. |
 | `publish <slug>` | Fill the deposit form + upload photos via CDP. Semi-auto; `--yes` auto-submits; `--dry-run` fills only. |
 | `delete <slug>` | Remove a published ad (confirms unless `--yes`). |
+| `cu-sheet <slug>` | Computer-use fill sheet (`computer-use.md`, `--json`): values in form order, photo paths, step labels, handoff resume. |
+| `open [<slug>]` | Open the scraper browser on the deposit form / the ad / `--url`, leave it open, print the CDP port. |
+| `record <slug> --url <u>` | Write back an ad published/changed by computer use (id, URL, status). |
 | `list` / `status` | Show local annonces and their published state. |
 | `scrape` | The original read-only scraper (search results + ad details). |
 
@@ -87,7 +95,7 @@ node scripts/leboncoin.mjs scrape --query "https://www.leboncoin.fr/recherche?ca
 
 Flags: `--query/-q`, `--output/-o`, `--config/-c`, `--with-details/-d`, `--details-only`,
 `--max-pages`, `--rate-limit`, `--retries`, `--output-dir`, `--save-raw`, `--browser/-b`,
-`--chrome-path`, `--port/-p`, `--timeout`, `--reset-profile`. Output JSON goes to
+`--chrome-path`, `--port/-p`, `--timeout`, `--reset-profile`, `--copy-profile`. Output JSON goes to
 `--output-dir` (default `./assets`). Env vars: `CHROME_PATH`, `PAGE_TIMEOUT`, `MAX_RETRIES`,
 `RATE_LIMIT`, `MAX_PAGES`, `OUTPUT_DIR`, `SAVE_RAW`, `LBC_SCRAPER_HOME`.
 
