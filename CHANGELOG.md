@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here, generated automatically from the [Conventional Commits](https://www.conventionalcommits.org/) by [semantic-release](https://github.com/semantic-release/semantic-release).
 
+# [1.6.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.5.0...v1.6.0) (2026-11-25)
+
+
+### Features
+
+* **computer-use:** run every account action by computer use in the user's own browser ([19ac29b](https://github.com/maxgfr/leboncoin-cdp/commit/19ac29bd3661432a3e4cd6186589a0773de83624))
+
 # [1.5.0](https://github.com/maxgfr/leboncoin-cdp/compare/v1.4.0...v1.5.0) (2026-11-25)
 
 
