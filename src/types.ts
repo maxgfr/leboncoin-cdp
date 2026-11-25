@@ -39,6 +39,12 @@ export type Annonce = {
   zipcode: string;
   /** Optional city label; resolved from the zipcode when blank. */
   city?: string;
+  /**
+   * Full street address ("12 rue X, 75012 Paris") the deposit form asks for (« À quelle
+   * adresse se trouve le bien ? »). Private: Leboncoin never shows it on the ad. Asked to
+   * the user, never invented.
+   */
+  address?: string;
   /** Optional item condition (per category, e.g. "Très bon état"). */
   condition?: string;
   /** Offer delivery / shipping. */

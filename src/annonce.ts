@@ -15,6 +15,7 @@ export interface NewOptions {
   notes?: string;
   price?: number;
   zipcode?: string;
+  address?: string;
   condition?: string;
   attributes?: Record<string, string>;
   force?: boolean;
@@ -33,6 +34,7 @@ export function runNew(annoncesDir: string, slug: string, opts: NewOptions = {})
       notes: opts.notes,
       price: opts.price,
       zipcode: opts.zipcode,
+      address: opts.address,
       condition: opts.condition,
       attributes: opts.attributes,
     },

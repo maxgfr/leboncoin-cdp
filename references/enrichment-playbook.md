@@ -31,6 +31,13 @@ judgment in `comparables.md` whenever possible.
   reasoning to the user; let them override.
 - If `comparables` returns few/no results, widen the query (`--query`) — e.g. drop the
   zipcode, use brand+model only — and say the sample was thin.
+- Everything in the user's own browser: `comparables <slug> --own-browser` prints the steps
+  (search URL → `javascript_tool` snippet that writes the JSON into the page → `get_page_text`);
+  save that JSON to a file, then `comparables <slug> --import <file>` writes the same
+  `comparables.md`.
+- Extra grounding at publish time: the wizard's last step shows « Prix recommandé entre X € et
+  Y € » and « Annonces similaires en vente ». Relay them to the user next to your
+  comparables-based price; never change the price on your own.
 
 ## 4. Photos
 
@@ -44,7 +51,15 @@ judgment in `comparables.md` whenever possible.
 You don't always have every fact. If the annonce is missing a required field — zipcode,
 exact model/year, condition, price, or a **category-specific** one (mileage, surface, DPE…) —
 **ask the user** and write the answer into `annonce.md`. Never invent it and never publish a blank
-field. Three signals tell you what's missing:
+field.
+
+Always ask for the **full street address** (`address`: number, street, zipcode + city, e.g.
+`"12 rue de Charenton, 75012 Paris"`): the deposit form requires it (« À quelle adresse se trouve
+le bien ? ») and accepts only a full address picked among its suggestions. Tell the user it is
+private — Leboncoin does not show it on the ad. Never guess it, never use « Géolocaliser ma
+position ». `validate` warns while it is missing.
+
+Three signals tell you what's missing:
 - `validate <slug>` issues (hard structural requirements),
 - `publish <slug> --diagnostic` → `form-map.json` (`{ steps }`): every live control of every
   wizard step with `required` + `requiredSource` + `options` — the authoritative list of what THIS

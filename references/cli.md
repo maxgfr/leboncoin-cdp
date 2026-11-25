@@ -59,6 +59,8 @@ Scaffold `annonces/<slug>/annonce.md` (draft) + `photos/`.
 - `--title "<t>"`, `--category "<c>"` — prefill those fields.
 - `--notes "<texte libre>"` — seed the description body with the user's rough notes (else a placeholder).
 - `--price <n>`, `--zipcode <cp>`, `--condition "<c>"` — prefill structured fields.
+- `--address "<number street, zip city>"` — the full street address the deposit form asks for
+  (private, never shown on the ad). Only what the user gave; never invent it.
 - `--attributes "brand=Apple,model=MacBook Air M1"` — comma-separated `k=v` pairs into `attributes`.
 - `--force` — overwrite an existing annonce.md.
 - Exit 0 on success; 1 if it already exists (without `--force`) or the slug is invalid.
@@ -73,11 +75,30 @@ Scrape similar live listings into the folder for grounding.
   `--copy-profile`. No login needed.
 - Writes `comparables.json` and `comparables.md`. `--json` prints `{count,jsonPath,mdPath}`.
 
+### `comparables <slug> --own-browser` / `--import <file.json>`  *(pure, no browser launched)*
+The same grounding, done in the user's own browser (e.g. with Claude in Chrome).
+- `--own-browser [--query "<q>"]` — prints the exact steps: `tabs_create_mcp` → `navigate` to
+  the search URL (same query building as above) → `javascript_tool` with a one-line snippet →
+  `get_page_text` → save the JSON after the `---` header line to
+  `annonces/<slug>/comparables-browser.json` → `--import` → close the tab. The snippet finds the
+  ad list in `__NEXT_DATA__` by shape, keeps the first 40 ads
+  (`{"total":n,"ads":[{list_id,subject,url,price,index_date,location,attributes}…]}`, noisy
+  attributes such as `profile_*`, `is_*`, `*_id` dropped), **replaces the page** with
+  `<pre id="lbc-export">JSON</pre>` and returns only `OK <n> ads, <m> chars — read it with
+  get_page_text` (or `NO_NEXT_DATA` / `NO_ADS`): `javascript_tool` truncates its return value at
+  ~1,000 chars, `get_page_text` does not. Reload the URL to see the page again. `--json` prints
+  `{slug,url,snippet,save_to,import}`.
+- `--import <file.json>` — builds `comparables.json` + `comparables.md` from that file (the
+  exported JSON, the same with the `get_page_text` header still on top, the same as a JSON
+  string, or a page's whole `__NEXT_DATA__`). Exit 1 with a clear message on anything else (no
+  ad list, not JSON, `NO_ADS` / `NO_NEXT_DATA`). `--json` prints `{count,jsonPath,mdPath}`.
+
 ## `validate <slug>`
 Structural gate (pure, no CDP). Checks: title (≥5), category, price (>0), zipcode
 (`\d{5}`), ≥1 photo in `photos/`, listed photos exist, non-placeholder description
-(≥20 chars), `status: draft`.
-- `--json` prints `{ok, slug, issues[]}`.
+(≥20 chars), `status: draft`. Warns (never fails) on a long title/description, too many
+photos, and a missing `address` (the deposit form needs a full street address: ask the user).
+- `--json` prints `{ok, slug, issues[], warnings[]}`.
 - **Exit 0 if valid, non-zero if not** — gate publishing on this.
 
 ## `inspect <slug>`  *(CDP, read-only)*
@@ -158,9 +179,12 @@ Build the sheet an agent follows to do an account action by **computer use** (sc
 clicks, typing) in the user's own, already logged-in browser. Writes
 `annonces/<slug>/computer-use.md`. `--action` is `publish` (default) | `edit` | `delete` |
 `renew` | `mark-sold` | `deactivate` | `reactivate`.
-- `publish`: the deposit URL, then in form order title, category, the full description, price,
-  zipcode/city, condition/shipping, every attribute (key → value) and the absolute photo paths;
-  the photos folder and the OS file-dialog recipe; per step, the visible labels and which are
+- `publish`: the deposit URL, then the live 3-step wizard with its labels and the annonce.md
+  value for each control — step 1 title + suggested category; step 2 the absolute photo paths,
+  a check of every attribute Leboncoin prefilled against `attributes`, condition « État »; step 3
+  the description that **replaces** Leboncoin's AI-prefilled text, « Je vends » + price, the
+  `address` (missing → stop and ask the user) and the stop before the publishing « Continuer »
+  (see `computer-use.md`); the photos folder and the OS file-dialog recipe; per step, the visible labels and which are
   required (when `form-map.json` exists — run `inspect` or `publish --diagnostic` first); a
   resume block at the top when `handoff.json` exists; and the safety rules. `--json` prints
   `{ slug, action, deposit_url, start_url, handoff, values (incl. photos_dir), form_steps, safety }`.

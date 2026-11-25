@@ -58,6 +58,13 @@ export function validateAnnonce(dir: string): ValidationResult {
     issues.push({ field: "zipcode", message: "zipcode must be a 5-digit French postal code" });
   }
 
+  if (!a.address?.trim()) {
+    warnings.push({
+      field: "address",
+      message: "no address: the deposit form needs a full street address (number, street, city; never shown on the ad) — ask the user, never invent it",
+    });
+  }
+
   const photos = listPhotoFiles(dir);
   if (photos.length === 0) {
     issues.push({ field: "photos", message: "at least one photo is required in photos/" });

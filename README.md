@@ -46,6 +46,7 @@ node scripts/leboncoin.mjs new macbook-air-m1 --title "MacBook Air M1" --categor
 # → drop photos into annonces/macbook-air-m1/photos/, write the description in annonce.md
 
 node scripts/leboncoin.mjs comparables macbook-air-m1      # scrape similar ads → comparables.md (no login)
+# or in your own browser: --own-browser prints the URL + a snippet, then --import <file.json>
 # → set price / category / attributes from the comparables
 
 node scripts/leboncoin.mjs validate macbook-air-m1         # structural gate (exit≠0 if invalid)
@@ -53,7 +54,8 @@ node scripts/leboncoin.mjs validate macbook-air-m1         # structural gate (ex
 # Publish by computer use, in your own logged-in browser:
 node scripts/leboncoin.mjs cu-sheet macbook-air-m1         # → computer-use.md: values, photos, file-dialog recipe
 node scripts/leboncoin.mjs open macbook-air-m1 --real      # the deposit form, in your browser (--browser brave once)
-# → the agent fills it by screenshots/clicks/typing and stops on the final review; you submit
+# → the agent walks the 3 steps (replacing Leboncoin's AI-written description with yours, asking
+#   you for the full address if annonce.md has none) and stops on the final review; you submit
 node scripts/leboncoin.mjs record macbook-air-m1 --url https://www.leboncoin.fr/ad/ordinateurs/1234567890
 
 # Any later action, same loop (edit, delete, renew, mark-sold, deactivate, reactivate):
@@ -67,10 +69,10 @@ node scripts/leboncoin.mjs doctor                          # read-only health ch
 
 | Command | What it does |
 |---|---|
-| `new <slug>` | Scaffold `annonces/<slug>/annonce.md` + `photos/` (a draft). |
-| `comparables <slug>` | Scrape similar live listings → `comparables.json` + `comparables.md` (grounding). |
+| `new <slug>` | Scaffold `annonces/<slug>/annonce.md` + `photos/` (a draft; `--address` = the private full street address the deposit form asks for). |
+| `comparables <slug>` | Scrape similar live listings → `comparables.json` + `comparables.md` (grounding). `--own-browser` / `--import <file>`: the same from your own browser. |
 | `validate <slug>` | Required fields, ≥1 photo, real description, `status: draft`. |
-| `cu-sheet <slug> [--action <a>]` | Computer-use sheet (`computer-use.md`, `--json`). Publish: values in form order, photo paths + file-dialog recipe, step labels, handoff resume. Other actions: start URL, how to find the ad, controls, proof of success, stop rule, `record` command. |
+| `cu-sheet <slug> [--action <a>]` | Computer-use sheet (`computer-use.md`, `--json`). Publish: the live 3-step wizard with each value, photo paths + file-dialog recipe, step labels, handoff resume. Other actions: start URL, how to find the ad, controls, proof of success, stop rule, `record` command. |
 | `open [<slug>] --real [--action <a>]` | Open the action's page in **your own** browser through the OS (`open -a` / `xdg-open`) — no CDP. |
 | `record <slug> --url <u> [--status <s>]` | Write back an action done by computer use (id, URL, status: `published`, `sold`, `paused`, `deleted`, `renewed`). |
 | `publish <slug>` | Advanced, CDP: fill the deposit form + upload photos in the scraper window. Semi-auto; `--yes` auto-submits. |

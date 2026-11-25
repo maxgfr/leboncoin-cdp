@@ -44,6 +44,37 @@ function unquote(t: string): string {
   return t;
 }
 
+/**
+ * Drop a YAML-style inline comment: a `#` preceded by whitespace, outside quotes, ends the
+ * value. Quoted scalar → cut after the closing quote; unquoted → cut at ` #`. A `#` inside
+ * quotes or glued to the text (`C#`, `page#top`) is kept. A value that is only a comment → "".
+ */
+function stripComment(s: string): string {
+  const t = s.trim();
+  const q = t[0];
+  if (q === '"' || q === "'") {
+    for (let k = 1; k < t.length; k++) {
+      if (q === '"' && t[k] === "\\") {
+        k++;
+        continue;
+      }
+      if (t[k] !== q) continue;
+      if (q === "'" && t[k + 1] === "'") {
+        k++;
+        continue;
+      }
+      const after = t.slice(k + 1).trim();
+      return after === "" || after.startsWith("#") ? t.slice(0, k + 1) : t;
+    }
+    return t; // unterminated quote: leave it as is
+  }
+  if (t.startsWith("#")) return "";
+  const at = t.search(/\s#/);
+  return at === -1 ? t : t.slice(0, at).trimEnd();
+}
+
+const isCommentLine = (l: string): boolean => l.trimStart().startsWith("#");
+
 function parseScalar(s: string): string | number | boolean {
   const t = s.trim();
   if (t === "true") return true;
@@ -60,7 +91,7 @@ function parseFrontmatter(fm: string): Record<string, FrontValue> {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i] ?? "";
-    if (!line.trim() || line.trimStart().startsWith("#")) {
+    if (!line.trim() || isCommentLine(line)) {
       i++;
       continue;
     }
@@ -70,23 +101,23 @@ function parseFrontmatter(fm: string): Record<string, FrontValue> {
       continue;
     }
     const key = m[1] as string;
-    const rest = (m[2] ?? "").trim();
+    const rest = stripComment(m[2] ?? "");
 
     if (rest === "") {
-      // A nested block (map or list) may follow as indented lines.
+      // A nested block (map or list) may follow as indented lines (comment lines skipped).
       const block: string[] = [];
       let j = i + 1;
       while (j < lines.length && /^\s+\S/.test(lines[j] ?? "")) {
-        block.push(lines[j] as string);
+        if (!isCommentLine(lines[j] as string)) block.push(lines[j] as string);
         j++;
       }
       if (block.length && (block[0] as string).trimStart().startsWith("- ")) {
-        out[key] = block.map((b) => String(parseScalar(b.trim().replace(/^-\s*/, ""))));
+        out[key] = block.map((b) => String(parseScalar(stripComment(b.trim().replace(/^-\s*/, "")))));
       } else if (block.length) {
         const map: Record<string, string> = {};
         for (const b of block) {
           const bm = b.trim().match(/^(.+?):\s*(.*)$/);
-          if (bm) map[unquote((bm[1] as string).trim())] = String(parseScalar(bm[2] as string));
+          if (bm) map[unquote((bm[1] as string).trim())] = String(parseScalar(stripComment(bm[2] as string)));
         }
         out[key] = map;
       } else {
@@ -133,6 +164,7 @@ export function parseAnnonce(dir: string): Annonce {
     price: priceNum,
     zipcode: str(f.zipcode),
     city: optStr(f.city),
+    address: optStr(f.address),
     condition: optStr(f.condition),
     shipping: f.shipping === true ? true : f.shipping === false ? false : undefined,
     attributes: f.attributes && typeof f.attributes === "object" && !Array.isArray(f.attributes) ? (f.attributes as Record<string, string>) : {},
@@ -166,6 +198,7 @@ export function serializeAnnonce(a: Annonce): string {
   L.push(`price: ${Number.isFinite(a.price) ? a.price : 0}`);
   L.push(`zipcode: ${q(a.zipcode)}`);
   if (a.city) L.push(`city: ${q(a.city)}`);
+  if (a.address) L.push(`address: ${q(a.address)}`);
   if (a.condition) L.push(`condition: ${q(a.condition)}`);
   if (a.shipping !== undefined) L.push(`shipping: ${a.shipping}`);
 
@@ -211,6 +244,8 @@ export interface ScaffoldInit {
   category?: string;
   price?: number;
   zipcode?: string;
+  /** Full street address (private; the deposit form's « Adresse »). */
+  address?: string;
   condition?: string;
   attributes?: Record<string, string>;
   /** Free-text description body (else the placeholder is written). */
@@ -230,6 +265,7 @@ export function scaffoldAnnonce(dir: string, init: ScaffoldInit = {}, opts: { fo
     category: init.category ?? "",
     price: init.price ?? 0,
     zipcode: init.zipcode ?? "",
+    address: init.address,
     condition: init.condition,
     attributes: init.attributes ?? {},
     photos: [],

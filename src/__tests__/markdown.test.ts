@@ -26,6 +26,7 @@ const sample: Annonce = {
   price: 650,
   zipcode: "75012",
   city: "Paris",
+  address: "12 rue de Charenton, 75012 Paris",
   condition: "Très bon état",
   shipping: true,
   attributes: { brand: "Apple", model: "MacBook Air M1", storage: "256 Go" },
@@ -54,12 +55,13 @@ describe("serializeAnnonce / parseAnnonce", () => {
   it("round-trips empty attributes and photos as {} / []", () => {
     const dir = join(scratch(), "empty");
     mkdirSync(dir, { recursive: true });
-    const a: Annonce = { ...sample, slug: "empty", attributes: {}, photos: [], city: undefined, condition: undefined, shipping: undefined };
+    const a: Annonce = { ...sample, slug: "empty", attributes: {}, photos: [], city: undefined, address: undefined, condition: undefined, shipping: undefined };
     writeAnnonce(dir, a);
     const text = readFileSync(join(dir, ANNONCE_FILENAME), "utf8");
     expect(text).toContain("attributes: {}");
     expect(text).toContain("photos: []");
     expect(text).not.toContain("city:");
+    expect(text).not.toContain("address:");
     const parsed = parseAnnonce(dir);
     expect(parsed.attributes).toEqual({});
     expect(parsed.photos).toEqual([]);
@@ -103,6 +105,61 @@ describe("serializeAnnonce / parseAnnonce", () => {
   });
 });
 
+describe("frontmatter inline comments", () => {
+  function parseText(fm: string) {
+    const dir = join(scratch(), "c");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, ANNONCE_FILENAME), `---\n${fm}\n---\n\nBody text.\n`);
+    return parseAnnonce(dir);
+  }
+
+  it("strips a comment after a quoted scalar and after an unquoted number", () => {
+    const a = parseText(['category: "Ordinateurs"   # the site category', "price: 650   # euros", 'zipcode: "75012" # cp'].join("\n"));
+    expect(a.category).toBe("Ordinateurs");
+    expect(a.price).toBe(650);
+    expect(a.zipcode).toBe("75012");
+  });
+
+  it("keeps a # inside quotes and a # with no whitespace before it", () => {
+    const a = parseText(
+      ['title: "Livre C # avancé"  # note', "category: C#", "leboncoin_url: https://www.leboncoin.fr/ad/x/123#top", "city: 'Saint-Ouen # 2'"].join("\n"),
+    );
+    expect(a.title).toBe("Livre C # avancé");
+    expect(a.category).toBe("C#");
+    expect(a.leboncoin_url).toBe("https://www.leboncoin.fr/ad/x/123#top");
+    expect(a.city).toBe("Saint-Ouen # 2");
+  });
+
+  it("ignores full-line comments, and comments on nested attribute lines and list items", () => {
+    const a = parseText(
+      [
+        "# a full-line comment",
+        'title: "Vélo"',
+        "attributes:   # category fields",
+        "  # a comment inside the block",
+        '  brand: "Apple"   # technical key',
+        "  Kilométrage: 120000 # km",
+        "photos:",
+        '  - "a.jpg"  # cover',
+        "  - b.jpg # second",
+        "status: draft # local state",
+      ].join("\n"),
+    );
+    expect(a.title).toBe("Vélo");
+    expect(a.attributes).toEqual({ brand: "Apple", Kilométrage: "120000" });
+    expect(a.photos).toEqual(["a.jpg", "b.jpg"]);
+    expect(a.status).toBe("draft");
+  });
+
+  it("round-trips values containing # unchanged through serialize/parse", () => {
+    const dir = join(scratch(), "hash");
+    mkdirSync(dir, { recursive: true });
+    const a: Annonce = { ...sample, slug: "hash", title: "Livre C # et F# — tome #2", attributes: { langage: "C# # .NET" } };
+    writeAnnonce(dir, a);
+    expect(parseAnnonce(dir)).toEqual(a);
+  });
+});
+
 describe("scaffoldAnnonce", () => {
   it("creates the folder, photos/ dir and a draft stub", () => {
     const dir = join(scratch(), "new-one");
@@ -114,6 +171,13 @@ describe("scaffoldAnnonce", () => {
     expect(parsed.title).toBe("Vélo");
     expect(parsed.category).toBe("Vélos");
     expect(parsed.description).toBe(PLACEHOLDER_BODY);
+  });
+
+  it("writes the optional full street address (new --address)", () => {
+    const dir = join(scratch(), "addr");
+    scaffoldAnnonce(dir, { title: "Vélo", address: "3 place d'Italie, 75013 Paris" });
+    expect(readFileSync(join(dir, ANNONCE_FILENAME), "utf8")).toContain(`address: "3 place d'Italie, 75013 Paris"`);
+    expect(parseAnnonce(dir).address).toBe("3 place d'Italie, 75013 Paris");
   });
 
   it("refuses to overwrite without force", () => {

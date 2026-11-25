@@ -4,10 +4,10 @@
  * browser, instead of CDP.
  *
  *   - `cu-sheet <slug> [--action <a>]` → annonces/<slug>/computer-use.md (+ JSON).
- *     publish (default): the deposit URL, every value to type in form order, absolute
- *     photo paths + the OS file-dialog recipe, the labels each wizard step shows (from
- *     form-map.json, if any), a resume block (from handoff.json, if any) and the safety
- *     rules. edit / delete / renew / mark-sold / deactivate / reactivate: an ordered
+ *     publish (default): the deposit URL, the live 3-step wizard (WIZARD labels) with the
+ *     annonce.md value for each control, absolute photo paths + the OS file-dialog recipe,
+ *     the labels each step showed (form-map.json, if any), a resume block (handoff.json,
+ *     if any) and the safety rules. edit / delete / renew / mark-sold / deactivate / reactivate: an ordered
  *     playbook (start URL, how to find the ad, the controls to click, the proof of
  *     success, the stop rule and the `record` command to run afterwards).
  *   - `open [<slug>] --real [--action <a>]` → open the target page in the user's own
@@ -61,9 +61,46 @@ export const HANDOFF_REASONS = ["incomplete", "form-error", "not-published"] as 
 const CLAUDE_IN_CHROME_RULE =
   "Claude in Chrome: work in a new tab and close it at the end; never trigger a native alert/confirm dialog (it freezes the extension) — if one appears, ask the user to dismiss it.";
 
+/**
+ * The live deposit wizard's labels, as walked in the user's own browser (2026-11): three
+ * steps, the last one being the review whose « Continuer » publishes.
+ */
+export const WIZARD = {
+  step1: "Commençons par l'essentiel !",
+  titleField: "Quel est le titre de l'annonce ?",
+  suggestions: "Choisissez une catégorie suggérée",
+  suggestion: "Choix N : catégorie <catégorie> dans la famille <famille>",
+  otherCategory: "Choisissez",
+  step2: "Dites-nous en plus sur votre article",
+  photoZone: "Cliquez et déposez jusqu'à 20 photos",
+  photoButton: "Importer",
+  photosDone: "Vos photos",
+  cover: "Couverture",
+  year: "Année de fabrication",
+  condition: "État *",
+  next: "Continuer",
+  step3: "Un dernier aperçu avant de publier votre annonce !",
+  description: "Description de l'annonce *",
+  sell: "Je vends",
+  give: "Je donne",
+  price: "Prix de vente souhaité",
+  recommended: "Prix recommandé entre X € et Y €",
+  similar: "Annonces similaires en vente",
+  handover: "Remise du bien",
+  address: "À quelle adresse se trouve le bien ? *",
+  addressPlaceholder: "Adresse",
+  geolocate: "Géolocaliser ma position",
+  confirm: 'En cliquant sur "Continuer", je confirme l\'exactitude des informations…',
+  quit: "Quitter",
+  quitModal: "Vous voulez interrompre votre dépôt ?",
+  saveDraft: "Enregistrer le brouillon",
+  quitNoSave: "Quitter sans enregistrer",
+} as const;
+
 export const SAFETY_RULES = [
-  "Fill ONLY the values in this sheet (they come from annonce.md); never invent content.",
-  "Stop on the final review step (« Avant de publier » / « Je confirme l'exactitude… »): do NOT click the final « Continuer » / « Déposer mon annonce » unless the user explicitly asked for full-auto.",
+  "Fill ONLY the values in this sheet (they come from annonce.md); never invent content — a missing value (the address, a required attribute) is asked to the user.",
+  `Stop on the final step (« ${WIZARD.step3} », « Je confirme l'exactitude… »): its « Continuer » PUBLISHES — do NOT click the final « Continuer » / « Déposer mon annonce » unless the user explicitly gave the go-ahead.`,
+  `To abort: « ${WIZARD.quit} » → « ${WIZARD.quitNoSave} » (« ${WIZARD.saveDraft} » only if the user wants a draft).`,
   "A DataDome captcha / « Vérification » page is solved by the human, never by the agent: pause and ask.",
   "Work in the user's own browser (`leboncoin open <slug> --real`), where they are already logged in: never type their password, never log in for them.",
   "Take a screenshot before every step and check it before moving on.",
@@ -280,6 +317,8 @@ export interface CuSheet {
     price: number;
     zipcode: string;
     city?: string;
+    /** Full street address for « Remise du bien » (private; absent = ask the user). */
+    address?: string;
     condition?: string;
     shipping?: boolean;
     attributes: Record<string, string>;
@@ -339,6 +378,7 @@ export function buildCuSheet(dir: string, a: Annonce): CuSheet {
       price: a.price,
       zipcode: a.zipcode,
       ...(a.city ? { city: a.city } : {}),
+      ...(a.address ? { address: a.address } : {}),
       ...(a.condition ? { condition: a.condition } : {}),
       ...(a.shipping !== undefined ? { shipping: a.shipping } : {}),
       attributes: { ...a.attributes },
@@ -410,24 +450,12 @@ export function renderCuSheet(s: CuSheet): string {
   L.push("EOF");
   L.push("```", "");
 
-  L.push("## 2. Values, in form order", "");
-  let n = 1;
-  L.push(`${n++}. [ ] Title: ${v.title}`);
-  L.push(`${n++}. [ ] Category: ${v.category} (pick it in the category picker; if it is not offered, pick the closest suggestion and tell the user)`);
-  L.push(`${n++}. [ ] Description (type it verbatim):`, "", "````text", v.description, "````", "");
-  L.push(`${n++}. [ ] Price: ${v.price} €`);
-  L.push(`${n++}. [ ] Location: ${v.zipcode}${v.city ? ` ${v.city}` : ""} (type the zipcode, then pick the matching city suggestion)`);
-  if (v.condition) L.push(`${n++}. [ ] Condition (État): ${v.condition}`);
-  if (v.shipping !== undefined) L.push(`${n++}. [ ] Shipping / delivery: ${v.shipping ? "yes" : "no"}`);
-  const attrs = Object.entries(v.attributes);
-  if (attrs.length) {
-    L.push(`${n++}. [ ] Attributes (field label → value):`);
-    for (const [k, val] of attrs) L.push(`   - ${k} → ${val}`);
-  }
+  L.push("## 2. The deposit wizard, step by step", "");
   L.push(
-    `${n++}. [ ] Photos (in this order — Claude in Chrome: file_upload with these paths; desktop computer use: the file dialog below; dev-browser: uploadFile with these paths):`,
+    "Three steps. Find each control by its visible label. Text fields are React inputs: click the field, then type (select all + Delete first if it holds text); prefer that over `form_input`, and always read the value back before moving on.",
+    "",
   );
-  for (const p of v.photos) L.push(`   - ${p}`);
+  for (const line of wizardSteps(v)) L.push(line);
   L.push("");
 
   L.push("## Photos via the file dialog", "");
@@ -455,6 +483,70 @@ export function renderCuSheet(s: CuSheet): string {
   return L.join("\n");
 }
 
+/** The publish checklist, following the live 3-step wizard (WIZARD), with the annonce.md values. */
+function wizardSteps(v: CuSheet["values"]): string[] {
+  const W = WIZARD;
+  let n = 1;
+  const L: string[] = [];
+  const box = (t: string) => L.push(`${n++}. [ ] ${t}`);
+
+  L.push(`### Step 1 — « ${W.step1} »`, "");
+  box(`Title: ${v.title} — in « ${W.titleField} ».`);
+  box(
+    `Category: ${v.category} — typing the title reveals « ${W.suggestions} » (buttons « ${W.suggestion} »): click the one whose category is « ${v.category} »; it moves on directly. If none matches, use the « ${W.otherCategory} » dropdown and find it by name (families first). If nothing matches, pick the closest and tell the user.`,
+  );
+  L.push("");
+
+  L.push(`### Step 2 — « ${W.step2} »`, "");
+  box(
+    `Photos (in this order — Claude in Chrome: file_upload with these paths on the hidden file input of the « ${W.photoZone} » / « ${W.photoButton} » zone, no native dialog; desktop computer use: the file dialog below; dev-browser: uploadFile with these paths):`,
+  );
+  for (const p of v.photos) L.push(`   - ${p}`);
+  L.push(`   Then check « ${W.photosDone} » shows ${v.photos.length} photo(s), the first one labelled « ${W.cover} ».`);
+  const expected: [string, string][] = Object.entries(v.attributes);
+  box(
+    "Leboncoin PRE-FILLS the category attributes from the title (e.g. Type, Usage, Marque, Taille d'écran). Check EVERY prefilled value against this list and fix each mismatch; fill the listed ones still empty (e.g. « Année de fabrication », AAAA). A prefilled field not in this list: leave it and tell the user what Leboncoin chose. A required field with no value here: stop and ask the user.",
+  );
+  if (expected.length) {
+    L.push("   Attributes (field label → value):");
+    for (const [k, val] of expected) L.push(`   - ${k} → ${val}`);
+  } else L.push("   Attributes: (none in annonce.md)");
+  if (v.condition) box(`Condition « ${W.condition} »: ${v.condition} (open the combobox, click the matching option).`);
+  else
+    box(
+      `Condition « ${W.condition} » is required and not in annonce.md: ask the user (« État neuf », « Très bon état », « Bon état », « État satisfaisant - fonctionnel »…).`,
+    );
+  box(`Click « ${W.next} ».`);
+  L.push("");
+
+  L.push(`### Step 3 (final) — « ${W.step3} »`, "");
+  box(
+    `Description « ${W.description} »: Leboncoin PRE-FILLS it with its own AI-generated text — REPLACE it entirely with the text below, verbatim (click, Cmd+A / Ctrl+A, Delete, type), then read the value back and check it is exactly this:`,
+  );
+  L.push("", "````text", v.description, "````", "");
+  box(`Title (Titre): check it still reads « ${v.title} ».`);
+  box(`Price: « ${W.sell} » selected (not « ${W.give} »), « ${W.price} » = ${v.price} (digits only).`);
+  L.push(
+    `   Info for the user, do not act on it: the « ${W.recommended} » hint and the « ${W.similar} » — relay them (as extra price grounding), never change the price yourself.`,
+  );
+  if (v.address) {
+    box(
+      `« ${W.handover} » — « ${W.address} » (placeholder « ${W.addressPlaceholder} »): type ${v.address} and click the matching suggestion (a typed value without a picked suggestion is refused). Private: not shown on the ad. Never use « ${W.geolocate} ».`,
+    );
+  } else {
+    box(
+      `« ${W.handover} » — « ${W.address} »: annonce.md has no \`address\`. STOP and ask the user for the full street address (number, street, city — Leboncoin does not show it on the ad); write it into annonce.md as \`address:\`, then type it and click the matching suggestion. Never invent it, never use « ${W.geolocate} ».`,
+    );
+  }
+  if (v.shipping !== undefined) box(`Shipping / delivery: ${v.shipping ? "yes" : "no"} (if the form offers it).`);
+  box(
+    `STOP before « ${W.next} »: the footer reads « ${W.confirm} » — that click PUBLISHES. Screenshot the whole step, tell the user, and click it only with their explicit go-ahead.`,
+  );
+  L.push("");
+  L.push(`Abort cleanly: « ${W.quit} » opens « ${W.quitModal} » → « ${W.quitNoSave} » (or « ${W.saveDraft} » if the user wants a draft).`);
+  return L;
+}
+
 /**
  * The two drivers for the user's own browser, in order of preference: the Claude in Chrome
  * extension (when its tools are in the session), else desktop computer use on the window
@@ -464,9 +556,10 @@ export function ownBrowserDrivers(openCmd: string, photos: boolean): string[] {
   const L = [
     "1. Preferred: the Claude in Chrome extension, if its tools (`mcp__claude-in-chrome__*`) are available in this session. It drives the user's real, logged-in Chrome or Brave, so `open --real` is optional.",
     "   - `tabs_context_mcp`, then `tabs_create_mcp`: work in a new tab of your own, `navigate` it to the start URL, and close it at the end.",
-    '   - Loop: look (`read_page` with `filter: "interactive"`, or `find` by label) → act by ref (`form_input` for text fields, `computer` to click) → verify (`read_page` again).',
+    '   - Loop: look (`read_page` with `filter: "interactive"`, or `find` by label) → act by ref (`computer` to click; text fields: click, then type — Leboncoin\'s React inputs take typed text reliably, `form_input` is the fallback) → verify (`read_page` again: read every value back).',
     "   - Take a `computer` screenshot before every irreversible step (the stop rule) and check it.",
     "   - Never trigger a native alert/confirm dialog (it freezes the extension); if one appears, ask the user to dismiss it. Leboncoin's confirmations are in-page modals: fine.",
+    "   - `javascript_tool` truncates its return value at ~1,000 chars: never return large data from it (write it into the page, read it with `get_page_text`).",
   ];
   if (photos) {
     L.push(
@@ -482,7 +575,7 @@ export function ownBrowserDrivers(openCmd: string, photos: boolean): string[] {
 export function fileDialogRecipe(count: number): string[] {
   const add = DEPOSIT.photoAddButton.textCandidates.map(quote).join(" / ");
   return [
-    `1. Click the add-photos control (${add}): the OS file dialog opens.`,
+    `1. Click the add-photos control (« ${WIZARD.photoButton} » in the « ${WIZARD.photoZone} » zone; older labels: ${add}): the OS file dialog opens.`,
     "2. macOS: press Cmd+Shift+G, paste the photos folder path above, press Enter.",
     "   Linux (GTK): press Ctrl+L, type the photos folder path above, press Enter.",
     "3. Press Cmd+A (Linux: Ctrl+A) to select every photo of the folder — or Cmd/Ctrl-click only the files listed above if the folder holds others.",
@@ -535,7 +628,19 @@ interface ActionPlan {
   record: string;
   /** Start in « Mes annonces » even when the ad URL is known (a paused ad's page may be hidden). */
   listingFirst?: boolean;
+  /** « Mes annonces » bulk path: the button at the top of the list and the tab(s) to look in. */
+  bulk?: { button: string; tabs: string[] };
 }
+
+/** The « Mes annonces » list as seen live (2026-11). */
+export const MY_ADS = {
+  online: "En ligne",
+  expired: "Expirées",
+  search: "Recherchez dans vos annonces",
+  searchButton: "Rechercher",
+  selectAll: "Sélectionner toutes les annonces",
+  empty: "C'est désert ici !",
+} as const;
 
 const IRREVERSIBLE_STOP =
   "Irreversible: ask the user to confirm in the chat (this exact ad, by title and price) before the click and its confirmation. Their explicit go-ahead is the consent.";
@@ -558,6 +663,7 @@ const ACTION_PLANS: Record<CuManageAction, ActionPlan> = {
     proof: [`the page says one of: ${anyOf(MANAGE.deletedMarkers)}`, `or, reloading the ad URL, it shows one of: ${anyOf(MANAGE.goneMarkers)}`],
     stop: IRREVERSIBLE_STOP,
     record: "deleted",
+    bulk: { button: "Supprimer", tabs: [MY_ADS.online] },
   },
   renew: {
     allow: ["published"],
@@ -585,6 +691,7 @@ const ACTION_PLANS: Record<CuManageAction, ActionPlan> = {
     proof: [`the page says one of: ${anyOf(MANAGE.pausedMarkers)}`, `or the ad now offers ${labels(MANAGE.reactivateButton)}`],
     stop: REVERSIBLE_STOP,
     record: "paused",
+    bulk: { button: "Pause", tabs: [MY_ADS.online] },
   },
   reactivate: {
     allow: ["paused"],
@@ -595,6 +702,7 @@ const ACTION_PLANS: Record<CuManageAction, ActionPlan> = {
     stop: REVERSIBLE_STOP,
     record: "published",
     listingFirst: true,
+    bulk: { button: "Réactiver", tabs: [MY_ADS.expired, MY_ADS.online] },
   },
 };
 
@@ -673,11 +781,19 @@ export function buildActionSheet(dir: string, a: Annonce, action: CuManageAction
     `Open ${start}: with Claude in Chrome, navigate your own new tab there; else run \`leboncoin open ${a.slug} --real --action ${action}\` (the user's own browser). Screenshot it.`,
   ];
   steps.push("If a login page or a « Vérification » captcha shows: stop and ask the user to handle it, then screenshot again.");
-  if (start === MANAGE.listingUrl) steps.push(`In « Mes annonces » (${MANAGE.listingUrl}), find the ad's card: ${who}.`);
-  else steps.push(`The page is the ad itself: check it is ${who}. If it is gone, find its card in « Mes annonces » (${MANAGE.listingUrl}).`);
+  const search = `type its title in ${quote(MY_ADS.search)} → ${quote(MY_ADS.searchButton)}`;
+  const find = `${search} (tabs ${quote(MY_ADS.online)} / ${quote(MY_ADS.expired)}; ${quote(MY_ADS.empty)} = not in that tab)`;
+  if (start === MANAGE.listingUrl) steps.push(`In « Mes annonces » (${MANAGE.listingUrl}), find the ad's card: ${who} — ${find}.`);
+  else steps.push(`The page is the ad itself: check it is ${who}. If it is gone, find its card in « Mes annonces » (${MANAGE.listingUrl}): ${find}.`);
   steps.push(
     `Find the control ${labels(plan.control)}: on the ad page, else in its « … » menu (${labels(MANAGE.overflowMenu)}), else on the ad's card in « Mes annonces ».`,
   );
+  if (plan.bulk) {
+    const tabs = plan.bulk.tabs.map(quote).join(" or ");
+    steps.push(
+      `Alternative — the « Mes annonces » list (${MANAGE.listingUrl}): open the ${tabs} tab${plan.bulk.tabs.length > 1 ? " (check both)" : ""}, ${search}, then tick ONLY this ad's checkbox — never ${quote(MY_ADS.selectAll)}. Screenshot and check that exactly one ad is ticked and that it is this one; the bulk button ${quote(plan.bulk.button)} at the top of the list then acts on it.`,
+    );
+  }
   if (action === "edit") {
     steps.push("Click it: the modify form opens (the same wizard as the deposit). Screenshot it.");
     steps.push(

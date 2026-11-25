@@ -10,6 +10,7 @@ annonces/<slug>/
   photos/           # *.jpg | *.jpeg | *.png | *.webp — the upload source of truth
   comparables.json  # written by `comparables` (raw Ad[])
   comparables.md    # written by `comparables` (human-readable digest for you)
+  comparables-browser.json  # optional: what the --own-browser snippet returned (input of --import)
 ```
 
 `<slug>` is the folder name and the local identity (letters, digits, `-`, `_`, `.`).
@@ -27,6 +28,7 @@ lists beyond what is shown.
 | `price` | number | yes (> 0) | Euros, integer. |
 | `zipcode` | string | yes (`\d{5}`) | French postal code; drives the location autocomplete. |
 | `city` | string | no | Resolved from the zipcode if blank. |
+| `address` | string | no (warning when missing) | Full street address, e.g. `"12 rue de Charenton, 75012 Paris"`: the deposit form's « À quelle adresse se trouve le bien ? » needs the number, the street and the city. **Private**: Leboncoin does not show it on the ad. Ask the user for it; never invent it, never geolocate. |
 | `condition` | string | no | Per category, e.g. `"Très bon état"`. |
 | `shipping` | bool | no | Offer delivery. |
 | `attributes` | map | no | Category-specific fields, e.g. `brand: "Apple"`. Same vocabulary as the scraper's `Ad.attributes`. Unknown keys are skipped (logged) at publish, never fatal. |
@@ -72,6 +74,7 @@ category: "Ordinateurs"
 price: 650
 zipcode: "75012"
 city: "Paris"
+address: "12 rue de Charenton, 75012 Paris"
 condition: "Très bon état"
 shipping: true
 attributes:
