@@ -6,10 +6,6 @@ by default, or via the **Chrome DevTools Protocol** — built on the original ze
 CDP scraper. Shipped as a [skills.sh](https://skills.sh) agent
 skill (a thick `SKILL.md` playbook + a single zero-dependency CLI bundle).
 
-```bash
-npx skills add maxgfr/leboncoin-cdp
-```
-
 Markdown is the source of truth. You (or your agent) write and enrich the description —
 grounded by comparable live listings. Then every account action (publish, edit, delete, renew,
 mark-sold, deactivate, reactivate) goes through **computer use in your everyday browser**, where
@@ -26,6 +22,25 @@ The CDP write engine (`publish`, `edit`, `delete`, …) remains as an advanced a
 drives a separate browser window on its own scraper profile, which you log in to once. When
 Leboncoin changes something, `doctor` says what broke.
 
+## Install
+
+- **The agent skill:**
+
+  ```bash
+  npx skills add maxgfr/leboncoin-cdp
+  ```
+
+- **The CLI, via Homebrew** (puts a `leboncoin` command on your `PATH`):
+
+  ```bash
+  brew install maxgfr/tap/leboncoin-cdp
+  leboncoin --version
+  ```
+
+The CLI needs Node ≥ 18 (Homebrew installs it) and a Chromium-based browser (Chrome or Brave)
+for the scraper / CDP commands. Without Homebrew, the same CLI runs from a clone as
+`node scripts/leboncoin.mjs` — no install needed, zero dependencies.
+
 ## Why CDP (and why it isn't detected)
 
 Instead of Puppeteer (flagged by DataDome), everything runs through a **raw WebSocket CDP**
@@ -40,6 +55,8 @@ logged in.
 log your real browser out of Leboncoin).
 
 ## The skill workflow
+
+The examples use `node scripts/leboncoin.mjs`; with the Homebrew install, type `leboncoin` instead.
 
 ```bash
 node scripts/leboncoin.mjs new macbook-air-m1 --title "MacBook Air M1" --category "Ordinateurs"
