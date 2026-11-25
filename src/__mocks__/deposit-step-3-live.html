@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Leboncoin - Déposer une annonce</title>
+</head>
+<body>
+<!--
+  Final step of the live deposit wizard (2026-11), written from the page observed
+  by hand: Leboncoin prefills the description with its own AI text, asks for a
+  FULL street address picked among its suggestions (the delivery options only
+  render once one is picked), and its « Continuer » PUBLISHES the ad.
+  Typographic apostrophes (’) as on the site.
+-->
+<main id="mainContent">
+<header role="banner">
+<h1>Déposer une annonce</h1>
+<button type="button">Quitter</button>
+</header>
+<div>
+<form id="form" novalidate="">
+<section>
+<article>
+<h2 id="step-title" tabindex="-1">Un dernier aperçu avant de publier votre annonce !</h2>
+<div>
+<button type="button" aria-label="Retour"></button>
+</div>
+<div>
+<div data-rhf-name="images_preview_section_title_id">
+<h3>Galerie</h3>
+<button type="button" aria-label="Modifier"></button>
+</div>
+<div data-rhf-name="images_preview_id">
+<div role="region" aria-roledescription="carousel" aria-label="Photos de l’annonce">
+<div role="group" aria-roledescription="slide" aria-label="macbook.jpg"><span>Couverture</span></div>
+</div>
+</div>
+<div data-rhf-name="subject">
+<label id=":form-field-label-_r_32_" for="subject">Titre de l’annonce<span role="presentation" aria-hidden="true">*</span></label>
+<input id="subject" required="" inputmode="text" maxlength="200" type="text" value="MacBook Air M1 2020 — 256 Go, très bon état" name="subject">
+</div>
+<div data-rhf-name="adparams_preview_section_title_id">
+<h3>Informations clés</h3>
+<button type="button" aria-label="Modifier"></button>
+</div>
+<div data-rhf-name="adparams_preview_id">
+<ul>
+<li><p>Type</p><p>Portable</p></li>
+<li><p>Marque</p><p>Apple</p></li>
+<li><p>Taille d’écran</p><p>12 à 14” (33cm à 37cm)</p></li>
+<li><p>État</p><p>Très bon état</p></li>
+</ul>
+</div>
+<div data-rhf-name="body">
+<label id=":form-field-label-_r_35_" for="body">Description de l’annonce<span role="presentation" aria-hidden="true">*</span></label>
+<textarea rows="8" name="body" id="body" required="" maxlength="4000">Je vends ce MacBook Air M1 2020 en très bon état. Idéal pour le travail et les études. N’hésitez pas à me contacter !</textarea>
+</div>
+<div data-rhf-name="price_section_title_id">
+<h3>Prix</h3>
+</div>
+<div data-rhf-name="donation">
+<label id=":form-field-label-_r_37_" for=":form-field-_r_36_"></label>
+<div role="radiogroup" aria-labelledby=":form-field-label-_r_37_">
+<button type="button" role="radio" data-value="0" aria-checked="true" tabindex="0"><span>Je vends</span><input type="hidden" value="0" name="donation"></button>
+<button type="button" role="radio" data-value="1" aria-checked="false" tabindex="-1"><span>Je donne</span></button>
+</div>
+</div>
+<div data-rhf-name="price_cents">
+<label id=":form-field-label-_r_3f_" for="price_cents">Prix de vente souhaité<span role="presentation" aria-hidden="true">*</span></label>
+<input id="price_cents" required="" inputmode="decimal" maxlength="10" type="text" value="" name="price_cents">
+<div>€</div>
+</div>
+<div data-rhf-name="price_reco_similar_ads_id">
+<p>Prix recommandé entre 380 € et 620 €</p>
+<p>Annonces similaires en vente</p>
+</div>
+<div data-rhf-name="shipping_section_title_id">
+<h3>Remise du bien</h3>
+</div>
+<div data-rhf-name="location">
+<label id=":form-field-label-_r_39_" for="location">À quelle adresse se trouve le bien ?<span role="presentation" aria-hidden="true">*</span></label>
+<button type="button" aria-label="Géolocaliser ma position, afin de déterminer l’adresse où se situe mon bien">Géolocaliser ma position</button>
+<span><label id=":form-field-label-_r_3a_" for=":form-field-_r_38_">Location</label></span>
+<input placeholder="Adresse" aria-autocomplete="list" aria-controls=":form-field-_r_38_-menu" aria-expanded="false" aria-labelledby=":form-field-label-_r_39_" autocomplete="off" id=":form-field-_r_38_" role="combobox" aria-label="Location" type="text" value="" name="location">
+<div data-radix-popper-content-wrapper="">
+<ul role="listbox" id=":form-field-_r_38_-menu" aria-labelledby=":form-field-label-_r_39_" tabindex="-1"></ul>
+</div>
+<p id="location-helper">Nous n’afficherons pas votre adresse sur l’annonce</p>
+</div>
+<div data-rhf-name="address_banner_id">
+<p>Remise simple et rapide</p>
+<p>Plus votre adresse est précise et plus vos modes de remise sont personnalisés.</p>
+</div>
+<!-- The delivery block (data-rhf-name="shipping") renders here once an address is picked. -->
+<div data-rhf-name="consumer_goods_legal_notice_id">
+<p>La vente de contrefaçons est interdite.
+En cliquant sur “Continuer”, je confirme l’exactitude des informations contenues dans mon annonce. LBC France décline toute responsabilité en cas d’inexactitudes ou de non-conformités.</p>
+</div>
+</div>
+<div>
+<div><button type="button">Retour</button></div>
+<button type="submit" form="form">Continuer</button>
+</div>
+</article>
+</section>
+</form>
+</div>
+</main>
+</body>
+</html>

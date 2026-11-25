@@ -53,6 +53,7 @@ const draft: Annonce = {
   category: "Vélos",
   price: 650,
   zipcode: "75012",
+  address: "10 rue de Lyon, 75012 Paris",
   city: "Paris",
   condition: "Très bon état",
   attributes: { brand: "Apple" },
@@ -101,12 +102,15 @@ describe("runPublish over the live wizard", () => {
   });
 
   it("--diagnostic fills + screenshots + saves HTML + reports missing, without submitting", async () => {
-    const { dir, root } = setupDraft({ zipcode: "", city: undefined });
+    const { dir, root } = setupDraft({ address: undefined });
     const { cdp, state } = liveSite();
     const res = await runPublish(root, "ad", { diagnostic: true }, { connect: async () => cdp as never });
 
     expect(res.reason).toBe("diagnostic");
-    expect(res.missing).toEqual(expect.arrayContaining([expect.stringContaining("zipcode")]));
+    expect(res.missing).toEqual(expect.arrayContaining([expect.stringMatching(/^address \(missing in annonce — .*ask the user.*never invent.*Géolocaliser/)]));
+    expect(res.report?.readiness?.blockers).toEqual([expect.stringMatching(/^required-fields \(missing: address\)/)]);
+    expect(res.report?.wizard?.stop).toBe("final");
+    expect(cdp.clicks.some((c) => /géolocaliser/i.test(c))).toBe(false);
     expect(state.submitted).toBe(false);
     expect(parseAnnonce(dir).status).toBe("draft");
     expect(existsSync(join(dir, "publish-preview.png"))).toBe(true);

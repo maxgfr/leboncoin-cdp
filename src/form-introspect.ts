@@ -243,7 +243,8 @@ function introspectScript(probes: { name: string; css: string[] }[], stepTitle: 
       rhfName: rhfBox ? attr(rhfBox, 'data-rhf-name') : undefined,
       type,
       placeholder: el.placeholder || undefined,
-      value: type === 'switch' || type === 'checkbox' ? '' : String(value).slice(0, 200),
+      // A textarea is kept whole (≤ 4000 chars live) so the description can be verified exactly.
+      value: type === 'switch' || type === 'checkbox' ? '' : String(value).slice(0, type === 'textarea' ? 5000 : 200),
       checked: type === 'switch' || type === 'checkbox' || type === 'radio' ? value === 'true' || !!el.checked : undefined,
       options: optionsOf(el, type),
       required: !!reqSrc,

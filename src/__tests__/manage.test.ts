@@ -9,6 +9,8 @@ vi.mock("../utils", async (importOriginal) => {
 });
 
 import { runDeactivate, runEdit, runMarkSold, runReactivate, runRenew } from "../manage";
+import { clickInAdCard, clickManageControl } from "../manage-actions";
+import { MANAGE } from "../selectors";
 import { parseAnnonce, writeAnnonce } from "../markdown";
 import type { Annonce } from "../types";
 import { adPage, confirmDialog, messagePage } from "./helpers/ad-pages";
@@ -185,5 +187,45 @@ describe("runEdit", () => {
     const cdp = new DomCDP(adPage({ controls: [] }), { url: AD_URL });
     const res = await runEdit(root, "ad", { yes: true }, { connect: async () => cdp as never });
     expect(res).toMatchObject({ ok: false, reason: "action-failed" });
+  });
+});
+
+describe("« Mes annonces » (live labels, 2026-11) — unit only: no ad was available to verify live", () => {
+  /** A listing: a bulk bar (« Sélectionner toutes les annonces », « Pause », « Supprimer ») and one card per ad. */
+  const listing = (ids: string[], tab = "En ligne") => `<html><body><main>
+    <div role="tablist"><button role="tab">En ligne</button><button role="tab">Expirées</button></div>
+    <input placeholder="Recherchez dans vos annonces">
+    <div><label><input type="checkbox" aria-label="Sélectionner toutes les annonces">Sélectionner toutes les annonces</label>
+      <button type="button">Pause</button><button type="button">Réactiver</button><button type="button">Supprimer</button></div>
+    <ul>${ids.map((id) => `<li><a href="/ad/informatique/${id}">Annonce ${id} (${tab})</a><button type="button">Pause</button><button type="button">Supprimer</button></li>`).join("")}</ul>
+  </main></body></html>`;
+
+  it("acts inside the ad's own card, on « Expirées » when it is not « En ligne », never via the bulk bar", async () => {
+    let page = "";
+    const cdp = new DomCDP("<html><body><p>ad page without controls</p></body></html>", {
+      onNavigate: () => {
+        page = "online";
+        return listing(["999"]);
+      },
+      onClick: (label, el) => {
+        if (label === "Expirées") {
+          page = "expired";
+          return listing(["123", "999"], "Expirées");
+        }
+        if (label === "Pause") page = `paused:${el.closest("li")?.querySelector("a")?.getAttribute("href") ?? "bulk"}`;
+        return undefined;
+      },
+    });
+    expect(await clickManageControl(cdp as never, "123", MANAGE.deactivateButton)).toBe(true);
+    expect(cdp.clicks).toEqual(["Expirées", "Pause"]);
+    expect(page).toBe("paused:/ad/informatique/123");
+  });
+
+  it("never clicks « Sélectionner toutes les annonces », even when asked for it", async () => {
+    const cdp = new DomCDP(
+      `<html><body><ul><li><a href="/ad/x/123">Annonce</a><button type="button" aria-label="Sélectionner toutes les annonces">Tout</button></li></ul></body></html>`,
+    );
+    expect(await clickInAdCard(cdp as never, "123", { textCandidates: ["Sélectionner toutes les annonces"], css: [] })).toBe(false);
+    expect(cdp.clicks).toEqual([]);
   });
 });

@@ -38,7 +38,9 @@ export async function clickInAdCard(cdp: CDPClient, adId: string, button: Button
           if (card.matches('li, article, [role="listitem"], [role="row"]') || card.querySelectorAll('button, [role="button"]').length >= 1) break;
         }
         const wanted = ${JSON.stringify(button.textCandidates)}.map(n);
-        const els = Array.from(card.querySelectorAll('button, [role="button"], [role="menuitem"], a')).filter((e) => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true');
+        const never = ${JSON.stringify(MANAGE.neverClick)}.map(n);
+        const forbidden = (e) => [n(e.innerText || e.textContent), n(e.getAttribute('aria-label'))].some((t) => t && never.some((x) => t.includes(x)));
+        const els = Array.from(card.querySelectorAll('button, [role="button"], [role="menuitem"], a')).filter((e) => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true' && !forbidden(e));
         for (const w of wanted) {
           const el = els.find((e) => { const t = n(e.innerText || e.textContent); const a = n(e.getAttribute('aria-label')); return t === w || a === w || t.startsWith(w + ' ') || a.startsWith(w + ' '); });
           if (el) { el.click(); return true; }
@@ -58,11 +60,19 @@ export async function clickInAdCard(cdp: CDPClient, adId: string, button: Button
 export async function clickManageControl(cdp: CDPClient, adId: string, button: ButtonSelector): Promise<boolean> {
   if (await clickButtonOrMenu(cdp, button, MANAGE.overflowMenu)) return true;
   await navigate(cdp, MANAGE.listingUrl);
-  if (await clickInAdCard(cdp, adId, button)) return true;
-  // The card may hide its actions behind its own « … » menu, rendered as a popup.
-  if (!(await clickInAdCard(cdp, adId, MANAGE.overflowMenu))) return false;
-  await delay(600);
-  return clickInOpenMenu(cdp, button);
+  // The ad is under « En ligne » (the default tab) or « Expirées ».
+  for (const tab of [null, ...MANAGE.listingTabs]) {
+    if (tab) {
+      if (!(await clickButton(cdp, tab))) continue;
+      await delay(1_500);
+    }
+    if (await clickInAdCard(cdp, adId, button)) return true;
+    // The card may hide its actions behind its own « … » menu, rendered as a popup.
+    if (!(await clickInAdCard(cdp, adId, MANAGE.overflowMenu))) continue;
+    await delay(600);
+    return clickInOpenMenu(cdp, button);
+  }
+  return false;
 }
 
 /** Click `button` inside a currently open menu/popup only (role=menu / listbox / dialog). */
@@ -74,8 +84,10 @@ async function clickInOpenMenu(cdp: CDPClient, button: ButtonSelector): Promise<
         const visible = (el) => !!(el.offsetParent !== null || (el.getClientRects && el.getClientRects().length));
         const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"]')).filter(visible);
         const wanted = ${JSON.stringify(button.textCandidates)}.map(n);
+        const never = ${JSON.stringify(MANAGE.neverClick)}.map(n);
+        const forbidden = (e) => [n(e.innerText || e.textContent), n(e.getAttribute('aria-label'))].some((t) => t && never.some((x) => t.includes(x)));
         for (const m of menus) {
-          const els = Array.from(m.querySelectorAll('button, [role="menuitem"], [role="option"], a')).filter(visible);
+          const els = Array.from(m.querySelectorAll('button, [role="menuitem"], [role="option"], a')).filter((e) => visible(e) && !forbidden(e));
           for (const w of wanted) {
             const el = els.find((e) => n(e.innerText || e.textContent) === w || n(e.getAttribute('aria-label')) === w);
             if (el) { el.click(); return true; }

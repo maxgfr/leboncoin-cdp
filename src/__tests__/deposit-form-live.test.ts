@@ -36,7 +36,7 @@ describe("fillField on the live wizard markup", () => {
     expect(cdp.clicks).toContain("Très bon état");
   });
 
-  it("waits past the STALE address suggestion for the async ones, and picks the city (seen live)", async () => {
+  it("types the street address, waits past the STALE suggestion, and picks the matching street (never the bare city)", async () => {
     const cdp = new DomCDP(fixture("deposit-step-3-review.html"));
     const input = cdp.document.querySelector('input[name="location"]') as HTMLInputElement;
     const listbox = cdp.document.getElementById(input.getAttribute("aria-controls") as string) as HTMLElement;
@@ -44,14 +44,26 @@ describe("fillField on the live wizard markup", () => {
     input.addEventListener("input", () => {
       // The geocoder answers ~400 ms after typing.
       setTimeout(() => {
-        listbox.innerHTML = ["Avenue de Paris, Paris (75012)", "Paris (75012)", "Route de Paris, Carquefou (44470)"]
+        listbox.innerHTML = ["Paris (75012)", "1 Rue de Lyon, Paris (75012)", "10 Rue de Lyon, Paris (75012)"]
           .map((o) => `<li role="option">${o}</li>`)
           .join("");
       }, 400);
     });
     const loc = await field(cdp, (f) => f.name === "location");
-    const r = await fillField(cdp as never, loc, "75012 Paris", "75012");
-    expect(r).toMatchObject({ ok: true, detail: "Paris (75012)" });
+    const r = await fillField(cdp as never, loc, "10 rue de Lyon, 75012 Paris", undefined, { address: true });
+    expect(r).toMatchObject({ ok: true, detail: "10 Rue de Lyon, Paris (75012)" });
+    expect(input.value).toBe("10 Rue de Lyon, Paris (75012)");
+  });
+
+  it("refuses an address with no matching suggestion (no typed-only value)", async () => {
+    const cdp = new DomCDP(fixture("deposit-step-3-review.html"));
+    const input = cdp.document.querySelector('input[name="location"]') as HTMLInputElement;
+    const listbox = cdp.document.getElementById(input.getAttribute("aria-controls") as string) as HTMLElement;
+    listbox.innerHTML = '<li role="option">Paris (75012)</li>';
+    const loc = await field(cdp, (f) => f.name === "location");
+    const r = await fillField(cdp as never, loc, "10 rue de Lyon, 75012 Paris", undefined, { address: true, optionWaitMs: 400 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("no-option");
   });
 
   it("reports no-option (and the choices) when the value is not offered", async () => {

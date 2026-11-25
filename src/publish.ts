@@ -23,14 +23,14 @@ import type { CDPClient } from "./cdp";
 import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
 import { adIdFromUrl, settleHandoff } from "./computer-use";
 import { clickButton, currentUrl, firstAdLink, hasButton } from "./deposit-form";
-import { type StepFill, type WizardOptions, type WizardStop, runWizard } from "./deposit-wizard";
-import { logicalValue } from "./field-match";
+import { type StepFill, type WizardOptions, type WizardStop, isOnFinalStep, runWizard } from "./deposit-wizard";
+import { logicalValue, normalizeText } from "./field-match";
 import { type FormMap, writeFormMap } from "./form-introspect";
 import { logger } from "./logger";
 import { parseAnnonce, resolvePhotoPaths, writeAnnonce } from "./markdown";
 import { type PushReadiness, buildReadiness, readFormError, writeReadiness } from "./readiness";
 import { ShotLog, type ShotRef, captureElement, captureScreenshot, savePageHtml } from "./screenshot";
-import { DEPOSIT, ELEMENT_TARGETS, type LogicalFieldName } from "./selectors";
+import { DEPOSIT, ELEMENT_TARGETS, LOGICAL_FIELDS, type LogicalFieldName } from "./selectors";
 import type { Annonce } from "./types";
 import { delay } from "./utils";
 
@@ -75,6 +75,8 @@ export interface FillReport {
   missing: string[];
   /** Non-blocking issues worth telling the user (guessed category, unmatched attributes…). */
   warnings?: string[];
+  /** Values Leboncoin prefilled that the annonce says nothing about (« Type » = « Portable »): tell the user. */
+  notes?: string[];
   /** How the wizard ended: `final` = parked on the last step, ready for the human to submit. */
   wizard?: { stop: WizardStop; error?: string; steps: number; category?: { picked: string; family?: string; guessed: boolean } };
   uploadedPhotos: number;
@@ -125,10 +127,14 @@ const REPORTED_FIELDS: [LogicalFieldName, string, boolean][] = [
   ["title", "title", true],
   ["description", "description", true],
   ["price", "price", true],
-  ["location", "zipcode", true],
+  ["location", "address", true],
   ["condition", "condition", false],
   ["shipping", "shipping", false],
 ];
+
+/** What to tell the agent when the address is missing: ask, never invent, never geolocate. */
+export const ADDRESS_MISSING =
+  "address (missing in annonce — Leboncoin needs the full street address: number, street, city, picked among its suggestions; ask the user and write it as `address:` in annonce.md — never invent it, never use « Géolocaliser ma position »)";
 
 /**
  * Fill the deposit wizard from the annonce (best-effort, never throws): every
@@ -149,20 +155,35 @@ export async function fillForm(cdp: CDPClient, a: Annonce, photos: string[], sho
     const filled = written.has(logical);
     fields.push({ field: name, required, hasValue, filled });
     if (!required) {
-      if (hasValue && !filled) warnings.push(`${name}: could not be set — set it in the browser if the form offers it`);
+      if (hasValue && !filled)
+        warnings.push(
+          logical === "shipping"
+            ? `shipping: the delivery choice (« ${a.shipping ? "Activer" : "Désactiver"} la livraison ») could not be set — ${a.address ? "check « Remise du bien » in the browser" : "Leboncoin shows the delivery options only once the address is set"}`
+            : `${name}: could not be set — set it in the browser if the form offers it`,
+        );
       continue;
     }
-    if (!hasValue) missing.push(`${name} (missing in annonce)`);
-    else if (!filled) missing.push(reached ? `${name} (form field not found)` : `${name} (not reached — wizard stopped: ${wizard.stop})`);
+    if (!hasValue) missing.push(logical === "location" ? ADDRESS_MISSING : `${name} (missing in annonce)`);
+    else if (!filled)
+      missing.push(
+        !reached
+          ? `${name} (not reached — wizard stopped: ${wizard.stop})`
+          : wizard.failed.includes(logical)
+            ? `${name} (value not accepted by the form${logical === "location" ? " — no matching address suggestion: check the address with the user" : ""})`
+            : `${name} (form field not found)`,
+      );
   }
   for (const key of Object.keys(a.attributes ?? {})) {
     fields.push({ field: `attr:${key}`, required: false, hasValue: true, filled: written.has(`attr:${key}`) });
   }
 
   const last = wizard.steps.at(-1);
+  // A required control already reported through its logical field (« Location » → address) is not listed twice.
+  const reported = REPORTED_FIELDS.filter(([, name]) => missing.some((m) => m.startsWith(`${name} (`))).map(([l]) => l);
+  const covered = (label: string) => reported.some((l) => LOGICAL_FIELDS[l].labels.some((w) => ` ${normalizeText(label)} `.includes(` ${normalizeText(w)} `)));
   for (const u of last?.unresolvedRequired ?? []) {
     const label = u.split(" (")[0]?.toLowerCase() ?? u;
-    if (missing.some((m) => m.toLowerCase().includes(label))) continue;
+    if (missing.some((m) => m.toLowerCase().includes(label)) || covered(label)) continue;
     fields.push({ field: u.split(" (")[0] ?? u, required: true, hasValue: false, filled: false });
     missing.push(u);
   }
@@ -174,6 +195,7 @@ export async function fillForm(cdp: CDPClient, a: Annonce, photos: string[], sho
     warnings.push(`category: « ${a.category || "(none)"} » not offered — the site's suggestion « ${wizard.category.picked} » was picked; check it`);
   for (const k of wizard.unmatchedAttributes) warnings.push(`attribute « ${k} »: no matching field on the form (use a label from form-map.json)`);
   for (const t of wizard.failed) if (t.startsWith("attr:")) warnings.push(`attribute « ${t.slice(5)} »: value not accepted by the form`);
+  const notes = wizard.prefilled.map((p) => `prefilled by Leboncoin, not in annonce.md: ${p} — check it with the user`);
 
   if (wizard.uploadedPhotos === 0 && photos.length) logger.warn("Could not upload photos automatically — add them manually in the browser.");
   else if (photos.length) logger.info(`Uploaded ${wizard.uploadedPhotos}/${photos.length} photo(s).`);
@@ -182,6 +204,7 @@ export async function fillForm(cdp: CDPClient, a: Annonce, photos: string[], sho
     fields,
     missing,
     warnings,
+    notes,
     uploadedPhotos: wizard.uploadedPhotos,
     expectedPhotos: photos.length,
     wizard: { stop: wizard.stop, error: wizard.error, steps: wizard.steps.length, category: wizard.category },
@@ -200,6 +223,7 @@ function logFillReport(r: FillReport): void {
   logger.info(`  ${r.uploadedPhotos === r.expectedPhotos ? "✓" : "✗"} photos: ${r.uploadedPhotos}/${r.expectedPhotos}`);
   if (r.wizard) logger.info(`Wizard: ${r.wizard.steps} step(s), stopped: ${r.wizard.stop}${r.wizard.error ? ` (${r.wizard.error})` : ""}`);
   for (const w of r.warnings ?? []) logger.warn(w);
+  for (const n of r.notes ?? []) logger.info(`Note: ${n}`);
   if (r.missing.length) logger.warn(`Ask the user about: ${r.missing.join(", ")}`);
 }
 
@@ -330,6 +354,11 @@ async function drive(cdp: CDPClient, dir: string, a: Annonce, photos: string[], 
         `Not on the final step (wizard stopped: ${report.wizard?.stop ?? "unknown"}) — not submitting. Fix: ${report.missing.join(", ") || "see form-map.json"}`,
       );
       return { ok: false, reason: "form-error", error: `wizard stopped before the final step (${report.wizard?.stop})`, report, missing: report.missing };
+    }
+    // …and the page must STILL be that final step (read fresh, not from the report).
+    if (!(await isOnFinalStep(cdp))) {
+      logger.error("The page is no longer the final review — not submitting. Review it in the browser.");
+      return { ok: false, reason: "form-error", error: "not on the final step at submit time", report, missing: report.missing };
     }
     logger.info("Auto-submitting (--yes)…");
     const submitControl = (await hasButton(cdp, DEPOSIT.publishButton)) ? DEPOSIT.publishButton : DEPOSIT.nextButton;

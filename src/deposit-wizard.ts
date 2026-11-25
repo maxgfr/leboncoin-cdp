@@ -1,18 +1,23 @@
 /**
  * The deposit-wizard driver: fills a multi-step form step by step, by MEANING.
  *
- * Live (2026-10) « Déposer une annonce » is a wizard — title + category, then
- * photos + category attributes, then a final review whose « Continuer » SUBMITS
- * the ad. Each loop iteration:
+ * Live (2026-11) « Déposer une annonce » is a wizard — title + category, then
+ * photos + category attributes (prefilled by Leboncoin from the title), then a
+ * final review (description, price, address, delivery) whose « Continuer »
+ * PUBLISHES the ad. Each loop iteration:
  *   1. waits for the page, clears a captcha, checks the session;
  *   2. introspects the live controls (form-introspect.ts), matches them to the
- *      annonce (field-match.ts) and fills each one by type (deposit-form.ts);
- *      uploads the photos when a file input shows up; picks the category card
- *      when the site offers them (it then advances on its own);
- *   3. records the step (form map + fills) and a `shots/step-NN.png`;
- *   4. STOPS on the final step — recognised by its content (finalStepMarkers /
- *      an explicit publish button), never by the button label alone — and NEVER
- *      clicks past it: submitting stays the human's (or --yes's) decision;
+ *      annonce (field-match.ts) and fills each one by type (deposit-form.ts) —
+ *      a control already showing the annonce value is left as "prefilled", a
+ *      different value is overwritten; uploads the photos when a file input
+ *      shows up, then fills the controls that render afterwards; picks the
+ *      category card when the site offers them (it then advances on its own);
+ *   3. re-reads the step and rewrites a value the site changed behind us;
+ *      records the step (form map + fills) and a `shots/step-NN.png`;
+ *   4. STOPS on the final step — recognised by its content (finalStepFields,
+ *      finalStepMarkers, an explicit publish button), never by the button label
+ *      alone — and NEVER clicks past it (clickNextStep refuses): submitting stays
+ *      the human's (or --yes's) decision;
  *   5. STOPS when a required control is still empty (→ `missing[]`, "ask the user");
  *   6. otherwise clicks « Continuer » and verifies the step fingerprint changed
  *      (else reads the form error and stops as `stuck`).
@@ -21,8 +26,8 @@
 import { isOnCaptcha, waitForCaptchaResolution } from "./captcha";
 import type { CDPClient } from "./cdp";
 import { clickButton, countElements, currentUrl, fillField, hasButton, pageHasText, uploadPhotos } from "./deposit-form";
-import { type MatchVia, isFieldFilled, matchFields, pickCategoryCard, valueAlreadySet } from "./field-match";
-import { type FormMap, introspectForm } from "./form-introspect";
+import { ADDRESS_MIN_OVERLAP, type MatchVia, isFieldFilled, matchFields, pickCategoryCard, pickOption, valueAlreadySet } from "./field-match";
+import { type FieldDescriptor, type FormMap, introspectForm } from "./form-introspect";
 import { logger } from "./logger";
 import { readFormError } from "./readiness";
 import type { ShotLog } from "./screenshot";
@@ -53,9 +58,11 @@ export interface StepFill {
   value: string;
   ok: boolean;
   via: MatchVia | "category";
-  /** "already" when the control already held the value. */
+  /** "prefilled" when the control already held the value (Leboncoin's own prefill, or ours). */
   detail?: string;
   reason?: string;
+  /** The control's per-page handle (data-lbc-ref), to re-check it after the step settles. */
+  ref?: string;
 }
 
 export interface StepRecord {
@@ -84,6 +91,8 @@ export interface WizardResult {
   failed: string[];
   /** annonce attributes no control matched on any step. */
   unmatchedAttributes: string[];
+  /** Values the site prefilled in controls the annonce says nothing about (« Type » = « Portable »): tell the user. */
+  prefilled: string[];
 }
 
 interface CategoryCard {
@@ -155,12 +164,6 @@ async function chooseCategory(cdp: CDPClient, wanted: string, needed: boolean): 
   return { picked: card.name, family: card.family, guessed: pick.guessed || !wanted };
 }
 
-async function isFinalStep(cdp: CDPClient, markers: string[], buttons: ButtonSelector[]): Promise<boolean> {
-  if (markers.length && (await pageHasText(cdp, markers))) return true;
-  for (const b of buttons) if (await hasButton(cdp, b)) return true;
-  return false;
-}
-
 /** A placeholder annonce with every core value set: used to ask "which core fields are on this step?". */
 const PROBE_ANNONCE: Annonce = {
   slug: "probe",
@@ -168,6 +171,7 @@ const PROBE_ANNONCE: Annonce = {
   category: "x",
   price: 1,
   zipcode: "75001",
+  address: "1 rue x",
   attributes: {},
   photos: [],
   status: "draft",
@@ -175,18 +179,55 @@ const PROBE_ANNONCE: Annonce = {
 };
 
 /**
- * Structural final-step guard, independent of any wording: the last step is a
- * review that shows the core fields TOGETHER (title, description, price,
- * address), while earlier steps show one or two of them. Three or more on one
- * step = final review — so the wizard still stops if the site rewords its
- * « avant de publier » text.
+ * Structural final-step guard, independent of any wording: only the last step
+ * (the review whose « Continuer » PUBLISHES) shows the description, the price or
+ * the address (DEPOSIT.finalStepFields) — earlier steps ask for the title, the
+ * category, the photos and the attributes. ANY one of them on a step = final, so
+ * the wizard still stops if the site rewords its « avant de publier » text.
+ * Returns the logical fields that gave it away ([] = not final).
  */
-export function looksLikeFinalReview(map: FormMap): boolean {
-  const core = new Set(["title", "description", "price", "location"]);
+export function finalReviewSignals(map: FormMap, fields: string[] = DEPOSIT.finalStepFields): string[] {
+  const core = new Set(fields);
   const onStep = matchFields(map, PROBE_ANNONCE)
     .matches.map((m) => (m.target.kind === "logical" ? m.target.name : ""))
     .filter((n) => core.has(n));
-  return new Set(onStep).size >= 3;
+  return [...new Set(onStep)];
+}
+
+export function looksLikeFinalReview(map: FormMap): boolean {
+  return finalReviewSignals(map).length > 0;
+}
+
+export interface FinalStepOptions {
+  finalMarkers?: string[];
+  finalButtons?: ButtonSelector[];
+}
+
+/**
+ * THE final-step test, read fresh from the page: the final-review fields
+ * (structural), OR a final-step text (« Un dernier aperçu avant de publier », the
+ * « je confirme l'exactitude » footer — accent/case/apostrophe-insensitive), OR an
+ * explicit publish button. Any doubt = final: stopping early is safe, publishing
+ * is not.
+ */
+export async function isOnFinalStep(cdp: CDPClient, opts: FinalStepOptions = {}, map?: FormMap): Promise<boolean> {
+  const markers = opts.finalMarkers ?? DEPOSIT.finalStepMarkers;
+  const buttons = opts.finalButtons ?? [DEPOSIT.publishButton];
+  if (looksLikeFinalReview(map ?? (await introspectForm(cdp)))) return true;
+  if (markers.length && (await pageHasText(cdp, markers))) return true;
+  for (const b of buttons) if (await hasButton(cdp, b)) return true;
+  return false;
+}
+
+/**
+ * Click the wizard's « Continuer » to go to the NEXT step — refused (returns
+ * "final") when the page is the final step, whatever mode is running: that
+ * « Continuer » publishes the ad, and only `publish --yes` may click it (through
+ * its own final-step check). The ONLY place the wizard clicks « Continuer ».
+ */
+export async function clickNextStep(cdp: CDPClient, next: ButtonSelector, opts: FinalStepOptions = {}): Promise<"clicked" | "final" | "no-next"> {
+  if (await isOnFinalStep(cdp, opts)) return "final";
+  return (await clickButton(cdp, next)) ? "clicked" : "no-next";
 }
 
 /** A paid upsell (« Pack Photos 5,70 € », « Remonter 2,99 € »…): never required, never ticked. */
@@ -209,12 +250,140 @@ function describe(f: FormMap["fields"][number]): string {
   return f.label || f.altLabels?.[0] || f.key;
 }
 
+/** Does the control show the annonce value? An address counts when it is the picked suggestion for it. */
+function holds(f: FieldDescriptor, target: string, value: string): boolean {
+  if (target === "location") return !!String(f.value ?? "").trim() && pickOption([f.value], value, { minOverlap: ADDRESS_MIN_OVERLAP }) === 0;
+  return valueAlreadySet(f, value);
+}
+
+/** A label without the form's required asterisk (« État* » → « État »). */
+function bare(label: string): string {
+  return label.replace(/\s*\*\s*$/, "").trim();
+}
+
+/** Fields a step shows with a value nobody asked for (Leboncoin prefills them from the title / photos). */
+function prefilledUnasked(map: FormMap, matchedRefs: Set<string>): string[] {
+  return map.fields
+    .filter((f) => f.type !== "file" && !(f.ref && matchedRefs.has(f.ref)) && !isPaidOption(f))
+    .filter((f) => (f.type === "checkbox" || f.type === "switch" ? f.checked === true : String(f.value ?? "").trim() !== ""))
+    .map((f) => `« ${bare(describe(f))} » = « ${f.type === "checkbox" || f.type === "switch" ? "oui" : String(f.value).trim()} »`);
+}
+
+interface StepState {
+  fills: StepFill[];
+  /** Refs of the controls the annonce targeted on this step. */
+  matchedRefs: Set<string>;
+  written: Set<string>;
+  failed: Set<string>;
+}
+
+/**
+ * One fill pass over the current controls: each control the annonce targets is
+ * left alone when it already shows the value ("prefilled" — Leboncoin prefills
+ * attributes from the title), else written by type (a mismatch is overwritten).
+ * A target already handled on this step is skipped, so the pass can be re-run
+ * when the step renders more controls (attributes appear after the photo upload).
+ */
+async function fillPass(cdp: CDPClient, a: Annonce, map: FormMap, st: StepState): Promise<string[]> {
+  const { matches, unmatchedAttributes } = matchFields(map, a);
+  for (const m of matches) {
+    const target = m.target.kind === "logical" ? m.target.name : `attr:${m.target.key}`;
+    if (target === "photos") continue;
+    if (m.field.ref) st.matchedRefs.add(m.field.ref);
+    if (st.fills.some((f) => f.target === target && f.ok)) continue;
+    if (isPaidOption(m.field)) {
+      logger.warn(`Skipped « ${describe(m.field)} »: a paid option is never set automatically.`);
+      continue;
+    }
+    const label = describe(m.field);
+    const prior = st.fills.findIndex((f) => f.target === target);
+    if (prior >= 0) st.fills.splice(prior, 1);
+    if (holds(m.field, target, m.value)) {
+      st.fills.push({ target, field: label, value: m.value, ok: true, via: m.via, detail: "prefilled", ref: m.field.ref });
+      st.written.add(target);
+      st.failed.delete(target);
+      continue;
+    }
+    const r = await fillField(cdp, m.field, m.value, m.hint, { address: target === "location" });
+    st.fills.push({ target, field: label, value: m.value, ok: r.ok, via: m.via, detail: r.detail, reason: r.reason, ref: m.field.ref });
+    if (r.ok) {
+      st.written.add(target);
+      st.failed.delete(target);
+    } else if (!st.written.has(target)) {
+      st.failed.add(target);
+      logger.warn(`Could not set « ${label} » to "${m.value}"${r.reason ? ` (${r.reason}${r.detail ? `: ${r.detail}` : ""})` : ""}.`);
+    }
+    await delay(300);
+  }
+  return unmatchedAttributes;
+}
+
+/**
+ * Re-read the step after the fills: a value the site replaced afterwards (a late
+ * AI description, a prefill landing after ours) is written once more; still
+ * wrong = failed. Returns the fresh map.
+ */
+async function verifyPass(cdp: CDPClient, st: StepState, settleMs: number): Promise<FormMap> {
+  await delay(Math.min(settleMs, 1_000));
+  let map = await introspectForm(cdp);
+  const drifted = st.fills.filter((f) => {
+    if (!f.ok || !f.ref || f.target === "photos" || f.target === "category") return false;
+    const now = map.fields.find((x) => x.ref === f.ref);
+    return !!now && !holds(now, f.target, f.value);
+  });
+  if (!drifted.length) return map;
+  for (const f of drifted) {
+    const now = map.fields.find((x) => x.ref === f.ref);
+    if (!now) continue;
+    const r = await fillField(cdp, now, f.value, undefined, { address: f.target === "location" });
+    f.detail = r.ok ? `rewritten (the site had changed it)${r.detail ? `: ${r.detail}` : ""}` : r.detail;
+    f.ok = r.ok;
+    f.reason = r.reason;
+  }
+  await delay(Math.min(settleMs, 1_000));
+  map = await introspectForm(cdp);
+  for (const f of drifted) {
+    const now = map.fields.find((x) => x.ref === f.ref);
+    if (now && !holds(now, f.target, f.value)) {
+      f.ok = false;
+      f.reason = "not-applied";
+      f.detail = `the form keeps « ${String(now.value).slice(0, 60)} »`;
+    }
+    if (f.ok) continue;
+    st.written.delete(f.target);
+    st.failed.add(f.target);
+    logger.warn(`« ${f.field} » did not keep "${f.value.slice(0, 60)}" (${f.detail ?? "changed by the site"}).`);
+  }
+  return map;
+}
+
+/**
+ * Wait until the step stops rendering new controls (2 identical reads; ≤ ~8 s).
+ * A step showing nothing but the photo input right after an upload is still
+ * loading its category attributes (Leboncoin predicts them from the title +
+ * photos, seen live 2–10 s): keep waiting for them (≤ ~20 s).
+ */
+async function settleForm(cdp: CDPClient, before: FormMap, pollMs: number, expectMore = false): Promise<FormMap> {
+  let prev = before.step?.fingerprint;
+  let map = before;
+  let stable = 0;
+  const onlyFile = (m: FormMap) => m.fields.every((f) => f.type === "file");
+  for (let i = 0; i < 26; i++) {
+    const waiting = expectMore && onlyFile(map);
+    if ((stable >= 2 && !waiting) || (i >= 10 && !waiting)) break;
+    await delay(pollMs);
+    map = await introspectForm(cdp);
+    stable = map.step?.fingerprint === prev ? stable + 1 : 0;
+    prev = map.step?.fingerprint;
+  }
+  return map;
+}
+
 /** Drive the wizard from the current page. Never throws for site reasons; see WizardResult.stop. */
 export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions): Promise<WizardResult> {
   const maxSteps = opts.maxSteps ?? 15;
   const settle = opts.settleMs ?? 1_500;
-  const finalMarkers = opts.finalMarkers ?? DEPOSIT.finalStepMarkers;
-  const finalButtons = opts.finalButtons ?? [DEPOSIT.publishButton];
+  const finalOpts: FinalStepOptions = { finalMarkers: opts.finalMarkers, finalButtons: opts.finalButtons };
   const nextButton = opts.nextButton ?? DEPOSIT.nextButton;
 
   const result: WizardResult = {
@@ -225,9 +394,11 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
     written: [],
     failed: [],
     unmatchedAttributes: Object.keys(a.attributes ?? {}),
+    prefilled: [],
   };
   const written = new Set<string>();
   const failed = new Set<string>();
+  const prefilled = new Set<string>();
   let categoryAttempts = 0;
 
   for (let index = 1; index <= maxSteps; index++) {
@@ -245,34 +416,13 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
     }
 
     // ── fill pass ──
-    const fills: StepFill[] = [];
-    const map = await introspectForm(cdp);
-    const { matches, unmatchedAttributes } = matchFields(map, a);
-    result.unmatchedAttributes = result.unmatchedAttributes.filter((k) => unmatchedAttributes.includes(k));
-    for (const m of matches) {
-      const target = m.target.kind === "logical" ? m.target.name : `attr:${m.target.key}`;
-      if (target === "photos") continue;
-      if (isPaidOption(m.field)) {
-        logger.warn(`Skipped « ${describe(m.field)} »: a paid option is never set automatically.`);
-        continue;
-      }
-      const label = describe(m.field);
-      if (valueAlreadySet(m.field, m.value)) {
-        fills.push({ target, field: label, value: m.value, ok: true, via: m.via, detail: "already" });
-        written.add(target);
-        continue;
-      }
-      const r = await fillField(cdp, m.field, m.value, m.hint);
-      fills.push({ target, field: label, value: m.value, ok: r.ok, via: m.via, detail: r.detail, reason: r.reason });
-      if (r.ok) {
-        written.add(target);
-        failed.delete(target);
-      } else if (!written.has(target)) {
-        failed.add(target);
-        logger.warn(`Could not set « ${label} » to "${m.value}"${r.reason ? ` (${r.reason}${r.detail ? `: ${r.detail}` : ""})` : ""}.`);
-      }
-      await delay(300);
-    }
+    const st: StepState = { fills: [], matchedRefs: new Set(), written, failed };
+    let map = await introspectForm(cdp);
+    const finalAtEntry = await isOnFinalStep(cdp, finalOpts, map);
+    const unmatched = (u: string[]) => {
+      result.unmatchedAttributes = result.unmatchedAttributes.filter((k) => u.includes(k));
+    };
+    unmatched(await fillPass(cdp, a, map, st));
 
     // Photos: once, as soon as a file input exists.
     if (opts.photos.length && result.uploadedPhotos === 0 && map.fields.some((f) => f.type === "file")) {
@@ -284,7 +434,7 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
           result.uploadedPhotos = Math.max(result.uploadedPhotos, await uploadPhotos(cdp, DEPOSIT.photoFileInput, opts.photos, DEPOSIT.photoThumbnails));
         }
       }
-      fills.push({
+      st.fills.push({
         target: "photos",
         field: "photos",
         value: `${opts.photos.length} file(s)`,
@@ -296,8 +446,16 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
       await delay(1_500); // let thumbnails render
     }
 
-    // Category cards (the site advances by itself once one is clicked).
-    if (categoryAttempts < 2) {
+    // The step can keep rendering controls (live 2026-11: the category attributes,
+    // prefilled from the title, appear once the photos are in): fill those too.
+    const settled = await settleForm(cdp, map, Math.min(settle, 750), result.uploadedPhotos > 0 && st.fills.some((f) => f.target === "photos"));
+    if (settled.step?.fingerprint !== map.step?.fingerprint) {
+      map = settled;
+      unmatched(await fillPass(cdp, a, map, st));
+    }
+
+    // Category cards (the site advances by itself once one is clicked) — never on the final step.
+    if (categoryAttempts < 2 && !finalAtEntry) {
       // Waits for suggestions / opens the tree only when no category is set yet and the step cannot go on without one.
       const allowTree = !written.has("category") && written.has("title") && !(await hasButton(cdp, nextButton));
       const chosen = await chooseCategory(cdp, a.category, allowTree);
@@ -305,7 +463,7 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
         categoryAttempts++;
         result.category = chosen;
         written.add("category");
-        fills.push({
+        st.fills.push({
           target: "category",
           field: "catégorie",
           value: a.category,
@@ -317,22 +475,23 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
         await delay(settle);
         const after = await introspectForm(cdp);
         if (after.step?.fingerprint !== map.step?.fingerprint) {
-          result.steps.push({ index, title: map.step?.title ?? "", url, fills, unresolvedRequired: [], final: false, formMap: map });
+          result.steps.push({ index, title: map.step?.title ?? "", url, fills: st.fills, unresolvedRequired: [], final: false, formMap: map });
           await opts.shotLog?.shot(cdp, `step-${String(index).padStart(2, "0")}`);
           continue; // auto-advanced to the next step
         }
       }
     }
 
-    // ── record the step ──
-    const filledMap = await introspectForm(cdp);
+    // ── verify + record the step ──
+    const filledMap = await verifyPass(cdp, st, settle);
+    for (const p of prefilledUnasked(filledMap, st.matchedRefs)) prefilled.add(p);
     // A required photo input is satisfied by thumbnails on the page (ours, or the ad's existing ones on edit).
     const photosOk = result.uploadedPhotos > 0 || (await countElements(cdp, DEPOSIT.photoThumbnails)) > 0;
     const unresolvedRequired = filledMap.fields
       .filter((f) => blocksStep(f) && !(f.type === "file" ? photosOk : isFieldFilled(f)))
       .map((f) => `${describe(f)} (required on the live form — ${f.requiredSource ?? "required"})`);
-    const final = looksLikeFinalReview(filledMap) || (await isFinalStep(cdp, finalMarkers, finalButtons));
-    result.steps.push({ index, title: filledMap.step?.title ?? "", url, fills, unresolvedRequired, final, formMap: filledMap });
+    const final = finalAtEntry || (await isOnFinalStep(cdp, finalOpts, filledMap));
+    result.steps.push({ index, title: filledMap.step?.title ?? "", url, fills: st.fills, unresolvedRequired, final, formMap: filledMap });
     await opts.shotLog?.shot(cdp, `step-${String(index).padStart(2, "0")}`);
 
     if (final) {
@@ -344,19 +503,23 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
       break;
     }
 
-    // ── next ──
-    // Re-check right before clicking: never click « Continuer » on the final step.
-    if (await isFinalStep(cdp, finalMarkers, finalButtons)) {
+    // ── next ── (clickNextStep re-checks the page and refuses on the final step)
+    const next = await clickNextStep(cdp, nextButton, finalOpts);
+    if (next === "final") {
       result.stop = "final";
       result.steps[result.steps.length - 1]!.final = true;
       break;
     }
-    if (!(await clickButton(cdp, nextButton))) {
+    if (next === "no-next") {
       result.stop = "no-next";
       break;
     }
-    await delay(settle);
-    const moved = await introspectForm(cdp);
+    // The next step can take a few seconds to render: give it up to 3 settle periods.
+    let moved = filledMap;
+    for (let t = 0; t < 3 && moved.step?.fingerprint === filledMap.step?.fingerprint; t++) {
+      await delay(settle);
+      moved = await introspectForm(cdp);
+    }
     if (moved.step?.fingerprint === filledMap.step?.fingerprint && (await currentUrl(cdp)) === url) {
       result.stop = "stuck";
       result.error = (await readFormError(cdp)) ?? "the form did not move to the next step";
@@ -366,5 +529,6 @@ export async function runWizard(cdp: CDPClient, a: Annonce, opts: WizardOptions)
 
   result.written = [...written];
   result.failed = [...failed].filter((t) => !written.has(t));
+  result.prefilled = [...prefilled];
   return result;
 }

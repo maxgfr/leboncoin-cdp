@@ -117,7 +117,10 @@ user's browser. Use it only if the user asks for it and accepts logging in once 
   may log the real browser out) seeds it from the real one; `--cookies-file` is best-effort only.
 - `inspect <slug>` — read-only: `form-map.json` for the wizard's first step.
 - `publish <slug>` — walk the wizard, fill by field meaning, upload photos, **stop on the final
-  review**; writes `push-readiness.json`, `publish-preview.png` (**Read them**), `form-map.json`.
+  review** (never clicks its « Continuer »); writes `push-readiness.json`, `publish-preview.png`
+  (**Read them**), `form-map.json`. It replaces Leboncoin's AI description, types only
+  `address:` (missing → `ask the user about → address`), and lists values Leboncoin prefilled
+  that annonce.md doesn't set as `notes` to check with the user.
   `--diagnostic` never submits; `--yes` submits (only with explicit consent); `--strict`, `--shots`.
   When it ends `incomplete` / `form-error` / `not-published` it writes `handoff.json` and leaves
   the window open: finish only what remains there (`cu-sheet` puts it on top), then `record`.

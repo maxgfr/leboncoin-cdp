@@ -17,6 +17,8 @@ export interface DomCDPOptions {
   onClick?: (label: string, el: Element, cdp: DomCDP) => string | undefined | void;
   /** Called on Page.navigate; return the HTML served at that URL. */
   onNavigate?: (url: string, cdp: DomCDP) => string | undefined;
+  /** Called after DOM.setFileInputFiles; return HTML to load a new page (the step re-rendered with its attributes). */
+  onUpload?: (files: string[], cdp: DomCDP) => string | undefined;
 }
 
 export function fixture(name: string): string {
@@ -104,6 +106,8 @@ export class DomCDP {
     if (method === "DOM.setFileInputFiles") {
       const files = (params.files as string[]) ?? [];
       this.uploaded.push(...files);
+      const next = this.opts.onUpload?.(files, this);
+      if (typeof next === "string") this.load(next);
       // The live site renders a blob: thumbnail per photo and clears the input.
       const host = this.document.querySelector('[data-rhf-name="images"]') ?? this.document.body;
       for (const f of files) {

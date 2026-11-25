@@ -9,6 +9,7 @@ const annonce: Annonce = {
   category: "Ordinateurs",
   price: 650,
   zipcode: "75012",
+  address: "10 rue de Lyon, 75012 Paris",
   city: "Paris",
   condition: "Très bon état",
   shipping: true,
@@ -54,8 +55,15 @@ describe("matchFields — by meaning, not by selector", () => {
     expect(targetOf(m, "location")).toBe("location");
     expect(m.matches.find((x) => x.field.key === "price_cents")?.value).toBe("650");
     const loc = m.matches.find((x) => x.field.key === "location");
-    expect(loc?.value).toBe("75012 Paris");
-    expect(loc?.hint).toBe("75012");
+    expect(loc?.value).toBe("10 rue de Lyon, 75012 Paris");
+  });
+
+  it("never types a city or zipcode into the address field when the annonce has no address", () => {
+    const m = matchFields(
+      map([f({ key: "location", name: "location", type: "combobox", label: "Location", altLabels: ["À quelle adresse se trouve le bien ?*"] })]),
+      { ...annonce, address: undefined },
+    );
+    expect(m.matches).toEqual([]);
   });
 
   it("still resolves when every name= is renamed and only the visible label is left", () => {
@@ -167,5 +175,54 @@ describe("isFieldFilled / valueAlreadySet", () => {
     expect(valueAlreadySet(f({ value: "45" }), "650")).toBe(false);
     expect(valueAlreadySet(f({ type: "checkbox", checked: true }), "true")).toBe(true);
     expect(valueAlreadySet(f({ type: "combobox", value: "Très bon état" }), "Très bon état")).toBe(true);
+  });
+  it("accepts a prefilled list option the annonce value designates (« 12 à 14 » → « 12 à 14” (33cm à 37cm) »), not another one", () => {
+    const options = ["Jusqu’à 12” (32cm)", "12 à 14” (33cm à 37cm)", "15 à 16” (38cm à 42cm)"].map((label) => ({ label, value: label }));
+    const screen = f({ type: "combobox", value: "12 à 14” (33cm à 37cm)", options });
+    expect(valueAlreadySet(screen, "12 à 14")).toBe(true);
+    expect(valueAlreadySet(screen, "15 à 16")).toBe(false);
+    const etat = ["État neuf", "Très bon état", "Bon état"].map((label) => ({ label, value: label }));
+    expect(valueAlreadySet(f({ type: "combobox", value: "Très bon état", options: etat }), "Bon état")).toBe(false);
+  });
+  it("compares a textarea EXACTLY (the AI-prefilled description is not « already set »)", () => {
+    expect(valueAlreadySet(f({ type: "textarea", value: "Je vends ce MacBook Air M1 2020." }), "MacBook Air M1, très bon état.")).toBe(false);
+    expect(valueAlreadySet(f({ type: "textarea", value: "Ligne 1\r\nLigne 2 " }), "Ligne 1\nLigne 2")).toBe(true);
+    expect(valueAlreadySet(f({ type: "textarea", value: "Ligne 1, ligne 2" }), "Ligne 1 ligne 2")).toBe(false);
+  });
+});
+
+describe("pickOption strict (street addresses)", () => {
+  const strict = { minOverlap: 0.6 };
+  it("takes the suggestion with the same number and most words", () => {
+    const opts = ["1 Rue de Lyon, Paris (75012)", "10 Rue de Lyon, Paris (75012)", "Paris (75012)"];
+    expect(pickOption(opts, "10 rue de Lyon, 75012 Paris", strict)).toBe(1);
+  });
+  it("never takes the bare city, a stale suggestion, or another street number", () => {
+    expect(pickOption(["Paris (75012)"], "10 rue de Lyon, 75012 Paris", strict)).toBe(-1);
+    expect(pickOption(["10 Rue de l’Exemple, Issoire (63500)"], "10 rue de Lyon, 75012 Paris", strict)).toBe(-1);
+    expect(pickOption(["12 Rue de Lyon, Paris (75012)"], "10 rue de Lyon, 75012 Paris", strict)).toBe(-1);
+  });
+});
+
+describe("attribute keys → live labels", () => {
+  it("maps technical keys to the live labels (brand → Marque, computer_screen_size → Taille d'écran, year → Année de fabrication)", () => {
+    const fields = [
+      f({ key: "m", label: "Marque", type: "combobox" }),
+      f({ key: "t", label: "Taille d'écran", type: "combobox" }),
+      f({ key: "y", label: "Année de fabrication" }),
+      f({ key: "ty", label: "Type*", type: "combobox" }),
+    ];
+    const m = matchFields(map(fields), {
+      ...annonce,
+      attributes: { brand: "Apple", computer_screen_size: "12 à 14", year: "2020", computer_type: "Portable" },
+    });
+    expect(targetOf(m, "m")).toBe("attr:brand");
+    expect(targetOf(m, "t")).toBe("attr:computer_screen_size");
+    expect(targetOf(m, "y")).toBe("attr:year");
+    expect(targetOf(m, "ty")).toBe("attr:computer_type");
+  });
+  it("matches « État* » for `condition`", () => {
+    const m = matchFields(map([f({ key: "c", label: "État*", type: "combobox" })]), annonce);
+    expect(targetOf(m, "c")).toBe("condition");
   });
 });

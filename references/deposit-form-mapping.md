@@ -19,39 +19,60 @@ fails, `publish` stops early, or a report says `unresolved`.
 3. **Overrides — `~/.lbc-scraper/site.json`** (or `$LBC_SITE_OVERRIDES`): extends 1 and 2
    without a rebuild (see below).
 
-Attributes in `annonce.md` match by technical key (`mileage`), by rhf suffix (`brand` →
-`computer_brand`) or by **visible label** — so a label copied from `form-map.json`
-(`Kilométrage: 120000`, `Taille d'écran: …`) always works. Option values (État, Marque…) are
-matched to the offered options tolerantly (exact > prefix > contains > shared words).
+Attributes in `annonce.md` match by technical key (`computer_brand`), by rhf suffix (`brand` →
+`computer_brand`), by the key's live label (`ATTRIBUTE_LABELS`: `brand` → « Marque »,
+`computer_screen_size` → « Taille d'écran », `year` → « Année de fabrication »…) or by
+**visible label** — so a label copied from `form-map.json` (`Taille d'écran: 12 à 14`) always
+works. Option values (État, Marque…) are matched to the offered options tolerantly (exact >
+prefix > contains > shared words: « 12 à 14 » → « 12 à 14” (33cm à 37cm) »).
 
-## The wizard (as captured live on 2026-10-01)
+## The wizard (as verified live on 2026-11-25)
 
 « Déposer une annonce » is a **multi-step wizard** (`deposit-wizard.ts`):
 
 | Step | Heading | Content |
 |---|---|---|
-| 1 | « Commençons par l'essentiel ! » | title; after ~2–3 s, **suggested category cards** (`role=button`, aria-label « Choix 1 : catégorie Ordinateurs dans la famille Électronique ») — clicking one advances; « Choisissez » opens the two-level tree; then « Type d'annonce » (Offre) |
-| 2 | « Dites-nous en plus sur votre article » | photos (`input[type=file]`, no name), category attributes as ARIA comboboxes (Type, Marque, État…), switches; some categories add **paid upsells** (« Pack Photos 5,70 € ») |
-| 3 | « Un dernier aperçu avant de publier votre annonce ! » | title, description, price (`price_cents`, in euros), sell/give radio group, address (combobox, async suggestions), delivery. **Its « Continuer » submits the ad.** |
+| 1 | « Commençons par l'essentiel ! » | title « Quel est le titre de l'annonce ? »; after ~2–3 s, **suggested category cards** (aria-label « Choix 1 : catégorie Ordinateurs dans la famille Électronique ») — clicking one advances; « Choisissez » opens the tree |
+| 2 | « Dites-nous en plus sur votre article » | hidden `input[type=file]` (« Upload files »). Once a photo is in, the **category attributes render — prefilled by Leboncoin from the title** (Type « Portable », Usage, Marque « Apple », Taille d'écran…) as list comboboxes (`input[role=combobox]` + « Ouvrir la liste » / « Effacer » + a hidden listbox), then « Année de fabrication », switches, and the required **« État * »** (empty) |
+| 3 | « Un dernier aperçu avant de publier votre annonce ! » | title, « Description de l'annonce * » **prefilled with Leboncoin's own AI text**, « Je vends / Je donne », « Prix de vente souhaité * », « À quelle adresse se trouve le bien ? * » (combobox « Location », **full street address picked among suggestions**; the delivery block only renders once one is picked), footer « …je confirme l'exactitude… ». **Its « Continuer » PUBLISHES the ad.** |
 
-Per step the wizard fills by meaning, uploads photos when a file input appears, picks the
-category card, records the step in `form-map.json` (`{ steps: [...] }`, with what was filled),
-takes `shots/step-NN.png`, then:
+Per step the wizard fills by meaning, uploads photos when a file input appears and **fills
+again** the controls that render afterwards (≤ ~20 s), picks the category card, re-reads the
+step and rewrites any value the site changed behind it, records the step in `form-map.json`
+(`{ steps: [...] }`, with what was filled), takes `shots/step-NN.png`, then:
 
-- **stops on the final step** — recognised by its content: `DEPOSIT.finalStepMarkers`
-  (« avant de publier », « je confirme l'exactitude »…), an explicit publish button, or
-  structurally (title + description + price/address on one step). It never clicks past it; only
-  `publish --yes` submits, and only from there;
+- **stops on the final step** — recognised if ANY of: a final-review field on the step
+  (`DEPOSIT.finalStepFields`: description, price or address), a `DEPOSIT.finalStepMarkers`
+  text (« avant de publier », « je confirme l'exactitude »… — accent/case/’-insensitive) or an
+  explicit publish button. `clickNextStep` re-checks this right before every « Continuer » and
+  refuses on the final step, in every mode (diagnostic, semi-auto, dry-run, doctor); only
+  `publish --yes` submits, and only after its own fresh final-step check;
 - **stops on a required control it cannot fill** (`missing-required` → « ask the user about »).
   Paid options never block and are never ticked; an unchecked checkbox blocks only with an
   explicit `required`;
-- otherwise clicks « Continuer » and checks the step fingerprint changed (else `stuck`, with
-  the visible form error).
+- otherwise clicks « Continuer » and checks the step changed (else `stuck`, with the visible
+  form error).
+
+How each control is set:
+
+- **List combobox** (options exist, hidden, before anything is typed): the option best matching
+  the annonce value is picked; a different prefilled value is cleared (« Effacer »), the list
+  opened, the option clicked, and the input must then show it. A control already showing the
+  annonce value is left alone and reported `prefilled`; one the annonce says nothing about is
+  reported as a **note** (`prefilled by Leboncoin, not in annonce.md: « Type » = « Portable »`).
+- **Description**: replaced (native setter, then select-all + insertText) and verified
+  **exactly**.
+- **Address**: `annonce.address` is typed and only a suggestion with the same street number and
+  most of its words is picked (never the bare city, never a stale one). No `address` → nothing
+  is typed and the run reports the blocker `address (missing in annonce — … ask the user …)`.
+  « Géolocaliser ma position » is never used.
+- **Shipping**: the « Activer / Désactiver la livraison » checkbox of the delivery block; when it
+  cannot be set (no address yet) it is a note, not a blocker.
 
 Live gotchas the engine already handles: React clears `input.files` after reading it (upload
-is verified by **thumbnails**); the address list first shows a **stale** suggestion (the
-engine types « <zip> <city> » and waits for a matching option); « Continuer » is a
-`button[type=submit]` on **every** step (so no generic submit fallback for « Déposer »).
+is verified by **thumbnails**); « Continuer » is a `button[type=submit]` on **every** step (so
+no generic submit fallback for « Déposer »); « Quitter » opens « Vous voulez interrompre votre
+dépôt ? » — the engine never clicks « Enregistrer le brouillon ».
 
 ## Runbook — something broke
 
@@ -63,7 +84,8 @@ engine types « <zip> <city> » and waits for a matching option); « Continuer �
      falls back (inline JSON → captured network JSON → `/ad/` links). Save a payload with
      `scrape --save-raw` and check `findSearchPayload` still finds the ads.
    - `deposit` ✗ → read `deposit.steps` (where it stopped and why) and `fields`
-     (`selector` / `semantic` / `unresolved` / `not-reached`).
+     (`selector` / `semantic` / `unresolved` / `not-reached` / `no-value`). Without a slug the walk
+     uses the bundled `assets/example-annonce` (and its photo), so it must reach the final review.
 2. For the deposit, run `publish <slug> --diagnostic --shots`: read `form-map.json` (every step,
    every control, its label/options, what was filled) and `shots/step-NN.png`.
 3. Fix with the **lightest** tool:
@@ -100,12 +122,19 @@ applies the file at start-up and logs what it applied.
 ## Management actions (delete / pause / sold…)
 
 Controls are looked up on the ad page, then behind a « … » / `aria-haspopup` menu, then in
-**the ad's own card** on « mes annonces » (`MANAGE.listingUrl`, `/compte/part/mes-annonces`
-since 2026-10 — never a page-wide click there). The local status changes only with **proof**:
-a confirmation sentence (`MANAGE.*Markers`), the opposite control appearing (pause →
+**the ad's own card** on « mes annonces » (`MANAGE.listingUrl`, `/compte/part/mes-annonces`;
+default tab « En ligne », then « Expirées » via `MANAGE.listingTabs` — never a page-wide click
+there). Live labels (2026-11): search « Recherchez dans vos annonces », bulk bar « Pause » /
+« Réactiver » / « Supprimer » acting on the ticked ads; `MANAGE.neverClick` (« Sélectionner
+toutes les annonces ») is never clicked. The local status changes only with **proof**: a
+confirmation sentence (`MANAGE.*Markers`), the opposite control appearing (pause →
 « Réactiver »), or — for delete — the ad page reloaded and gone. Otherwise the result is
 `unconfirmed`, `annonce.md` is untouched and `manage-unconfirmed.png` / `delete-unconfirmed.png`
 shows the page. New confirmation wording → add it to the markers in `site.json`.
+
+**Not live-verified:** edit / renew / mark-sold / deactivate / reactivate / delete could not be
+exercised against the live site in 2026-11 (the test account had no ad); they are covered by
+unit tests on synthetic pages only. Run them semi-auto (no `--yes`) and read the screenshots.
 
 ## Re-capturing fixtures
 
