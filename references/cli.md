@@ -113,7 +113,8 @@ content, never clicked past). Writes `annonces/<slug>/`: `publish-preview.png` (
   unresolved, form rejected, or nobody submitted before the timeout), it writes
   `annonces/<slug>/handoff.json` — `{ reason, error?, wizard_stop, step: { index, title },
   missing: [{ field, required, value, note? }], blockers[], remaining_photos[], preview_png,
-  cdp_port, created_at }` — sets `push-readiness.json`'s `handoff` to its path, leaves the
+  cdp_port, driver_hint?, created_at }` (`driver_hint` = `dev-browser --connect <port>` when the
+  port is known) — sets `push-readiness.json`'s `handoff` to its path, leaves the
   browser window open and logs `handoff → computer use: read annonces/<slug>/handoff.json, then
   finish in the open browser window (leboncoin cu-sheet <slug>)`. `login-required`,
   `--diagnostic` and `--dry-run` (intentionally non-submitting) never write or remove it. A
@@ -161,10 +162,11 @@ first); a resume block at the top when `handoff.json` exists; and the safety rul
 Launch (or reuse) the scraper browser and navigate to `--url <u>`, else the slug's
 `leboncoin_url` when it is `published`/`paused` (unless `--deposit`), else the deposit form.
 Drives nothing else; disconnects and **leaves the window open**. Prints the CDP port and
-`http://127.0.0.1:<port>`, so an agent can use computer use on that window or attach another
-driver (e.g. `dev-browser --connect http://127.0.0.1:<port>` — optional, not a dependency).
+`http://127.0.0.1:<port>`, then `driver → dev-browser --connect <port>` when `dev-browser` is on
+`PATH` (the recommended driver — optional, not a dependency; never let it launch its own browser),
+else an install hint (`npm i -g dev-browser`); computer use on that window is the last resort.
 - Takes the browser options (`--browser`, `--chrome-path`, `--port`, `--reset-profile`,
-  `--copy-profile`). `--json` prints `{ url, port, endpoint }`.
+  `--copy-profile`). `--json` prints `{ url, port, endpoint, devBrowser: { available, command } }`.
 
 ## `record <slug> --url <ad url>`  *(pure, no CDP)*
 Write back an action done by computer use: `leboncoin_url`, `leboncoin_id` (parsed from

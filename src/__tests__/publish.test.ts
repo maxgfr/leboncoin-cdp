@@ -186,7 +186,14 @@ describe("runPublish over the live wizard", () => {
     const file = join(dir, "handoff.json");
     expect(res.handoff).toBe(file);
     const h = JSON.parse(readFileSync(file, "utf8"));
-    expect(h).toMatchObject({ reason: "not-published", wizard_stop: "missing-required", step: { index: 2 }, cdp_port: 41234, remaining_photos: [] });
+    expect(h).toMatchObject({
+      reason: "not-published",
+      wizard_stop: "missing-required",
+      step: { index: 2 },
+      cdp_port: 41234,
+      driver_hint: "dev-browser --connect 41234",
+      remaining_photos: [],
+    });
     expect(h.missing).toEqual(expect.arrayContaining([expect.objectContaining({ field: "État", required: true, value: null })]));
     // Fields the wizard never reached carry the annonce value to type by hand.
     expect(h.missing).toEqual(expect.arrayContaining([expect.objectContaining({ field: "price", value: "650" })]));

@@ -12,6 +12,10 @@
  *     human/agent can finish by hand in the same window (see HANDOFF_REASONS).
  *   - `record <slug> --url <ad url>` → write back what was done by computer use.
  *
+ * Recommended agent driver: dev-browser (optional, never a dependency) attached with
+ * `dev-browser --connect <port>` to the scraper window — accessibility snapshot + refs
+ * instead of pixels. Pixel computer use is the last resort.
+ *
  * No config/browser import at module level: the browser is reached through
  * injectable deps so tests run with no browser and no profile side effects.
  */
@@ -49,7 +53,8 @@ export const SAFETY_RULES = [
   "Fill ONLY the values in this sheet (they come from annonce.md); never invent content.",
   "Stop on the final review step (« Avant de publier » / « Je confirme l'exactitude… »): do NOT click the final « Continuer » / « Déposer mon annonce » unless the user explicitly asked for full-auto.",
   "A DataDome captcha / « Vérification » page is solved by the human, never by the agent: pause and ask.",
-  "Verify every step with a screenshot before moving on.",
+  "Verify every step (dev-browser snapshot, or a screenshot) before moving on.",
+  "dev-browser must stay attached to the scraper window (`dev-browser --connect <port>`): never let it launch its own browser (not logged in, automation flags).",
   "Once the ad is live, run `leboncoin record <slug> --url <ad url>` so annonce.md is updated.",
 ];
 
@@ -78,7 +83,49 @@ export interface Handoff {
   remaining_photos: string[];
   preview_png: string | null;
   cdp_port: number | null;
+  /** Ready-to-run attach command for the recommended driver (only when cdp_port is known). */
+  driver_hint?: string;
   created_at: string;
+}
+
+/* ───────────────────────────── dev-browser ───────────────────────────── */
+
+export const DEV_BROWSER_BIN = "dev-browser";
+export const DEV_BROWSER_INSTALL_HINT = "optional: npm i -g dev-browser for snapshot/ref driving";
+
+/** The attach command for the scraper window on `port` (never a launch). */
+export function devBrowserCommand(port: number | string): string {
+  return `${DEV_BROWSER_BIN} --connect ${port}`;
+}
+
+/** Absolute path of an executable named `name` on PATH, or null. Sync, spawns nothing. */
+export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
+  const exts = platform === "win32" ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)] : [""];
+  const sep = platform === "win32" ? ";" : ":";
+  for (const dir of (env.PATH ?? env.Path ?? "").split(sep)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const file = path.join(dir, name + ext);
+      try {
+        if (!fs.statSync(file).isFile()) continue;
+        if (platform !== "win32") fs.accessSync(file, fs.constants.X_OK);
+        return file;
+      } catch {
+        // not there / not executable
+      }
+    }
+  }
+  return null;
+}
+
+export interface DevBrowserInfo {
+  available: boolean;
+  /** The attach command (what to run once installed when not available). */
+  command: string;
+}
+
+export function detectDevBrowser(port: number, which: (name: string) => string | null = findOnPath): DevBrowserInfo {
+  return { available: which(DEV_BROWSER_BIN) !== null, command: devBrowserCommand(port) };
 }
 
 const REPORT_TO_LOGICAL: Record<string, LogicalFieldName> = {
@@ -140,6 +187,7 @@ export function buildHandoff(
     remaining_photos: report.uploadedPhotos < photos.length ? photos.slice(report.uploadedPhotos) : [],
     preview_png: report.previewPng ?? null,
     cdp_port: cdpPort,
+    ...(cdpPort ? { driver_hint: devBrowserCommand(cdpPort) } : {}),
     created_at: new Date().toISOString(),
   };
 }
@@ -322,6 +370,26 @@ export function renderCuSheet(s: CuSheet): string {
   L.push(`- Or run \`leboncoin open ${s.slug} --deposit\`: it opens it in the logged-in scraper window and prints the CDP port.`);
   L.push("");
 
+  const port = s.handoff?.cdp_port ?? "<port>";
+  L.push("## How to drive", "");
+  L.push(
+    `1. Preferred: dev-browser attached to the scraper window — \`${devBrowserCommand(port)}\` (port printed by \`leboncoin open\`; optional: \`npm i -g dev-browser\`). Never let it launch its own browser.`,
+  );
+  L.push('   Loop: look (`page.snapshot({ interactive: true })`) → act by ref (`page.click("ref/eN")`, `page.fill("ref/eN", …)`) → verify (snapshot again).');
+  L.push("   Work in the tab `leboncoin open` already opened (`browser.listPages()` → `browser.getPage(id)`); do not restart the deposit.");
+  L.push("   For the photos, call `uploadFile` on the file input with the absolute paths below — no OS file dialog.");
+  L.push("2. Last resort: computer use (screenshots, clicks, typing) on the same window.");
+  L.push("", "Example (refs come from your own snapshot):", "");
+  L.push("```bash");
+  L.push(`${devBrowserCommand(port)} -t 30 <<'EOF'`);
+  L.push('const tab = (await browser.listPages()).find((p) => p.url.includes("deposer-une-annonce"));');
+  L.push("const page = await browser.getPage(tab.id);");
+  L.push("console.log(await page.snapshot({ interactive: true }));");
+  L.push(`await page.fill("ref/e7", ${JSON.stringify(v.title)}); // the title field's ref`);
+  L.push(`await (await page.$("input[type=file]")).uploadFile(...${JSON.stringify(v.photos)});`);
+  L.push("EOF");
+  L.push("```", "");
+
   L.push("## 2. Values, in form order", "");
   let n = 1;
   L.push(`${n++}. [ ] Title: ${v.title}`);
@@ -336,7 +404,7 @@ export function renderCuSheet(s: CuSheet): string {
     L.push(`${n++}. [ ] Attributes (field label → value):`);
     for (const [k, val] of attrs) L.push(`   - ${k} → ${val}`);
   }
-  L.push(`${n++}. [ ] Photos (upload through the file dialog, in this order):`);
+  L.push(`${n++}. [ ] Photos (in this order — dev-browser: uploadFile with these paths; computer use: the file dialog):`);
   for (const p of v.photos) L.push(`   - ${p}`);
   L.push("");
 
@@ -384,12 +452,15 @@ export interface OpenDeps {
   connect: (url: string) => Promise<CDPClient>;
   /** The CDP port of the browser `connect` reached. */
   port: () => Promise<number>;
+  /** PATH lookup for the optional dev-browser driver (default: findOnPath). */
+  which: (name: string) => string | null;
 }
 
 export interface OpenResult {
   url: string;
   port: number;
   endpoint: string;
+  devBrowser: DevBrowserInfo;
 }
 
 /** --url > the slug's live ad (published/paused, unless --deposit) > the deposit form. */
@@ -421,7 +492,7 @@ export async function runOpen(annoncesDir: string, slug: string | undefined, opt
   const cdp = await (deps.connect ?? defaultOpenConnect)(url);
   cdp.disconnect();
   const port = await (deps.port ?? defaultOpenPort)();
-  return { url, port, endpoint: `http://127.0.0.1:${port}` };
+  return { url, port, endpoint: `http://127.0.0.1:${port}`, devBrowser: detectDevBrowser(port, deps.which) };
 }
 
 /* ──────────────────────────────── record ──────────────────────────────── */

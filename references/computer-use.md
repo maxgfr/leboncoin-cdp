@@ -4,6 +4,10 @@ The CDP engine (`publish`) fills the wizard with in-page JavaScript. Computer us
 job with screenshots, clicks and typing, in the **same scraper window** and from the **same
 values** (`annonce.md`). Use it when the user asks for it, or to finish a CDP run that handed off.
 
+**Driver, in order of preference:** (1) [dev-browser](https://github.com/sawyerhood/dev-browser) attached to the scraper window —
+accessibility snapshot + refs, see [Recommended driver: dev-browser](#recommended-driver-dev-browser);
+(2) pixel computer use (sections 2–5 below) as the last resort. The rules and steps are the same.
+
 Rules first (they override everything below):
 
 - Type **only** the values from the sheet. Never invent a title, price, attribute or text.
@@ -104,8 +108,63 @@ It writes `leboncoin_url`, `leboncoin_id`, `status: published` and `published_at
 `annonce.md`, and removes `handoff.json`. For a change made by hand on the site, pass
 `--status sold|paused|deleted`.
 
-## Optional: another driver on the same window
+## Recommended driver: dev-browser
 
-`open` prints `http://127.0.0.1:<port>`. A tool that speaks CDP can attach to that window instead
-of launching its own (e.g. `dev-browser --connect http://127.0.0.1:<port>`). This is optional and
-not a dependency of the skill; the same rules apply.
+[dev-browser](https://github.com/sawyerhood/dev-browser) (MIT, `npm i -g dev-browser`) runs Puppeteer scripts in a warm daemon. It is
+**optional**, not a dependency of the skill. `open` detects it on `PATH` and prints
+`driver → dev-browser --connect <port>` (or an install hint); `--json` reports it as
+`devBrowser: { available, command }`, `handoff.json` carries the same command as `driver_hint`,
+and `computer-use.md` has a "How to drive" block. `dev-browser --help` prints its full guide.
+
+- **Always attach, never launch.** Use `dev-browser --connect <port>` with the port `open` prints.
+  Without `--connect` it launches its own Puppeteer browser: a separate profile that is not
+  logged in, with automation flags. Attached to the scraper window, a Leboncoin page loads with
+  `navigator.webdriver=false` and no DataDome challenge.
+- **Loop:** look (`page.snapshot({ interactive: true })` → an accessibility tree with refs like
+  `[ref=e35]`) → act by ref (`page.click("ref/e35")`, `page.fill("ref/e7", "text")`,
+  `page.select(…)` for a `<select>`) → verify (snapshot again, or `page.url()`). One
+  decision-sized step per invocation; never assume a ref, snapshot first.
+- **Same tab:** work in the tab `open` opened (`browser.listPages()` → `browser.getPage(id)`),
+  not a new one — in a handoff it is on the step CDP reached.
+- **Photos:** `(await page.ref("eN")).uploadFile(...absPaths)` or
+  `(await page.$("input[type=file]")).uploadFile(...)`, with the sheet's absolute paths (only
+  `remaining_photos` in a handoff). No OS file dialog. Then check the thumbnail count.
+- The rules at the top still apply: only the sheet's values, a human solves DataDome, **stop on
+  the final review**.
+
+Deposit-wizard example (one step per invocation; the refs are placeholders — read them from your
+own snapshot):
+
+```bash
+PORT=9222   # the CDP port printed by `leboncoin open <slug> --deposit`
+
+# 1. Look: find the deposit tab and print its interactive snapshot.
+dev-browser --connect $PORT -t 30 <<'EOF'
+const tab = (await browser.listPages()).find((p) => p.url.includes("deposer-une-annonce"));
+const page = await browser.getPage(tab.id);
+console.log(page.url());
+console.log(await page.snapshot({ interactive: true }));
+EOF
+
+# 2. Act: fill the title by its ref, pick the suggested category, verify.
+dev-browser --connect $PORT -t 30 <<'EOF'
+const tab = (await browser.listPages()).find((p) => p.url.includes("deposer-une-annonce"));
+const page = await browser.getPage(tab.id);
+await page.fill("ref/e7", "MacBook Pro 14 M3 Pro 18 Go 512 Go");
+await page.click("ref/e12"); // the « Ordinateurs » category choice
+console.log(await page.snapshot({ interactive: true })); // verify, find « Continuer »
+EOF
+
+# 3. Photos step: upload by absolute path (no file dialog), then verify.
+dev-browser --connect $PORT -t 30 <<'EOF'
+const tab = (await browser.listPages()).find((p) => p.url.includes("deposer-une-annonce"));
+const page = await browser.getPage(tab.id);
+await (await page.$("input[type=file]")).uploadFile("/abs/annonces/macbook/photos/1.jpg", "/abs/annonces/macbook/photos/2.jpg");
+console.log(await page.snapshot({ interactive: true }));
+EOF
+```
+
+Repeat look → act → verify through each step (« Continuer » by ref). When the snapshot shows the
+review step (« Avant de publier » / « Je confirme l'exactitude… », title + description + price +
+address on one page), **stop**: do not click its button; tell the user to review and submit, then
+`record`.

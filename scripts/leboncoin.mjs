@@ -5934,6 +5934,8 @@ var computer_use_exports = {};
 __export(computer_use_exports, {
   CU_SHEET_FILENAME: () => CU_SHEET_FILENAME,
   DEPOSIT_URL: () => DEPOSIT_URL,
+  DEV_BROWSER_BIN: () => DEV_BROWSER_BIN,
+  DEV_BROWSER_INSTALL_HINT: () => DEV_BROWSER_INSTALL_HINT,
   HANDOFF_FILENAME: () => HANDOFF_FILENAME,
   HANDOFF_REASONS: () => HANDOFF_REASONS,
   SAFETY_RULES: () => SAFETY_RULES,
@@ -5942,6 +5944,9 @@ __export(computer_use_exports, {
   buildCuSheet: () => buildCuSheet,
   buildHandoff: () => buildHandoff,
   clearHandoff: () => clearHandoff,
+  detectDevBrowser: () => detectDevBrowser,
+  devBrowserCommand: () => devBrowserCommand,
+  findOnPath: () => findOnPath,
   handoffPath: () => handoffPath,
   parseAdUrl: () => parseAdUrl,
   readFormSteps: () => readFormSteps,
@@ -5955,6 +5960,29 @@ __export(computer_use_exports, {
 });
 import fs5 from "fs";
 import path7 from "path";
+function devBrowserCommand(port) {
+  return `${DEV_BROWSER_BIN} --connect ${port}`;
+}
+function findOnPath(name, env = process.env, platform = process.platform) {
+  const exts = platform === "win32" ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)] : [""];
+  const sep = platform === "win32" ? ";" : ":";
+  for (const dir of (env.PATH ?? env.Path ?? "").split(sep)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const file = path7.join(dir, name + ext);
+      try {
+        if (!fs5.statSync(file).isFile()) continue;
+        if (platform !== "win32") fs5.accessSync(file, fs5.constants.X_OK);
+        return file;
+      } catch {
+      }
+    }
+  }
+  return null;
+}
+function detectDevBrowser(port, which = findOnPath) {
+  return { available: which(DEV_BROWSER_BIN) !== null, command: devBrowserCommand(port) };
+}
 function annonceValue(a, field) {
   const logical = REPORT_TO_LOGICAL[field];
   if (logical) return logicalValue(a, logical)?.value ?? null;
@@ -5986,6 +6014,7 @@ function buildHandoff(a, photos, report, result, cdpPort) {
     remaining_photos: report.uploadedPhotos < photos.length ? photos.slice(report.uploadedPhotos) : [],
     preview_png: report.previewPng ?? null,
     cdp_port: cdpPort,
+    ...cdpPort ? { driver_hint: devBrowserCommand(cdpPort) } : {},
     created_at: (/* @__PURE__ */ new Date()).toISOString()
   };
 }
@@ -6099,6 +6128,25 @@ function renderCuSheet(s) {
   L.push(`- URL: ${s.deposit_url}`);
   L.push(`- Or run \`leboncoin open ${s.slug} --deposit\`: it opens it in the logged-in scraper window and prints the CDP port.`);
   L.push("");
+  const port = s.handoff?.cdp_port ?? "<port>";
+  L.push("## How to drive", "");
+  L.push(
+    `1. Preferred: dev-browser attached to the scraper window \u2014 \`${devBrowserCommand(port)}\` (port printed by \`leboncoin open\`; optional: \`npm i -g dev-browser\`). Never let it launch its own browser.`
+  );
+  L.push('   Loop: look (`page.snapshot({ interactive: true })`) \u2192 act by ref (`page.click("ref/eN")`, `page.fill("ref/eN", \u2026)`) \u2192 verify (snapshot again).');
+  L.push("   Work in the tab `leboncoin open` already opened (`browser.listPages()` \u2192 `browser.getPage(id)`); do not restart the deposit.");
+  L.push("   For the photos, call `uploadFile` on the file input with the absolute paths below \u2014 no OS file dialog.");
+  L.push("2. Last resort: computer use (screenshots, clicks, typing) on the same window.");
+  L.push("", "Example (refs come from your own snapshot):", "");
+  L.push("```bash");
+  L.push(`${devBrowserCommand(port)} -t 30 <<'EOF'`);
+  L.push('const tab = (await browser.listPages()).find((p) => p.url.includes("deposer-une-annonce"));');
+  L.push("const page = await browser.getPage(tab.id);");
+  L.push("console.log(await page.snapshot({ interactive: true }));");
+  L.push(`await page.fill("ref/e7", ${JSON.stringify(v.title)}); // the title field's ref`);
+  L.push(`await (await page.$("input[type=file]")).uploadFile(...${JSON.stringify(v.photos)});`);
+  L.push("EOF");
+  L.push("```", "");
   L.push("## 2. Values, in form order", "");
   let n = 1;
   L.push(`${n++}. [ ] Title: ${v.title}`);
@@ -6113,7 +6161,7 @@ function renderCuSheet(s) {
     L.push(`${n++}. [ ] Attributes (field label \u2192 value):`);
     for (const [k, val] of attrs) L.push(`   - ${k} \u2192 ${val}`);
   }
-  L.push(`${n++}. [ ] Photos (upload through the file dialog, in this order):`);
+  L.push(`${n++}. [ ] Photos (in this order \u2014 dev-browser: uploadFile with these paths; computer use: the file dialog):`);
   for (const p of v.photos) L.push(`   - ${p}`);
   L.push("");
   if (s.form_steps?.length) {
@@ -6167,7 +6215,7 @@ async function runOpen(annoncesDir, slug, opts = {}, deps = {}) {
   const cdp = await (deps.connect ?? defaultOpenConnect)(url);
   cdp.disconnect();
   const port = await (deps.port ?? defaultOpenPort)();
-  return { url, port, endpoint: `http://127.0.0.1:${port}` };
+  return { url, port, endpoint: `http://127.0.0.1:${port}`, devBrowser: detectDevBrowser(port, deps.which) };
 }
 function adIdFromUrl(url) {
   for (const re of DEPOSIT.publishedUrlPattern) {
@@ -6209,7 +6257,7 @@ function runRecord(annoncesDir, slug, opts) {
   const handoffRemoved = clearHandoff(dir);
   return { slug, status, leboncoin_id: id, leboncoin_url: opts.url, published_at: a.published_at, handoffRemoved };
 }
-var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, SAFETY_RULES, REPORT_TO_LOGICAL, fold, RECORD_STATUSES;
+var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, SAFETY_RULES, DEV_BROWSER_BIN, DEV_BROWSER_INSTALL_HINT, REPORT_TO_LOGICAL, fold, RECORD_STATUSES;
 var init_computer_use = __esm({
   "src/computer-use.ts"() {
     "use strict";
@@ -6228,9 +6276,12 @@ var init_computer_use = __esm({
       "Fill ONLY the values in this sheet (they come from annonce.md); never invent content.",
       "Stop on the final review step (\xAB Avant de publier \xBB / \xAB Je confirme l'exactitude\u2026 \xBB): do NOT click the final \xAB Continuer \xBB / \xAB D\xE9poser mon annonce \xBB unless the user explicitly asked for full-auto.",
       "A DataDome captcha / \xAB V\xE9rification \xBB page is solved by the human, never by the agent: pause and ask.",
-      "Verify every step with a screenshot before moving on.",
+      "Verify every step (dev-browser snapshot, or a screenshot) before moving on.",
+      "dev-browser must stay attached to the scraper window (`dev-browser --connect <port>`): never let it launch its own browser (not logged in, automation flags).",
       "Once the ad is live, run `leboncoin record <slug> --url <ad url>` so annonce.md is updated."
     ];
+    DEV_BROWSER_BIN = "dev-browser";
+    DEV_BROWSER_INSTALL_HINT = "optional: npm i -g dev-browser for snapshot/ref driving";
     REPORT_TO_LOGICAL = {
       title: "title",
       category: "category",
@@ -8018,7 +8069,8 @@ Commands:
                 annonce (exit 1).
   open          Launch/reuse the scraper browser on --url, else the slug's live ad (unless
                 --deposit), else the deposit form \u2014 drives nothing, leaves the window open and
-                prints the CDP port + http://127.0.0.1:<port> for another driver or computer use.
+                prints the CDP port + http://127.0.0.1:<port>, and dev-browser --connect <port> when
+                dev-browser is on PATH (recommended driver, optional) \u2014 else computer use.
   record        Write back an action done by computer use: leboncoin_url/_id (parsed from the ad
                 URL), status (default published) and its timestamp. Removes handoff.json.
   scrape        The original read-only scraper (search results + ad details).
@@ -8334,7 +8386,7 @@ async function main(argv = process.argv.slice(2)) {
       return;
     }
     case "open": {
-      const { runOpen: runOpen2 } = await Promise.resolve().then(() => (init_computer_use(), computer_use_exports));
+      const { DEV_BROWSER_INSTALL_HINT: DEV_BROWSER_INSTALL_HINT2, runOpen: runOpen2 } = await Promise.resolve().then(() => (init_computer_use(), computer_use_exports));
       const r = await runOpen2(annoncesDirOf(p), p.positional[0], { url: p.values.url, deposit: p.bools.has("deposit") });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       else {
@@ -8343,7 +8395,11 @@ async function main(argv = process.argv.slice(2)) {
         process.stdout.write(`  CDP port: ${r.port}
   endpoint: ${r.endpoint}
 `);
-        process.stdout.write(`  the window stays open: use computer use on it, or attach a driver (e.g. dev-browser --connect ${r.endpoint})
+        process.stdout.write(`  the window stays open: attach a driver to it (never let one launch its own browser)
+`);
+        if (r.devBrowser.available) process.stdout.write(`  driver \u2192 ${r.devBrowser.command}
+`);
+        else process.stdout.write(`  ${DEV_BROWSER_INSTALL_HINT2}; else use computer use on the window
 `);
       }
       return;

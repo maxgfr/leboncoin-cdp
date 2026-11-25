@@ -14,7 +14,8 @@ grounded by comparable live listings — then the skill drives the « déposer u
 form in a logged-in browser window to publish. **Semi-automatic and safe by default:** it
 walks the deposit wizard, fills every step by field meaning and uploads the photos, then stops
 on the final review: you check it on screen and submit it yourself. Prefer computer use? `cu-sheet`
-+ `open` hand the same values to an agent that fills the wizard by screenshots and clicks. When
++ `open` hand the same values to an agent that fills the wizard itself — ideally through the optional
+[dev-browser](https://github.com/sawyerhood/dev-browser) attached to that window (snapshot + refs), else by screenshots and clicks. When
 Leboncoin changes something, `doctor` says what broke.
 
 ## Why CDP (and why it isn't detected)
@@ -55,7 +56,7 @@ node scripts/leboncoin.mjs delete  macbook-air-m1          # remove a published 
 | `publish <slug>` | Fill the deposit form + upload photos via CDP. Semi-auto; `--yes` auto-submits; `--dry-run` fills only. |
 | `delete <slug>` | Remove a published ad (confirms unless `--yes`). |
 | `cu-sheet <slug>` | Computer-use fill sheet (`computer-use.md`, `--json`): values in form order, photo paths, step labels, handoff resume. |
-| `open [<slug>]` | Open the scraper browser on the deposit form / the ad / `--url`, leave it open, print the CDP port. |
+| `open [<slug>]` | Open the scraper browser on the deposit form / the ad / `--url`, leave it open, print the CDP port (+ `dev-browser --connect <port>` if installed). |
 | `record <slug> --url <u>` | Write back an ad published/changed by computer use (id, URL, status). |
 | `list` / `status` | Show local annonces and their published state. |
 | `scrape` | The original read-only scraper (search results + ad details). |

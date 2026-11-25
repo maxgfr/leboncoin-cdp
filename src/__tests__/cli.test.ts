@@ -183,11 +183,14 @@ describe("main dispatch (computer use)", () => {
     const r = await runMain(["open", "ex", "--annonces-dir", root, "--port", "41234", "--json"]);
     expect(r.exitCode).toBe(0);
     expect(navigated.at(-1)).toBe("https://www.leboncoin.fr/deposer-une-annonce");
-    expect(JSON.parse(r.out.slice(r.out.indexOf("{")))).toEqual({
+    const out = JSON.parse(r.out.slice(r.out.indexOf("{")));
+    expect(out).toMatchObject({
       url: "https://www.leboncoin.fr/deposer-une-annonce",
       port: 41234,
       endpoint: "http://127.0.0.1:41234",
+      devBrowser: { command: "dev-browser --connect 41234" },
     });
+    expect(typeof out.devBrowser.available).toBe("boolean");
   });
 
   it("record writes the ad back, and exits 1 on a missing or non-Leboncoin URL", async () => {

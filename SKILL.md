@@ -105,7 +105,11 @@ Full reference: `references/cli.md`.
 
 ## Computer use
 
-Same values, same safety rules, but you fill the wizard by screenshots / clicks / typing.
+Same values, same safety rules, but an agent fills the wizard itself. Driver, in order of
+preference: **dev-browser attached** to the port `open` prints (`dev-browser --connect <port>`:
+accessibility snapshot → act by ref → verify; photos via `uploadFile`, no file dialog), else
+**computer use** (screenshots / clicks / typing). dev-browser is optional (`npm i -g dev-browser`),
+not a dependency — and it must **never launch its own browser** (not logged in, automation flags).
 Playbook: `references/computer-use.md`.
 
 - **Full mode** — `validate` → `cu-sheet <slug>` (Read `computer-use.md`) → `open <slug> --deposit`
@@ -115,8 +119,7 @@ Playbook: `references/computer-use.md`.
   (or `cu-sheet`, which puts it on top) and finish **only what remains** in the same open window
   (step reached, missing fields with their values, remaining photos), then `record`.
 - Never click the final submit unless the user explicitly asked for full-auto; a human solves
-  DataDome. Optional: attach another driver to the port `open` prints (e.g.
-  `dev-browser --connect http://127.0.0.1:<port>`) — not a dependency.
+  DataDome.
 
 ## When Leboncoin changes
 

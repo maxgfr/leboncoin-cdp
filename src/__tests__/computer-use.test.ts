@@ -1,8 +1,19 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { adIdFromUrl, DEPOSIT_URL, parseAdUrl, resolveOpenUrl, runCuSheet, runOpen, runRecord } from "../computer-use";
+import {
+  adIdFromUrl,
+  buildHandoff,
+  DEPOSIT_URL,
+  detectDevBrowser,
+  findOnPath,
+  parseAdUrl,
+  resolveOpenUrl,
+  runCuSheet,
+  runOpen,
+  runRecord,
+} from "../computer-use";
 import { parseAnnonce, writeAnnonce } from "../markdown";
 
 const EXAMPLE = resolve(__dirname, "../../assets/example-annonce");
@@ -105,6 +116,52 @@ describe("cu-sheet", () => {
     expect(md).toContain("step 2 « Dites-nous en plus »");
     expect(md).toContain("CDP port 41234");
     expect(md).toContain("État (required): — not in annonce.md");
+    expect(md).toContain("dev-browser --connect 41234 -t 30");
+  });
+
+  it("recommends dev-browser attached to the open window, with a fill + uploadFile example, computer use last", () => {
+    const { root } = setup();
+    const r = runCuSheet(root, "ex");
+    const md = readFileSync(r.path as string, "utf8");
+    const at = md.indexOf("## How to drive");
+    expect(at).toBeGreaterThan(md.indexOf("## 1. Open the deposit form"));
+    expect(at).toBeLessThan(md.indexOf("## 2. Values, in form order"));
+    expect(md).toContain("`dev-browser --connect <port>`");
+    expect(md).toContain("Never let it launch its own browser");
+    expect(md.indexOf("Preferred: dev-browser")).toBeLessThan(md.indexOf("Last resort: computer use"));
+    expect(md).toContain(`page.fill("ref/e7", ${JSON.stringify(r.sheet?.values.title)})`);
+    expect(md).toContain(`uploadFile(...${JSON.stringify(r.sheet?.values.photos)})`);
+  });
+});
+
+describe("handoff", () => {
+  const report = { fields: [], missing: [], uploadedPhotos: 0 } as never;
+  it("carries the dev-browser attach command as driver_hint when the CDP port is known", () => {
+    const a = parseAnnonce(setup().dir);
+    expect(buildHandoff(a, [], report, { reason: "not-published" }, 41234).driver_hint).toBe("dev-browser --connect 41234");
+    expect(buildHandoff(a, [], report, { reason: "not-published" }, null)).not.toHaveProperty("driver_hint");
+  });
+});
+
+describe("dev-browser detection", () => {
+  it("finds an executable named dev-browser on PATH, ignoring non-executables and empty entries", () => {
+    const base = mkdtempSync(join(tmpdir(), "lbc-path-"));
+    const noexec = join(base, "a");
+    const bin = join(base, "b");
+    mkdirSync(noexec);
+    mkdirSync(bin);
+    writeFileSync(join(noexec, "dev-browser"), "");
+    chmodSync(join(noexec, "dev-browser"), 0o644);
+    writeFileSync(join(bin, "dev-browser"), "#!/bin/sh\n");
+    chmodSync(join(bin, "dev-browser"), 0o755);
+    expect(findOnPath("dev-browser", { PATH: `:${noexec}:${bin}` }, "darwin")).toBe(join(bin, "dev-browser"));
+    expect(findOnPath("dev-browser", { PATH: noexec }, "darwin")).toBeNull();
+    expect(findOnPath("dev-browser", {}, "darwin")).toBeNull();
+  });
+
+  it("reports availability and the attach command either way", () => {
+    expect(detectDevBrowser(41234, () => "/usr/local/bin/dev-browser")).toEqual({ available: true, command: "dev-browser --connect 41234" });
+    expect(detectDevBrowser(41234, () => null)).toEqual({ available: false, command: "dev-browser --connect 41234" });
   });
 });
 
@@ -138,11 +195,17 @@ describe("open", () => {
           } as never;
         },
         port: async () => 41234,
+        which: () => null,
       },
     );
     expect(seen).toEqual([DEPOSIT_URL]);
     expect(disconnected).toBe(true);
-    expect(r).toEqual({ url: DEPOSIT_URL, port: 41234, endpoint: "http://127.0.0.1:41234" });
+    expect(r).toEqual({
+      url: DEPOSIT_URL,
+      port: 41234,
+      endpoint: "http://127.0.0.1:41234",
+      devBrowser: { available: false, command: "dev-browser --connect 41234" },
+    });
   });
 });
 

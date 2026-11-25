@@ -77,7 +77,8 @@ Commands:
                 annonce (exit 1).
   open          Launch/reuse the scraper browser on --url, else the slug's live ad (unless
                 --deposit), else the deposit form — drives nothing, leaves the window open and
-                prints the CDP port + http://127.0.0.1:<port> for another driver or computer use.
+                prints the CDP port + http://127.0.0.1:<port>, and dev-browser --connect <port> when
+                dev-browser is on PATH (recommended driver, optional) — else computer use.
   record        Write back an action done by computer use: leboncoin_url/_id (parsed from the ad
                 URL), status (default published) and its timestamp. Removes handoff.json.
   scrape        The original read-only scraper (search results + ad details).
@@ -428,13 +429,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
 
     case "open": {
-      const { runOpen } = await import("./computer-use");
+      const { DEV_BROWSER_INSTALL_HINT, runOpen } = await import("./computer-use");
       const r = await runOpen(annoncesDirOf(p), p.positional[0], { url: p.values.url, deposit: p.bools.has("deposit") });
       if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
       else {
         process.stdout.write(`leboncoin: opened ${r.url}\n`);
         process.stdout.write(`  CDP port: ${r.port}\n  endpoint: ${r.endpoint}\n`);
-        process.stdout.write(`  the window stays open: use computer use on it, or attach a driver (e.g. dev-browser --connect ${r.endpoint})\n`);
+        process.stdout.write(`  the window stays open: attach a driver to it (never let one launch its own browser)\n`);
+        if (r.devBrowser.available) process.stdout.write(`  driver → ${r.devBrowser.command}\n`);
+        else process.stdout.write(`  ${DEV_BROWSER_INSTALL_HINT}; else use computer use on the window\n`);
       }
       return;
     }
