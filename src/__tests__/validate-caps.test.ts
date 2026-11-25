@@ -12,6 +12,7 @@ const base: Annonce = {
   category: "Informatique",
   price: 650,
   zipcode: "75012",
+  address: "12 rue de Charenton, 75012 Paris",
   attributes: {},
   photos: [],
   status: "draft",
@@ -37,6 +38,15 @@ describe("validate caps (warnings, non-failing)", () => {
     const r = validateAnnonce(setup({ description: "y ".repeat(2500) }));
     expect(r.ok).toBe(true);
     expect(r.warnings.some((w) => w.field === "description")).toBe(true);
+  });
+
+  it("warns (never fails) when the full street address is missing: ask the user", () => {
+    const r = validateAnnonce(setup({ address: undefined }));
+    expect(r.ok).toBe(true);
+    expect(r.issues).toEqual([]);
+    const w = r.warnings.find((x) => x.field === "address");
+    expect(w?.message).toMatch(/full street address/);
+    expect(w?.message).toMatch(/ask the user/);
   });
 
   it("emits no warnings for a normal annonce", () => {

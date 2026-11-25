@@ -15,8 +15,11 @@ Usage:
   leboncoin login [--browser brave|chrome|chromium|opera] [--reset-profile] [--copy-profile] [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
   leboncoin doctor [<slug>] [--query "<search>"] [--out <path>]
   leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
-                       [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
+                       [--price <n>] [--zipcode <cp>] [--address "<street, zip city>"] [--condition "<c>"]
+                       [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
+  leboncoin comparables <slug> --own-browser [--query "<lbc query>"] [--json]
+  leboncoin comparables <slug> --import <file.json>
   leboncoin validate <slug>
   leboncoin inspect <slug>
   leboncoin publish <slug> [--diagnostic] [--strict] [--shots] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
@@ -47,6 +50,10 @@ Commands:
                 With <slug>, the walk uses that annonce and its photos.
   new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
+                --own-browser: no browser launched; print the steps for YOUR OWN browser (search
+                URL, a javascript_tool snippet that writes the JSON into the page, get_page_text
+                to read it); save that JSON to a file, then --import <file.json> writes
+                comparables.json + comparables.md from it.
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
   inspect       READ-ONLY: open the live deposit form and write form-map.json ({ steps: [...] }:
                 every field of step 1 + required/optional + options) + initial.png/html. Types
@@ -154,6 +161,7 @@ const VALUE_FLAGS = new Set([
   "notes",
   "price",
   "zipcode",
+  "address",
   "condition",
   "attributes",
   "status",
@@ -163,6 +171,7 @@ const VALUE_FLAGS = new Set([
   "timeout-login",
   "url",
   "action",
+  "import",
 ]);
 
 const BOOL_FLAGS = new Set([
@@ -182,6 +191,7 @@ const BOOL_FLAGS = new Set([
   "copy-profile",
   "deposit",
   "real",
+  "own-browser",
 ]);
 
 const SHORT: Record<string, string> = {
@@ -342,6 +352,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         notes: p.values.notes,
         price: intOf(p.values.price),
         zipcode: p.values.zipcode,
+        address: p.values.address,
         condition: p.values.condition,
         attributes: parseAttributes(p.values.attributes),
         force: p.bools.has("force"),
@@ -405,6 +416,24 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
     case "comparables": {
       const slug = requireSlug(p);
+      const importFile = p.values.import;
+      if (importFile !== undefined || p.bools.has("own-browser")) {
+        if (importFile !== undefined && p.bools.has("own-browser")) fail("--own-browser and --import are two separate steps: run one at a time");
+        const own = await import("./comparables-own");
+        try {
+          if (importFile !== undefined) {
+            const r = own.importComparables(annoncesDirOf(p), slug, resolve(importFile));
+            if (json) process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+            else process.stderr.write(`leboncoin: wrote ${r.count} comparable(s) to ${r.mdPath}\n`);
+          } else {
+            const plan = own.ownBrowserComparables(annoncesDirOf(p), slug, p.values.query);
+            process.stdout.write(json ? JSON.stringify(plan, null, 2) + "\n" : own.renderOwnBrowserPlan(plan));
+          }
+        } catch (e) {
+          fail((e as Error).message);
+        }
+        return;
+      }
       const { runComparables } = await import("./comparables");
       const r = await runComparables(annoncesDirOf(p), slug, {
         query: p.values.query,

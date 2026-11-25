@@ -59,8 +59,8 @@ describe("cu-sheet", () => {
     expect(md).toContain(join(dir, "photos", "macbook.jpg"));
     expect(md).toMatch(/do NOT click the final/);
     expect(md).toContain("leboncoin record ex --url");
-    // Ordered: title before description before price before photos.
-    const order = ["Title:", "Description", "Price:", "Photos"].map((k) => md.indexOf(k));
+    // The live wizard's order: title, photos (step 2), description, price (step 3).
+    const order = ["Title:", "Photos (in this order", "Description « ", "Price: « "].map((k) => md.indexOf(k));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
@@ -134,7 +134,7 @@ describe("cu-sheet", () => {
     const md = readFileSync(r.path as string, "utf8");
     const at = md.indexOf("## How to drive");
     expect(at).toBeGreaterThan(md.indexOf("## 1. Open the deposit form"));
-    expect(at).toBeLessThan(md.indexOf("## 2. Values, in form order"));
+    expect(at).toBeLessThan(md.indexOf("## 2. The deposit wizard, step by step"));
     expect(md).toContain("`leboncoin open ex --real`");
     const order = [
       "1. Preferred: the Claude in Chrome extension",
@@ -146,7 +146,9 @@ describe("cu-sheet", () => {
     expect(md).toContain("`tabs_context_mcp`, then `tabs_create_mcp`: work in a new tab of your own");
     expect(md).toContain("close it at the end");
     expect(md).toContain('`read_page` with `filter: "interactive"`');
-    expect(md).toContain("`form_input` for text fields");
+    expect(md).toContain("text fields: click, then type");
+    expect(md).toContain("`form_input` is the fallback");
+    expect(md).toContain("read every value back");
     expect(md).toContain("`file_upload` on the file input's ref with the absolute paths below; never click the file input");
     expect(md).toContain("photos folder shared with the session");
     expect(md).toContain("otherwise use desktop computer use and the file-dialog recipe below");
@@ -166,12 +168,74 @@ describe("cu-sheet", () => {
     expect((r.sheet as CuSheet).values.photos_dir).toBe(join(dir, "photos"));
     const md = readFileSync(r.path as string, "utf8");
     expect(md).toContain(`Photos folder: ${join(dir, "photos")}`);
+    expect(md).toContain("« Importer » in the « Cliquez et déposez jusqu'à 20 photos » zone");
     expect(md).toContain("« Ajouter des photos »");
     expect(md).toContain("Cmd+Shift+G, paste the photos folder path");
     expect(md).toContain("Linux (GTK): press Ctrl+L");
     expect(md).toContain("Press Cmd+A");
     expect(md).toContain("« Ouvrir »");
     expect(md).toContain("check that 1 thumbnail(s) show.");
+  });
+});
+
+describe("cu-sheet publish: the live 3-step wizard", () => {
+  it("walks the three steps with their labels, in order", () => {
+    const { root } = setup();
+    const md = readFileSync(runCuSheet(root, "ex").path as string, "utf8");
+    const steps = [
+      "### Step 1 — « Commençons par l'essentiel ! »",
+      "« Quel est le titre de l'annonce ? »",
+      "« Choisissez une catégorie suggérée »",
+      "### Step 2 — « Dites-nous en plus sur votre article »",
+      "Leboncoin PRE-FILLS the category attributes",
+      "Condition « État * »: Très bon état",
+      "### Step 3 (final) — « Un dernier aperçu avant de publier votre annonce ! »",
+      "« Prix de vente souhaité » = 650",
+      "« Remise du bien »",
+      "STOP before « Continuer »",
+    ].map((k) => md.indexOf(k));
+    expect(steps.every((i) => i >= 0)).toBe(true);
+    expect([...steps].sort((a, b) => a - b)).toEqual(steps);
+    expect(md).toContain("click the one whose category is « Ordinateurs »");
+    expect(md).toContain("« Choisissez » dropdown");
+    expect(md).toContain("Check EVERY prefilled value against this list and fix each mismatch");
+    expect(md).toContain("   - Taille d'écran → 12 à 14");
+    expect(md).toContain("« Je vends » selected");
+    expect(md).toContain("Info for the user, do not act on it: the « Prix recommandé entre X € et Y € »");
+    expect(md).toContain("that click PUBLISHES");
+    expect(md).toContain("« Quitter » opens « Vous voulez interrompre votre dépôt ? » → « Quitter sans enregistrer »");
+    expect(md).toContain("« Enregistrer le brouillon »");
+  });
+
+  it("replaces the AI-prefilled description with annonce.md's body, verbatim, and verifies it", () => {
+    const { root, dir } = setup();
+    const md = readFileSync(runCuSheet(root, "ex").path as string, "utf8");
+    const at = md.indexOf("Description « Description de l'annonce * »");
+    expect(at).toBeGreaterThan(md.indexOf("### Step 3 (final)"));
+    const rest = md.slice(at);
+    expect(rest).toMatch(/AI-generated text — REPLACE it entirely/);
+    expect(rest).toContain("read the value back");
+    expect(rest).toContain(["````text", parseAnnonce(dir).description, "````"].join("\n"));
+  });
+
+  it("no address in annonce.md: STOP and ask the user (never invent it, never geolocate)", () => {
+    const { root } = setup();
+    const r = runCuSheet(root, "ex");
+    expect((r.sheet as CuSheet).values.address).toBeUndefined();
+    expect(r.validation.warnings.some((w) => w.field === "address")).toBe(true);
+    const md = readFileSync(r.path as string, "utf8");
+    expect(md).toContain("annonce.md has no `address`. STOP and ask the user for the full street address");
+    expect(md).toContain("Never invent it, never use « Géolocaliser ma position »");
+  });
+
+  it("with an address: type it and pick the matching suggestion", () => {
+    const { root, dir } = setup();
+    writeAnnonce(dir, { ...parseAnnonce(dir), address: "12 rue de Charenton, 75012 Paris" });
+    const r = runCuSheet(root, "ex");
+    expect((r.sheet as CuSheet).values.address).toBe("12 rue de Charenton, 75012 Paris");
+    const md = readFileSync(r.path as string, "utf8");
+    expect(md).toContain("type 12 rue de Charenton, 75012 Paris and click the matching suggestion");
+    expect(md).not.toContain("STOP and ask the user for the full street address");
   });
 });
 
@@ -283,6 +347,38 @@ describe("cu-sheet --action", () => {
     expect(s.record).toBe(`leboncoin record ex --url ${URL} --status published`);
     expect(s.notes.join()).toMatch(/expects paused/);
     expect(md(back)).toContain("« annonce réactivée »");
+  });
+
+  it("« Mes annonces » bulk path for delete / deactivate / reactivate: the right tab, search, tick ONLY this ad, one-ad screenshot, then the bulk button", () => {
+    const { root } = published();
+    const cases: [string, string, string][] = [
+      ["delete", "« Supprimer »", "open the « En ligne » tab,"],
+      ["deactivate", "« Pause »", "open the « En ligne » tab,"],
+      ["reactivate", "« Réactiver »", "open the « Expirées » or « En ligne » tab (check both),"],
+    ];
+    for (const [action, button, tab] of cases) {
+      const s = runCuSheet(root, "ex", action as never).sheet as CuActionSheet;
+      const alt = s.steps.find((x) => x.startsWith("Alternative — the « Mes annonces » list"));
+      expect(alt, action).toBeDefined();
+      expect(alt).toContain(tab);
+      expect(alt).toContain("type its title in « Recherchez dans vos annonces » → « Rechercher »");
+      expect(alt).toContain("tick ONLY this ad's checkbox — never « Sélectionner toutes les annonces »");
+      expect(alt).toContain("check that exactly one ad is ticked and that it is this one");
+      expect(alt).toContain(`the bulk button ${button} at the top of the list`);
+      // The stop rule still comes after it, before the click and the confirmation.
+      const i = s.steps.indexOf(alt as string);
+      expect(s.steps[i + 1]).toMatch(/^STOP RULE: /);
+      expect(s.steps.slice(i).some((x) => x.startsWith("If a confirmation dialog shows"))).toBe(true);
+    }
+    for (const action of ["renew", "mark-sold", "edit"] as const) {
+      const s = runCuSheet(root, "ex", action).sheet as CuActionSheet;
+      expect(
+        s.steps.some((x) => x.startsWith("Alternative —")),
+        action,
+      ).toBe(false);
+      expect(s.steps.join("\n")).toContain("« Recherchez dans vos annonces »");
+    }
+    expect(md(runCuSheet(root, "ex", "delete"))).toContain("« C'est désert ici ! » = not in that tab");
   });
 });
 

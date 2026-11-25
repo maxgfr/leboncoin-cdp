@@ -60,6 +60,29 @@ function unquote(t) {
   }
   return t;
 }
+function stripComment(s) {
+  const t = s.trim();
+  const q2 = t[0];
+  if (q2 === '"' || q2 === "'") {
+    for (let k = 1; k < t.length; k++) {
+      if (q2 === '"' && t[k] === "\\") {
+        k++;
+        continue;
+      }
+      if (t[k] !== q2) continue;
+      if (q2 === "'" && t[k + 1] === "'") {
+        k++;
+        continue;
+      }
+      const after = t.slice(k + 1).trim();
+      return after === "" || after.startsWith("#") ? t.slice(0, k + 1) : t;
+    }
+    return t;
+  }
+  if (t.startsWith("#")) return "";
+  const at = t.search(/\s#/);
+  return at === -1 ? t : t.slice(0, at).trimEnd();
+}
 function parseScalar(s) {
   const t = s.trim();
   if (t === "true") return true;
@@ -73,7 +96,7 @@ function parseFrontmatter(fm) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i] ?? "";
-    if (!line.trim() || line.trimStart().startsWith("#")) {
+    if (!line.trim() || isCommentLine(line)) {
       i++;
       continue;
     }
@@ -83,21 +106,21 @@ function parseFrontmatter(fm) {
       continue;
     }
     const key = m[1];
-    const rest = (m[2] ?? "").trim();
+    const rest = stripComment(m[2] ?? "");
     if (rest === "") {
       const block = [];
       let j = i + 1;
       while (j < lines.length && /^\s+\S/.test(lines[j] ?? "")) {
-        block.push(lines[j]);
+        if (!isCommentLine(lines[j])) block.push(lines[j]);
         j++;
       }
       if (block.length && block[0].trimStart().startsWith("- ")) {
-        out[key] = block.map((b) => String(parseScalar(b.trim().replace(/^-\s*/, ""))));
+        out[key] = block.map((b) => String(parseScalar(stripComment(b.trim().replace(/^-\s*/, "")))));
       } else if (block.length) {
         const map = {};
         for (const b of block) {
           const bm = b.trim().match(/^(.+?):\s*(.*)$/);
-          if (bm) map[unquote(bm[1].trim())] = String(parseScalar(bm[2]));
+          if (bm) map[unquote(bm[1].trim())] = String(parseScalar(stripComment(bm[2])));
         }
         out[key] = map;
       } else {
@@ -141,6 +164,7 @@ function parseAnnonce(dir) {
     price: priceNum,
     zipcode: str(f.zipcode),
     city: optStr(f.city),
+    address: optStr(f.address),
     condition: optStr(f.condition),
     shipping: f.shipping === true ? true : f.shipping === false ? false : void 0,
     attributes: f.attributes && typeof f.attributes === "object" && !Array.isArray(f.attributes) ? f.attributes : {},
@@ -169,6 +193,7 @@ function serializeAnnonce(a) {
   L.push(`price: ${Number.isFinite(a.price) ? a.price : 0}`);
   L.push(`zipcode: ${q(a.zipcode)}`);
   if (a.city) L.push(`city: ${q(a.city)}`);
+  if (a.address) L.push(`address: ${q(a.address)}`);
   if (a.condition) L.push(`condition: ${q(a.condition)}`);
   if (a.shipping !== void 0) L.push(`shipping: ${a.shipping}`);
   const attrKeys = Object.keys(a.attributes ?? {});
@@ -213,6 +238,7 @@ function scaffoldAnnonce(dir, init = {}, opts = {}) {
     category: init.category ?? "",
     price: init.price ?? 0,
     zipcode: init.zipcode ?? "",
+    address: init.address,
     condition: init.condition,
     attributes: init.attributes ?? {},
     photos: [],
@@ -251,7 +277,7 @@ function listAnnonces(root) {
   }
   return out;
 }
-var ANNONCE_FILENAME, PHOTOS_DIRNAME, PLACEHOLDER_BODY, PHOTO_EXTS, STATUSES;
+var ANNONCE_FILENAME, PHOTOS_DIRNAME, PLACEHOLDER_BODY, PHOTO_EXTS, STATUSES, isCommentLine;
 var init_markdown = __esm({
   "src/markdown.ts"() {
     "use strict";
@@ -260,6 +286,7 @@ var init_markdown = __esm({
     PLACEHOLDER_BODY = "<!-- D\xE9cris ton article ici (\xE9tat, d\xE9tails, raison de la vente\u2026). L'IA am\xE9liorera ce texte. -->";
     PHOTO_EXTS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".webp"]);
     STATUSES = ["draft", "published", "deleted", "sold", "paused"];
+    isCommentLine = (l) => l.trimStart().startsWith("#");
   }
 });
 
@@ -285,6 +312,12 @@ function validateAnnonce(dir) {
   }
   if (!/^\d{5}$/.test(a.zipcode.trim())) {
     issues.push({ field: "zipcode", message: "zipcode must be a 5-digit French postal code" });
+  }
+  if (!a.address?.trim()) {
+    warnings.push({
+      field: "address",
+      message: "no address: the deposit form needs a full street address (number, street, city; never shown on the ad) \u2014 ask the user, never invent it"
+    });
   }
   const photos = listPhotoFiles(dir);
   if (photos.length === 0) {
@@ -5635,15 +5668,111 @@ var init_comparables_format = __esm({
   }
 });
 
+// src/comparables-own.ts
+var comparables_own_exports = {};
+__export(comparables_own_exports, {
+  NOISY_ATTRIBUTES: () => NOISY_ATTRIBUTES,
+  OWN_BROWSER_FILENAME: () => OWN_BROWSER_FILENAME,
+  OWN_BROWSER_SNIPPET: () => OWN_BROWSER_SNIPPET,
+  importComparables: () => importComparables,
+  ownBrowserComparables: () => ownBrowserComparables,
+  renderOwnBrowserPlan: () => renderOwnBrowserPlan
+});
+import fs4 from "fs";
+import path6 from "path";
+function ownBrowserComparables(annoncesDir, slug, query) {
+  const dir = path6.join(annoncesDir, slug);
+  const a = parseAnnonce(dir);
+  const raw = query ?? buildQueryFromAnnonce(a);
+  if (!raw) throw new Error(`cannot build a comparables query for "${slug}" \u2014 add a title/zipcode or pass --query`);
+  const saveTo = path6.join(dir, OWN_BROWSER_FILENAME);
+  return {
+    slug,
+    url: normalizeSearchInput(raw, BASE_URL).navigateUrl,
+    snippet: OWN_BROWSER_SNIPPET,
+    save_to: saveTo,
+    import: `leboncoin comparables ${slug} --import ${saveTo}`
+  };
+}
+function renderOwnBrowserPlan(p) {
+  return [
+    "In the user's own browser, with Claude in Chrome (javascript_tool truncates its return value at ~1,000 chars: never return large data from it):",
+    "1. tabs_context_mcp, then tabs_create_mcp: a new tab of your own.",
+    `2. navigate it to ${p.url} \u2014 a captcha / \xAB V\xE9rification \xBB is the human's.`,
+    "3. Once the results show, run this with javascript_tool. It REPLACES the page with the JSON (reload the URL if you need the page again) and returns only a status (\xAB OK <n> ads, <m> chars \u2026 \xBB; NO_NEXT_DATA / NO_ADS = nothing to export):",
+    "",
+    p.snippet,
+    "",
+    "4. get_page_text on that tab: it returns a header (Title: / URL: / Source element: / ---) then the JSON.",
+    `5. Save the JSON after the --- line, as is, to ${p.save_to} (the header is tolerated too).`,
+    `6. ${p.import}`,
+    "7. Close the tab (tabs_close_mcp).",
+    ""
+  ].join("\n");
+}
+function stripPageTextHeader(text) {
+  const t = text.trim();
+  if (!/^(Title|URL|Source element):/.test(t)) return t;
+  const sep = t.match(/^-{3,}[ \t]*$/m);
+  return sep?.index === void 0 ? t : t.slice(sep.index + sep[0].length).trim();
+}
+function parseImport(text, file) {
+  const t = stripPageTextHeader(text);
+  if (t === "NO_NEXT_DATA" || t === "NO_ADS" || t === '"NO_NEXT_DATA"' || t === '"NO_ADS"') {
+    throw new Error(`${file}: the snippet found no ${t.includes("NEXT") ? "__NEXT_DATA__ (not a search results page?)" : "ads (empty search: widen --query)"}`);
+  }
+  let v;
+  try {
+    v = JSON.parse(t);
+    if (typeof v === "string") v = JSON.parse(v);
+  } catch {
+    throw new Error(`${file}: not valid JSON \u2014 ${SHAPE_HINT}`);
+  }
+  return v;
+}
+function importComparables(annoncesDir, slug, file) {
+  const dir = path6.join(annoncesDir, slug);
+  const a = parseAnnonce(dir);
+  let text;
+  try {
+    text = fs4.readFileSync(file, "utf8");
+  } catch {
+    throw new Error(`cannot read ${file}`);
+  }
+  const payload = findSearchPayload(parseImport(text, file));
+  if (!payload) throw new Error(`${file}: no ad list found \u2014 ${SHAPE_HINT}`);
+  const ads = processSearchData(payload).results;
+  const jsonPath = path6.join(dir, "comparables.json");
+  const mdPath = path6.join(dir, "comparables.md");
+  fs4.writeFileSync(jsonPath, JSON.stringify(ads, null, 2));
+  fs4.writeFileSync(mdPath, digest(a, ads));
+  return { count: ads.length, jsonPath, mdPath };
+}
+var OWN_BROWSER_FILENAME, NOISY_ATTRIBUTES, OWN_BROWSER_SNIPPET, SHAPE_HINT;
+var init_comparables_own = __esm({
+  "src/comparables-own.ts"() {
+    "use strict";
+    init_comparables_format();
+    init_exploit();
+    init_markdown();
+    init_query();
+    init_selectors();
+    OWN_BROWSER_FILENAME = "comparables-browser.json";
+    NOISY_ATTRIBUTES = /^(profile_|estimated_|is_|country_|shipping|rating|payment|purchase|negotiation|stock|activity_|custom_ref|vehicle_vsp)|_cta_visible$|_id$/;
+    OWN_BROWSER_SNIPPET = `(()=>{const n=document.getElementById('__NEXT_DATA__');if(!n)return 'NO_NEXT_DATA';let b=null,t;const w=(o,p)=>{if(!o||typeof o!=='object')return;if(Array.isArray(o)){if(o.length&&o.every(a=>a&&a.list_id)){if(!b||o.length>b.length){b=o;t=p&&p.total}return}o.forEach(x=>w(x))}else for(const v of Object.values(o))w(v,o)};w(JSON.parse(n.textContent));if(!b)return 'NO_ADS';const X=/${NOISY_ATTRIBUTES.source}/,A=b.slice(0,40);const s=JSON.stringify({total:typeof t==='number'?t:b.length,ads:A.map(a=>({list_id:a.list_id,subject:a.subject,url:a.url,price:a.price,index_date:a.index_date,location:{city_label:a.location&&a.location.city_label,zipcode:a.location&&a.location.zipcode},attributes:(a.attributes||[]).filter(x=>x&&!X.test(x.key)).map(x=>({key:x.key,value_label:x.value_label??x.value}))}))});const e=document.createElement('pre');e.id='lbc-export';e.textContent=s;document.body.replaceChildren(e);document.title='lbc-export';return 'OK '+A.length+' ads, '+s.length+' chars \u2014 read it with get_page_text'})()`;
+    SHAPE_HINT = `expected the --own-browser snippet's output ({"total":n,"ads":[{"list_id":\u2026,"subject":\u2026,"price":\u2026},\u2026]}) or a page's __NEXT_DATA__`;
+  }
+});
+
 // src/comparables.ts
 var comparables_exports = {};
 __export(comparables_exports, {
   runComparables: () => runComparables
 });
-import fs4 from "fs";
-import path6 from "path";
+import fs5 from "fs";
+import path7 from "path";
 async function runComparables(annoncesDir, slug, opts = {}) {
-  const dir = path6.join(annoncesDir, slug);
+  const dir = path7.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   const rawQuery = opts.query ?? buildQueryFromAnnonce(a);
   if (!rawQuery) {
@@ -5667,10 +5796,10 @@ async function runComparables(annoncesDir, slug, opts = {}) {
       );
       if (detail.success.length) enriched = detail.success;
     }
-    const jsonPath = path6.join(dir, "comparables.json");
-    const mdPath = path6.join(dir, "comparables.md");
-    fs4.writeFileSync(jsonPath, JSON.stringify(enriched, null, 2));
-    fs4.writeFileSync(mdPath, digest(a, enriched));
+    const jsonPath = path7.join(dir, "comparables.json");
+    const mdPath = path7.join(dir, "comparables.md");
+    fs5.writeFileSync(jsonPath, JSON.stringify(enriched, null, 2));
+    fs5.writeFileSync(mdPath, digest(a, enriched));
     logger.success(`Wrote ${enriched.length} comparable(s) to ${mdPath}`);
     return { count: enriched.length, jsonPath, mdPath };
   } finally {
@@ -5942,8 +6071,10 @@ __export(computer_use_exports, {
   DEV_BROWSER_INSTALL_HINT: () => DEV_BROWSER_INSTALL_HINT,
   HANDOFF_FILENAME: () => HANDOFF_FILENAME,
   HANDOFF_REASONS: () => HANDOFF_REASONS,
+  MY_ADS: () => MY_ADS,
   RECORD_STATUSES: () => RECORD_STATUSES,
   SAFETY_RULES: () => SAFETY_RULES,
+  WIZARD: () => WIZARD,
   actionStartUrl: () => actionStartUrl,
   adIdFromUrl: () => adIdFromUrl,
   annonceValue: () => annonceValue,
@@ -5973,8 +6104,8 @@ __export(computer_use_exports, {
   runRecord: () => runRecord,
   settleHandoff: () => settleHandoff
 });
-import fs5 from "fs";
-import path7 from "path";
+import fs6 from "fs";
+import path8 from "path";
 function devBrowserCommand(port) {
   return `${DEV_BROWSER_BIN} --connect ${port}`;
 }
@@ -5984,10 +6115,10 @@ function findOnPath(name, env = process.env, platform = process.platform) {
   for (const dir of (env.PATH ?? env.Path ?? "").split(sep)) {
     if (!dir) continue;
     for (const ext of exts) {
-      const file = path7.join(dir, name + ext);
+      const file = path8.join(dir, name + ext);
       try {
-        if (!fs5.statSync(file).isFile()) continue;
-        if (platform !== "win32") fs5.accessSync(file, fs5.constants.X_OK);
+        if (!fs6.statSync(file).isFile()) continue;
+        if (platform !== "win32") fs6.accessSync(file, fs6.constants.X_OK);
         return file;
       } catch {
       }
@@ -6034,18 +6165,18 @@ function buildHandoff(a, photos, report, result, cdpPort) {
   };
 }
 function handoffPath(dir) {
-  return path7.join(dir, HANDOFF_FILENAME);
+  return path8.join(dir, HANDOFF_FILENAME);
 }
 function readHandoff(dir) {
   try {
-    return JSON.parse(fs5.readFileSync(handoffPath(dir), "utf8"));
+    return JSON.parse(fs6.readFileSync(handoffPath(dir), "utf8"));
   } catch {
     return null;
   }
 }
 function clearHandoff(dir) {
   try {
-    fs5.unlinkSync(handoffPath(dir));
+    fs6.unlinkSync(handoffPath(dir));
     return true;
   } catch {
     return false;
@@ -6060,7 +6191,7 @@ function settleHandoff(dir, a, photos, r, cdpPort) {
   const h = buildHandoff(a, photos, r.report, r, cdpPort);
   const file = handoffPath(dir);
   try {
-    fs5.writeFileSync(file, JSON.stringify(h, null, 2));
+    fs6.writeFileSync(file, JSON.stringify(h, null, 2));
   } catch {
     return r;
   }
@@ -6075,7 +6206,7 @@ function settleHandoff(dir, a, photos, r, cdpPort) {
 function readFormSteps(dir) {
   let raw;
   try {
-    raw = JSON.parse(fs5.readFileSync(path7.join(dir, FORM_MAP_FILENAME), "utf8"));
+    raw = JSON.parse(fs6.readFileSync(path8.join(dir, FORM_MAP_FILENAME), "utf8"));
   } catch {
     return null;
   }
@@ -6106,11 +6237,12 @@ function buildCuSheet(dir, a) {
       price: a.price,
       zipcode: a.zipcode,
       ...a.city ? { city: a.city } : {},
+      ...a.address ? { address: a.address } : {},
       ...a.condition ? { condition: a.condition } : {},
       ...a.shipping !== void 0 ? { shipping: a.shipping } : {},
       attributes: { ...a.attributes },
       photos: resolvePhotoPaths(dir, a),
-      photos_dir: path7.resolve(dir, PHOTOS_DIRNAME)
+      photos_dir: path8.resolve(dir, PHOTOS_DIRNAME)
     },
     form_steps: readFormSteps(dir),
     safety: SAFETY_RULES
@@ -6171,24 +6303,12 @@ function renderCuSheet(s) {
   L.push(`await (await page.$("input[type=file]")).uploadFile(...${JSON.stringify(v.photos)});`);
   L.push("EOF");
   L.push("```", "");
-  L.push("## 2. Values, in form order", "");
-  let n = 1;
-  L.push(`${n++}. [ ] Title: ${v.title}`);
-  L.push(`${n++}. [ ] Category: ${v.category} (pick it in the category picker; if it is not offered, pick the closest suggestion and tell the user)`);
-  L.push(`${n++}. [ ] Description (type it verbatim):`, "", "````text", v.description, "````", "");
-  L.push(`${n++}. [ ] Price: ${v.price} \u20AC`);
-  L.push(`${n++}. [ ] Location: ${v.zipcode}${v.city ? ` ${v.city}` : ""} (type the zipcode, then pick the matching city suggestion)`);
-  if (v.condition) L.push(`${n++}. [ ] Condition (\xC9tat): ${v.condition}`);
-  if (v.shipping !== void 0) L.push(`${n++}. [ ] Shipping / delivery: ${v.shipping ? "yes" : "no"}`);
-  const attrs = Object.entries(v.attributes);
-  if (attrs.length) {
-    L.push(`${n++}. [ ] Attributes (field label \u2192 value):`);
-    for (const [k, val] of attrs) L.push(`   - ${k} \u2192 ${val}`);
-  }
+  L.push("## 2. The deposit wizard, step by step", "");
   L.push(
-    `${n++}. [ ] Photos (in this order \u2014 Claude in Chrome: file_upload with these paths; desktop computer use: the file dialog below; dev-browser: uploadFile with these paths):`
+    "Three steps. Find each control by its visible label. Text fields are React inputs: click the field, then type (select all + Delete first if it holds text); prefer that over `form_input`, and always read the value back before moving on.",
+    ""
   );
-  for (const p of v.photos) L.push(`   - ${p}`);
+  for (const line of wizardSteps(v)) L.push(line);
   L.push("");
   L.push("## Photos via the file dialog", "");
   L.push(`Photos folder: ${v.photos_dir}`, "");
@@ -6212,13 +6332,73 @@ function renderCuSheet(s) {
   L.push("");
   return L.join("\n");
 }
+function wizardSteps(v) {
+  const W = WIZARD;
+  let n = 1;
+  const L = [];
+  const box = (t) => L.push(`${n++}. [ ] ${t}`);
+  L.push(`### Step 1 \u2014 \xAB ${W.step1} \xBB`, "");
+  box(`Title: ${v.title} \u2014 in \xAB ${W.titleField} \xBB.`);
+  box(
+    `Category: ${v.category} \u2014 typing the title reveals \xAB ${W.suggestions} \xBB (buttons \xAB ${W.suggestion} \xBB): click the one whose category is \xAB ${v.category} \xBB; it moves on directly. If none matches, use the \xAB ${W.otherCategory} \xBB dropdown and find it by name (families first). If nothing matches, pick the closest and tell the user.`
+  );
+  L.push("");
+  L.push(`### Step 2 \u2014 \xAB ${W.step2} \xBB`, "");
+  box(
+    `Photos (in this order \u2014 Claude in Chrome: file_upload with these paths on the hidden file input of the \xAB ${W.photoZone} \xBB / \xAB ${W.photoButton} \xBB zone, no native dialog; desktop computer use: the file dialog below; dev-browser: uploadFile with these paths):`
+  );
+  for (const p of v.photos) L.push(`   - ${p}`);
+  L.push(`   Then check \xAB ${W.photosDone} \xBB shows ${v.photos.length} photo(s), the first one labelled \xAB ${W.cover} \xBB.`);
+  const expected = Object.entries(v.attributes);
+  box(
+    "Leboncoin PRE-FILLS the category attributes from the title (e.g. Type, Usage, Marque, Taille d'\xE9cran). Check EVERY prefilled value against this list and fix each mismatch; fill the listed ones still empty (e.g. \xAB Ann\xE9e de fabrication \xBB, AAAA). A prefilled field not in this list: leave it and tell the user what Leboncoin chose. A required field with no value here: stop and ask the user."
+  );
+  if (expected.length) {
+    L.push("   Attributes (field label \u2192 value):");
+    for (const [k, val] of expected) L.push(`   - ${k} \u2192 ${val}`);
+  } else L.push("   Attributes: (none in annonce.md)");
+  if (v.condition) box(`Condition \xAB ${W.condition} \xBB: ${v.condition} (open the combobox, click the matching option).`);
+  else
+    box(
+      `Condition \xAB ${W.condition} \xBB is required and not in annonce.md: ask the user (\xAB \xC9tat neuf \xBB, \xAB Tr\xE8s bon \xE9tat \xBB, \xAB Bon \xE9tat \xBB, \xAB \xC9tat satisfaisant - fonctionnel \xBB\u2026).`
+    );
+  box(`Click \xAB ${W.next} \xBB.`);
+  L.push("");
+  L.push(`### Step 3 (final) \u2014 \xAB ${W.step3} \xBB`, "");
+  box(
+    `Description \xAB ${W.description} \xBB: Leboncoin PRE-FILLS it with its own AI-generated text \u2014 REPLACE it entirely with the text below, verbatim (click, Cmd+A / Ctrl+A, Delete, type), then read the value back and check it is exactly this:`
+  );
+  L.push("", "````text", v.description, "````", "");
+  box(`Title (Titre): check it still reads \xAB ${v.title} \xBB.`);
+  box(`Price: \xAB ${W.sell} \xBB selected (not \xAB ${W.give} \xBB), \xAB ${W.price} \xBB = ${v.price} (digits only).`);
+  L.push(
+    `   Info for the user, do not act on it: the \xAB ${W.recommended} \xBB hint and the \xAB ${W.similar} \xBB \u2014 relay them (as extra price grounding), never change the price yourself.`
+  );
+  if (v.address) {
+    box(
+      `\xAB ${W.handover} \xBB \u2014 \xAB ${W.address} \xBB (placeholder \xAB ${W.addressPlaceholder} \xBB): type ${v.address} and click the matching suggestion (a typed value without a picked suggestion is refused). Private: not shown on the ad. Never use \xAB ${W.geolocate} \xBB.`
+    );
+  } else {
+    box(
+      `\xAB ${W.handover} \xBB \u2014 \xAB ${W.address} \xBB: annonce.md has no \`address\`. STOP and ask the user for the full street address (number, street, city \u2014 Leboncoin does not show it on the ad); write it into annonce.md as \`address:\`, then type it and click the matching suggestion. Never invent it, never use \xAB ${W.geolocate} \xBB.`
+    );
+  }
+  if (v.shipping !== void 0) box(`Shipping / delivery: ${v.shipping ? "yes" : "no"} (if the form offers it).`);
+  box(
+    `STOP before \xAB ${W.next} \xBB: the footer reads \xAB ${W.confirm} \xBB \u2014 that click PUBLISHES. Screenshot the whole step, tell the user, and click it only with their explicit go-ahead.`
+  );
+  L.push("");
+  L.push(`Abort cleanly: \xAB ${W.quit} \xBB opens \xAB ${W.quitModal} \xBB \u2192 \xAB ${W.quitNoSave} \xBB (or \xAB ${W.saveDraft} \xBB if the user wants a draft).`);
+  return L;
+}
 function ownBrowserDrivers(openCmd, photos) {
   const L = [
     "1. Preferred: the Claude in Chrome extension, if its tools (`mcp__claude-in-chrome__*`) are available in this session. It drives the user's real, logged-in Chrome or Brave, so `open --real` is optional.",
     "   - `tabs_context_mcp`, then `tabs_create_mcp`: work in a new tab of your own, `navigate` it to the start URL, and close it at the end.",
-    '   - Loop: look (`read_page` with `filter: "interactive"`, or `find` by label) \u2192 act by ref (`form_input` for text fields, `computer` to click) \u2192 verify (`read_page` again).',
+    '   - Loop: look (`read_page` with `filter: "interactive"`, or `find` by label) \u2192 act by ref (`computer` to click; text fields: click, then type \u2014 Leboncoin\'s React inputs take typed text reliably, `form_input` is the fallback) \u2192 verify (`read_page` again: read every value back).',
     "   - Take a `computer` screenshot before every irreversible step (the stop rule) and check it.",
-    "   - Never trigger a native alert/confirm dialog (it freezes the extension); if one appears, ask the user to dismiss it. Leboncoin's confirmations are in-page modals: fine."
+    "   - Never trigger a native alert/confirm dialog (it freezes the extension); if one appears, ask the user to dismiss it. Leboncoin's confirmations are in-page modals: fine.",
+    "   - `javascript_tool` truncates its return value at ~1,000 chars: never return large data from it (write it into the page, read it with `get_page_text`)."
   ];
   if (photos) {
     L.push(
@@ -6232,7 +6412,7 @@ function ownBrowserDrivers(openCmd, photos) {
 function fileDialogRecipe(count) {
   const add = DEPOSIT.photoAddButton.textCandidates.map(quote).join(" / ");
   return [
-    `1. Click the add-photos control (${add}): the OS file dialog opens.`,
+    `1. Click the add-photos control (\xAB ${WIZARD.photoButton} \xBB in the \xAB ${WIZARD.photoZone} \xBB zone; older labels: ${add}): the OS file dialog opens.`,
     "2. macOS: press Cmd+Shift+G, paste the photos folder path above, press Enter.",
     "   Linux (GTK): press Ctrl+L, type the photos folder path above, press Enter.",
     "3. Press Cmd+A (Linux: Ctrl+A) to select every photo of the folder \u2014 or Cmd/Ctrl-click only the files listed above if the folder holds others.",
@@ -6272,7 +6452,7 @@ function editChanges(dir, a) {
   if (a.condition) c.push({ field: "Condition (\xC9tat)", value: a.condition });
   if (a.shipping !== void 0) c.push({ field: "Shipping / delivery", value: a.shipping ? "yes" : "no" });
   for (const [k, v] of Object.entries(a.attributes ?? {})) c.push({ field: k, value: String(v) });
-  c.push({ field: "Photos", value: `leave them as they are unless the user asked (folder: ${path7.resolve(dir, PHOTOS_DIRNAME)})` });
+  c.push({ field: "Photos", value: `leave them as they are unless the user asked (folder: ${path8.resolve(dir, PHOTOS_DIRNAME)})` });
   return c;
 }
 function buildActionSheet(dir, a, action) {
@@ -6297,11 +6477,19 @@ function buildActionSheet(dir, a, action) {
     `Open ${start}: with Claude in Chrome, navigate your own new tab there; else run \`leboncoin open ${a.slug} --real --action ${action}\` (the user's own browser). Screenshot it.`
   ];
   steps.push("If a login page or a \xAB V\xE9rification \xBB captcha shows: stop and ask the user to handle it, then screenshot again.");
-  if (start === MANAGE.listingUrl) steps.push(`In \xAB Mes annonces \xBB (${MANAGE.listingUrl}), find the ad's card: ${who}.`);
-  else steps.push(`The page is the ad itself: check it is ${who}. If it is gone, find its card in \xAB Mes annonces \xBB (${MANAGE.listingUrl}).`);
+  const search = `type its title in ${quote(MY_ADS.search)} \u2192 ${quote(MY_ADS.searchButton)}`;
+  const find = `${search} (tabs ${quote(MY_ADS.online)} / ${quote(MY_ADS.expired)}; ${quote(MY_ADS.empty)} = not in that tab)`;
+  if (start === MANAGE.listingUrl) steps.push(`In \xAB Mes annonces \xBB (${MANAGE.listingUrl}), find the ad's card: ${who} \u2014 ${find}.`);
+  else steps.push(`The page is the ad itself: check it is ${who}. If it is gone, find its card in \xAB Mes annonces \xBB (${MANAGE.listingUrl}): ${find}.`);
   steps.push(
     `Find the control ${labels(plan.control)}: on the ad page, else in its \xAB \u2026 \xBB menu (${labels(MANAGE.overflowMenu)}), else on the ad's card in \xAB Mes annonces \xBB.`
   );
+  if (plan.bulk) {
+    const tabs = plan.bulk.tabs.map(quote).join(" or ");
+    steps.push(
+      `Alternative \u2014 the \xAB Mes annonces \xBB list (${MANAGE.listingUrl}): open the ${tabs} tab${plan.bulk.tabs.length > 1 ? " (check both)" : ""}, ${search}, then tick ONLY this ad's checkbox \u2014 never ${quote(MY_ADS.selectAll)}. Screenshot and check that exactly one ad is ticked and that it is this one; the bulk button ${quote(plan.bulk.button)} at the top of the list then acts on it.`
+    );
+  }
   if (action === "edit") {
     steps.push("Click it: the modify form opens (the same wizard as the deposit). Screenshot it.");
     steps.push(
@@ -6366,7 +6554,7 @@ function renderActionSheet(s) {
   return L.join("\n");
 }
 function runCuSheet(annoncesDir, slug, action = "publish") {
-  const dir = path7.join(annoncesDir, slug);
+  const dir = path8.join(annoncesDir, slug);
   const full = validateAnnonce(dir);
   const gate = action === "publish" ? () => true : action === "edit" ? (f) => f !== "status" : (f) => f === "file";
   const issues = full.issues.filter((i) => gate(i.field));
@@ -6376,9 +6564,9 @@ function runCuSheet(annoncesDir, slug, action = "publish") {
   if (action !== "publish" && a.status === "deleted") {
     return { ok: false, validation, error: `annonce "${slug}" is "deleted": there is no ad left to ${action}` };
   }
-  const file = path7.join(dir, CU_SHEET_FILENAME);
+  const file = path8.join(dir, CU_SHEET_FILENAME);
   const sheet = action === "publish" ? buildCuSheet(dir, a) : buildActionSheet(dir, a, action);
-  fs5.writeFileSync(file, sheet.action === "publish" ? renderCuSheet(sheet) : renderActionSheet(sheet));
+  fs6.writeFileSync(file, sheet.action === "publish" ? renderCuSheet(sheet) : renderActionSheet(sheet));
   return { ok: true, validation, sheet, path: file };
 }
 function resolveOpenUrl(annoncesDir, slug, opts = {}) {
@@ -6386,9 +6574,9 @@ function resolveOpenUrl(annoncesDir, slug, opts = {}) {
     if (!/^https?:\/\//i.test(opts.url)) throw new Error(`--url must be an http(s) URL (got "${opts.url}")`);
     return opts.url;
   }
-  if (opts.action) return actionStartUrl(slug ? parseAnnonce(path7.join(annoncesDir, slug)) : null, opts.action);
+  if (opts.action) return actionStartUrl(slug ? parseAnnonce(path8.join(annoncesDir, slug)) : null, opts.action);
   if (slug && !opts.deposit) {
-    const a = parseAnnonce(path7.join(annoncesDir, slug));
+    const a = parseAnnonce(path8.join(annoncesDir, slug));
     if (a.leboncoin_url && (a.status === "published" || a.status === "paused")) return a.leboncoin_url;
   }
   return DEPOSIT_URL;
@@ -6470,7 +6658,7 @@ function runRecord(annoncesDir, slug, opts) {
   if (!RECORD_STATUSES.includes(given)) throw new Error(`--status must be one of ${RECORD_STATUSES.join(", ")} (got "${opts.status}")`);
   const status = given === "renewed" ? "published" : given;
   const id = parseAdUrl(opts.url);
-  const dir = path7.join(annoncesDir, slug);
+  const dir = path8.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const wasPaused = a.status === "paused";
@@ -6495,7 +6683,7 @@ function runRecord(annoncesDir, slug, opts) {
     handoffRemoved
   };
 }
-var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, CLAUDE_IN_CHROME_RULE, SAFETY_RULES, DEV_BROWSER_BIN, DEV_BROWSER_INSTALL_HINT, REPORT_TO_LOGICAL, fold, CU_ACTIONS, IRREVERSIBLE_STOP, REVERSIBLE_STOP, ACTION_PLANS, ACTION_SAFETY, RECORD_STATUSES;
+var HANDOFF_FILENAME, CU_SHEET_FILENAME, FORM_MAP_FILENAME, DEPOSIT_URL, HANDOFF_REASONS, CLAUDE_IN_CHROME_RULE, WIZARD, SAFETY_RULES, DEV_BROWSER_BIN, DEV_BROWSER_INSTALL_HINT, REPORT_TO_LOGICAL, fold, CU_ACTIONS, MY_ADS, IRREVERSIBLE_STOP, REVERSIBLE_STOP, ACTION_PLANS, ACTION_SAFETY, RECORD_STATUSES;
 var init_computer_use = __esm({
   "src/computer-use.ts"() {
     "use strict";
@@ -6511,9 +6699,41 @@ var init_computer_use = __esm({
     DEPOSIT_URL = DEPOSIT.startUrl;
     HANDOFF_REASONS = ["incomplete", "form-error", "not-published"];
     CLAUDE_IN_CHROME_RULE = "Claude in Chrome: work in a new tab and close it at the end; never trigger a native alert/confirm dialog (it freezes the extension) \u2014 if one appears, ask the user to dismiss it.";
+    WIZARD = {
+      step1: "Commen\xE7ons par l'essentiel !",
+      titleField: "Quel est le titre de l'annonce ?",
+      suggestions: "Choisissez une cat\xE9gorie sugg\xE9r\xE9e",
+      suggestion: "Choix N : cat\xE9gorie <cat\xE9gorie> dans la famille <famille>",
+      otherCategory: "Choisissez",
+      step2: "Dites-nous en plus sur votre article",
+      photoZone: "Cliquez et d\xE9posez jusqu'\xE0 20 photos",
+      photoButton: "Importer",
+      photosDone: "Vos photos",
+      cover: "Couverture",
+      year: "Ann\xE9e de fabrication",
+      condition: "\xC9tat *",
+      next: "Continuer",
+      step3: "Un dernier aper\xE7u avant de publier votre annonce !",
+      description: "Description de l'annonce *",
+      sell: "Je vends",
+      give: "Je donne",
+      price: "Prix de vente souhait\xE9",
+      recommended: "Prix recommand\xE9 entre X \u20AC et Y \u20AC",
+      similar: "Annonces similaires en vente",
+      handover: "Remise du bien",
+      address: "\xC0 quelle adresse se trouve le bien ? *",
+      addressPlaceholder: "Adresse",
+      geolocate: "G\xE9olocaliser ma position",
+      confirm: `En cliquant sur "Continuer", je confirme l'exactitude des informations\u2026`,
+      quit: "Quitter",
+      quitModal: "Vous voulez interrompre votre d\xE9p\xF4t ?",
+      saveDraft: "Enregistrer le brouillon",
+      quitNoSave: "Quitter sans enregistrer"
+    };
     SAFETY_RULES = [
-      "Fill ONLY the values in this sheet (they come from annonce.md); never invent content.",
-      "Stop on the final review step (\xAB Avant de publier \xBB / \xAB Je confirme l'exactitude\u2026 \xBB): do NOT click the final \xAB Continuer \xBB / \xAB D\xE9poser mon annonce \xBB unless the user explicitly asked for full-auto.",
+      "Fill ONLY the values in this sheet (they come from annonce.md); never invent content \u2014 a missing value (the address, a required attribute) is asked to the user.",
+      `Stop on the final step (\xAB ${WIZARD.step3} \xBB, \xAB Je confirme l'exactitude\u2026 \xBB): its \xAB Continuer \xBB PUBLISHES \u2014 do NOT click the final \xAB Continuer \xBB / \xAB D\xE9poser mon annonce \xBB unless the user explicitly gave the go-ahead.`,
+      `To abort: \xAB ${WIZARD.quit} \xBB \u2192 \xAB ${WIZARD.quitNoSave} \xBB (\xAB ${WIZARD.saveDraft} \xBB only if the user wants a draft).`,
       "A DataDome captcha / \xAB V\xE9rification \xBB page is solved by the human, never by the agent: pause and ask.",
       "Work in the user's own browser (`leboncoin open <slug> --real`), where they are already logged in: never type their password, never log in for them.",
       "Take a screenshot before every step and check it before moving on.",
@@ -6534,6 +6754,14 @@ var init_computer_use = __esm({
     };
     fold = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s*\*$/, "").trim();
     CU_ACTIONS = ["publish", "edit", "delete", "renew", "mark-sold", "deactivate", "reactivate"];
+    MY_ADS = {
+      online: "En ligne",
+      expired: "Expir\xE9es",
+      search: "Recherchez dans vos annonces",
+      searchButton: "Rechercher",
+      selectAll: "S\xE9lectionner toutes les annonces",
+      empty: "C'est d\xE9sert ici !"
+    };
     IRREVERSIBLE_STOP = "Irreversible: ask the user to confirm in the chat (this exact ad, by title and price) before the click and its confirmation. Their explicit go-ahead is the consent.";
     REVERSIBLE_STOP = "Reversible: the user's request is the consent. Still check the ad (title, price) on a screenshot before the click.";
     ACTION_PLANS = {
@@ -6552,7 +6780,8 @@ var init_computer_use = __esm({
         confirm: MANAGE.confirmButton,
         proof: [`the page says one of: ${anyOf(MANAGE.deletedMarkers)}`, `or, reloading the ad URL, it shows one of: ${anyOf(MANAGE.goneMarkers)}`],
         stop: IRREVERSIBLE_STOP,
-        record: "deleted"
+        record: "deleted",
+        bulk: { button: "Supprimer", tabs: [MY_ADS.online] }
       },
       renew: {
         allow: ["published"],
@@ -6579,7 +6808,8 @@ var init_computer_use = __esm({
         confirm: MANAGE.manageConfirmButton,
         proof: [`the page says one of: ${anyOf(MANAGE.pausedMarkers)}`, `or the ad now offers ${labels(MANAGE.reactivateButton)}`],
         stop: REVERSIBLE_STOP,
-        record: "paused"
+        record: "paused",
+        bulk: { button: "Pause", tabs: [MY_ADS.online] }
       },
       reactivate: {
         allow: ["paused"],
@@ -6589,7 +6819,8 @@ var init_computer_use = __esm({
         proof: [`the page says one of: ${anyOf(MANAGE.reactivatedMarkers)}`, `or the ad now offers ${labels(MANAGE.deactivateButton)}`],
         stop: REVERSIBLE_STOP,
         record: "published",
-        listingFirst: true
+        listingFirst: true,
+        bulk: { button: "R\xE9activer", tabs: [MY_ADS.expired, MY_ADS.online] }
       }
     };
     ACTION_SAFETY = [
@@ -6939,7 +7170,7 @@ __export(auth_exports, {
   runAuth: () => runAuth
 });
 import { mkdirSync as mkdirSync2, readFileSync as readFileSync2 } from "fs";
-import path8 from "path";
+import path9 from "path";
 async function defaultConnect(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
@@ -7030,7 +7261,7 @@ async function runAuth(opts = {}, deps = {}) {
       const { getAuthStatePath: getAuthStatePath2 } = await Promise.resolve().then(() => (init_config(), config_exports));
       outPath = getAuthStatePath2();
     }
-    mkdirSync2(path8.dirname(outPath), { recursive: true });
+    mkdirSync2(path9.dirname(outPath), { recursive: true });
     const screenshot = await captureScreenshot(cdp, outPath) ? outPath : void 0;
     if (state.loggedIn) {
       logger.success(`Logged in to Leboncoin${state.signals.length ? ` (${state.signals.join(", ")})` : ""}.`);
@@ -7278,13 +7509,13 @@ __export(inspect_exports, {
   runInspect: () => runInspect
 });
 import { mkdirSync as mkdirSync3 } from "fs";
-import path9 from "path";
+import path10 from "path";
 async function defaultConnect2(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
 }
 async function runInspect(annoncesDir, slug, _opts = {}, deps = {}) {
-  const dir = path9.join(annoncesDir, slug);
+  const dir = path10.join(annoncesDir, slug);
   const connect = deps.connect ?? defaultConnect2;
   const cdp = await connect(DEPOSIT.startUrl);
   try {
@@ -7296,10 +7527,10 @@ async function runInspect(annoncesDir, slug, _opts = {}, deps = {}) {
     if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
     mkdirSync3(dir, { recursive: true });
     const formMap = await introspectForm(cdp);
-    const formMapPath = path9.join(dir, "form-map.json");
+    const formMapPath = path10.join(dir, "form-map.json");
     const written = writeFormMap(formMapPath, { steps: [formMap] });
-    const previewPng = await captureScreenshot(cdp, path9.join(dir, "initial.png")) ? path9.join(dir, "initial.png") : void 0;
-    const previewHtml = await savePageHtml(cdp, path9.join(dir, "initial.html")) ? path9.join(dir, "initial.html") : void 0;
+    const previewPng = await captureScreenshot(cdp, path10.join(dir, "initial.png")) ? path10.join(dir, "initial.png") : void 0;
+    const previewHtml = await savePageHtml(cdp, path10.join(dir, "initial.html")) ? path10.join(dir, "initial.html") : void 0;
     logger.success(`Live form: ${summarizeFormMap(formMap)}${written ? ` \u2192 ${formMapPath}` : ""}`);
     logger.info(
       "Read form-map.json + initial.png. Later steps (photos, attributes, review) only appear once step 1 is filled: run `publish <slug> --diagnostic` to walk them all without submitting."
@@ -7560,7 +7791,7 @@ __export(publish_exports, {
   fillForm: () => fillForm,
   runPublish: () => runPublish
 });
-import path10 from "path";
+import path11 from "path";
 async function defaultConnect3(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
@@ -7653,7 +7884,7 @@ async function waitForPublished(cdp, timeoutMs) {
   return null;
 }
 async function runPublish(annoncesDir, slug, opts = {}, deps = {}) {
-  const dir = path10.join(annoncesDir, slug);
+  const dir = path11.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (a.status !== "draft") {
     throw new Error(`annonce "${slug}" is "${a.status}", not "draft" \u2014 only drafts can be published`);
@@ -7674,7 +7905,7 @@ async function drive(cdp, dir, a, photos, opts) {
   const auth = await ensureLoggedIn(cdp);
   if (!auth.ok) {
     logger.error("Not logged in to Leboncoin \u2014 run `login` (or log in once in the opened browser), then retry.");
-    if (opts.screenshot !== false) await captureScreenshot(cdp, path10.join(dir, "auth-state.png"));
+    if (opts.screenshot !== false) await captureScreenshot(cdp, path11.join(dir, "auth-state.png"));
     return { ok: false, reason: "login-required" };
   }
   if (await isOnCaptcha(cdp)) await waitForCaptchaResolution(cdp);
@@ -7686,7 +7917,7 @@ async function drive(cdp, dir, a, photos, opts) {
     return { ok: false, reason: "login-required", report };
   }
   if (opts.screenshot !== false) {
-    const png = path10.join(dir, "publish-preview.png");
+    const png = path11.join(dir, "publish-preview.png");
     if (await captureScreenshot(cdp, png)) {
       report.previewPng = png;
       logger.info(`Saved form screenshot \u2192 ${png} (read it to verify before submitting)`);
@@ -7694,16 +7925,16 @@ async function drive(cdp, dir, a, photos, opts) {
   }
   if (opts.shots) {
     await shotLog.shot(cdp, "20-prefilled");
-    const shotsDir = path10.join(dir, "shots");
-    await captureElement(cdp, ELEMENT_TARGETS.price, path10.join(shotsDir, "elem-price.png"));
-    await captureElement(cdp, ELEMENT_TARGETS.photos, path10.join(shotsDir, "elem-photos.png"));
-    await captureElement(cdp, ELEMENT_TARGETS.submit, path10.join(shotsDir, "elem-submit.png"));
+    const shotsDir = path11.join(dir, "shots");
+    await captureElement(cdp, ELEMENT_TARGETS.price, path11.join(shotsDir, "elem-price.png"));
+    await captureElement(cdp, ELEMENT_TARGETS.photos, path11.join(shotsDir, "elem-photos.png"));
+    await captureElement(cdp, ELEMENT_TARGETS.submit, path11.join(shotsDir, "elem-submit.png"));
   }
-  const formMapPath = path10.join(dir, "form-map.json");
+  const formMapPath = path11.join(dir, "form-map.json");
   if (writeFormMap(formMapPath, { steps: report.formMapSteps ?? [] })) report.formMapPath = formMapPath;
   const href = await currentUrl(cdp);
   const readiness = await buildReadiness(cdp, report, href);
-  const readinessPath = path10.join(dir, "push-readiness.json");
+  const readinessPath = path11.join(dir, "push-readiness.json");
   if (writeReadiness(readinessPath, readiness)) {
     report.readiness = readiness;
     report.readinessPath = readinessPath;
@@ -7712,7 +7943,7 @@ async function drive(cdp, dir, a, photos, opts) {
     `Push-readiness: ${readiness.ready ? "READY" : "NOT READY"}${readiness.blockers.length ? ` \u2014 ${readiness.blockers.join("; ")}` : ""} \u2192 ${readinessPath}`
   );
   if (opts.diagnostic) {
-    const htmlPath = path10.join(dir, "publish-preview.html");
+    const htmlPath = path11.join(dir, "publish-preview.html");
     if (await savePageHtml(cdp, htmlPath)) report.previewHtml = htmlPath;
     logFillReport(report);
     logger.info("Diagnostic \u2014 nothing submitted.");
@@ -7890,7 +8121,7 @@ __export(doctor_exports, {
   runDoctor: () => runDoctor
 });
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync4 } from "fs";
-import path11 from "path";
+import path12 from "path";
 async function defaultConnect4(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
   return connectAndNavigate2(url);
@@ -7945,8 +8176,8 @@ async function runDoctor(opts = {}, deps = {}) {
     if (login.loggedOut) {
       report.checks.push({ name: "deposit", ok: false, detail: "skipped \u2014 log in first (`leboncoin login`)" });
     } else {
-      const a = opts.slug ? parseAnnonce(path11.join(opts.annoncesDir ?? "annonces", opts.slug)) : PROBE;
-      const photos = opts.slug ? resolvePhotoPaths(path11.join(opts.annoncesDir ?? "annonces", opts.slug), a) : [];
+      const a = opts.slug ? parseAnnonce(path12.join(opts.annoncesDir ?? "annonces", opts.slug)) : PROBE;
+      const photos = opts.slug ? resolvePhotoPaths(path12.join(opts.annoncesDir ?? "annonces", opts.slug), a) : [];
       await navigate(cdp, DEPOSIT.startUrl);
       const w = await runWizard(cdp, a, { photos });
       report.fields = fieldResolutions(w, a);
@@ -7968,9 +8199,9 @@ async function runDoctor(opts = {}, deps = {}) {
     let out = opts.out;
     if (!out) {
       const { getScraperHome: getScraperHome2 } = await Promise.resolve().then(() => (init_config(), config_exports));
-      out = path11.join(getScraperHome2(), "doctor-report.json");
+      out = path12.join(getScraperHome2(), "doctor-report.json");
     }
-    mkdirSync4(path11.dirname(out), { recursive: true });
+    mkdirSync4(path12.dirname(out), { recursive: true });
     writeFileSync4(out, JSON.stringify(report, null, 2));
     report.reportPath = out;
     for (const c of report.checks) {
@@ -8018,7 +8249,7 @@ var delete_exports = {};
 __export(delete_exports, {
   runDelete: () => runDelete
 });
-import path12 from "path";
+import path13 from "path";
 import readline from "readline";
 async function defaultConnect5(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
@@ -8034,7 +8265,7 @@ function promptYesNo(question) {
   });
 }
 async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
-  const dir = path12.join(annoncesDir, slug);
+  const dir = path13.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (a.status !== "published" || !a.leboncoin_id) {
     throw new Error(`annonce "${slug}" is not published (no leboncoin_id) \u2014 nothing to delete`);
@@ -8064,7 +8295,7 @@ async function runDelete(annoncesDir, slug, opts = {}, deps = {}) {
     await confirmIfAsked(cdp, MANAGE.confirmButton);
     const proof = await proveOutcome(cdp, { markers: MANAGE.deletedMarkers, reloadUrl: target, goneMarkers: MANAGE.goneMarkers });
     if (!proof) {
-      const png = path12.join(dir, "delete-unconfirmed.png");
+      const png = path13.join(dir, "delete-unconfirmed.png");
       const previewPng = await captureScreenshot(cdp, png) ? png : void 0;
       logger.warn(`Clicked delete, but Leboncoin showed no proof the ad is gone \u2014 "${slug}" stays "published" locally. Check ${previewPng ?? "the browser"}.`);
       return { ok: false, reason: "unconfirmed", previewPng };
@@ -8100,7 +8331,7 @@ __export(manage_exports, {
   runReactivate: () => runReactivate,
   runRenew: () => runRenew
 });
-import path13 from "path";
+import path14 from "path";
 import readline2 from "readline";
 async function defaultConnect6(url) {
   const { connectAndNavigate: connectAndNavigate2 } = await Promise.resolve().then(() => (init_browser(), browser_exports));
@@ -8116,7 +8347,7 @@ function promptYesNo2(question) {
   });
 }
 async function withAd(annoncesDir, slug, opts, deps, cfg, stage) {
-  const dir = path13.join(annoncesDir, slug);
+  const dir = path14.join(annoncesDir, slug);
   const a = parseAnnonce(dir);
   if (!a.leboncoin_id) throw new Error(`annonce "${slug}" has no leboncoin_id \u2014 it was never published`);
   if (!cfg.allow.includes(a.status)) throw new Error(`annonce "${slug}" is "${a.status}" \u2014 expected ${cfg.allow.join(" or ")}`);
@@ -8150,7 +8381,7 @@ async function lifecycle(cdp, a, dir, label, button, proof, apply) {
   await confirmIfAsked(cdp, MANAGE.manageConfirmButton);
   const how = await proveOutcome(cdp, proof);
   if (!how) {
-    const png = path13.join(dir, "manage-unconfirmed.png");
+    const png = path14.join(dir, "manage-unconfirmed.png");
     const previewPng = await captureScreenshot(cdp, png) ? png : void 0;
     logger.warn(`${label}: clicked, but Leboncoin showed no confirmation \u2014 local status left as "${a.status}". Check ${previewPng ?? "the browser"}.`);
     return { ok: false, reason: "unconfirmed", previewPng };
@@ -8220,7 +8451,7 @@ async function runEdit(annoncesDir, slug, opts = {}, deps = {}) {
     const report = await fillForm(cdp, a, [], void 0, { finalButtons: [MANAGE.saveButton, DEPOSIT.publishButton] });
     let previewPng;
     if (opts.screenshot !== false) {
-      const png = path13.join(dir, "edit-preview.png");
+      const png = path14.join(dir, "edit-preview.png");
       if (await captureScreenshot(cdp, png)) previewPng = png;
     }
     if (report.missing.length) logger.warn(`Check before saving: ${report.missing.join(", ")}`);
@@ -8282,6 +8513,7 @@ function runNew(annoncesDir, slug, opts = {}) {
       notes: opts.notes,
       price: opts.price,
       zipcode: opts.zipcode,
+      address: opts.address,
       condition: opts.condition,
       attributes: opts.attributes
     },
@@ -8316,8 +8548,11 @@ Usage:
   leboncoin login [--browser brave|chrome|chromium|opera] [--reset-profile] [--copy-profile] [--cookies-file <path>] [--out <path>] [--timeout-login <ms>]
   leboncoin doctor [<slug>] [--query "<search>"] [--out <path>]
   leboncoin new <slug> [--title "<t>"] [--category "<c>"] [--notes "<texte libre>"]
-                       [--price <n>] [--zipcode <cp>] [--condition "<c>"] [--attributes "k=v,k2=v2"] [--force]
+                       [--price <n>] [--zipcode <cp>] [--address "<street, zip city>"] [--condition "<c>"]
+                       [--attributes "k=v,k2=v2"] [--force]
   leboncoin comparables <slug> [--query "<lbc query>"] [--max-pages <n>] [--with-details]
+  leboncoin comparables <slug> --own-browser [--query "<lbc query>"] [--json]
+  leboncoin comparables <slug> --import <file.json>
   leboncoin validate <slug>
   leboncoin inspect <slug>
   leboncoin publish <slug> [--diagnostic] [--strict] [--shots] [--no-screenshot] [--yes] [--dry-run] [--timeout-submit <ms>]
@@ -8348,6 +8583,10 @@ Commands:
                 With <slug>, the walk uses that annonce and its photos.
   new           Scaffold annonces/<slug>/annonce.md + photos/ (a draft). --notes seeds the body.
   comparables   Scrape similar live listings into the folder (price/keyword grounding).
+                --own-browser: no browser launched; print the steps for YOUR OWN browser (search
+                URL, a javascript_tool snippet that writes the JSON into the page, get_page_text
+                to read it); save that JSON to a file, then --import <file.json> writes
+                comparables.json + comparables.md from it.
   validate      Structural gate: required fields, >=1 photo, real description, draft status.
   inspect       READ-ONLY: open the live deposit form and write form-map.json ({ steps: [...] }:
                 every field of step 1 + required/optional + options) + initial.png/html. Types
@@ -8453,6 +8692,7 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "notes",
   "price",
   "zipcode",
+  "address",
   "condition",
   "attributes",
   "status",
@@ -8461,7 +8701,8 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "out",
   "timeout-login",
   "url",
-  "action"
+  "action",
+  "import"
 ]);
 var BOOL_FLAGS = /* @__PURE__ */ new Set([
   "json",
@@ -8479,7 +8720,8 @@ var BOOL_FLAGS = /* @__PURE__ */ new Set([
   "force",
   "copy-profile",
   "deposit",
-  "real"
+  "real",
+  "own-browser"
 ]);
 var SHORT = {
   q: "query",
@@ -8610,6 +8852,7 @@ async function main(argv = process.argv.slice(2)) {
         notes: p.values.notes,
         price: intOf(p.values.price),
         zipcode: p.values.zipcode,
+        address: p.values.address,
         condition: p.values.condition,
         attributes: parseAttributes(p.values.attributes),
         force: p.bools.has("force")
@@ -8671,6 +8914,25 @@ async function main(argv = process.argv.slice(2)) {
     }
     case "comparables": {
       const slug = requireSlug(p);
+      const importFile = p.values.import;
+      if (importFile !== void 0 || p.bools.has("own-browser")) {
+        if (importFile !== void 0 && p.bools.has("own-browser")) fail("--own-browser and --import are two separate steps: run one at a time");
+        const own = await Promise.resolve().then(() => (init_comparables_own(), comparables_own_exports));
+        try {
+          if (importFile !== void 0) {
+            const r2 = own.importComparables(annoncesDirOf(p), slug, resolve(importFile));
+            if (json) process.stdout.write(JSON.stringify(r2, null, 2) + "\n");
+            else process.stderr.write(`leboncoin: wrote ${r2.count} comparable(s) to ${r2.mdPath}
+`);
+          } else {
+            const plan = own.ownBrowserComparables(annoncesDirOf(p), slug, p.values.query);
+            process.stdout.write(json ? JSON.stringify(plan, null, 2) + "\n" : own.renderOwnBrowserPlan(plan));
+          }
+        } catch (e) {
+          fail(e.message);
+        }
+        return;
+      }
       const { runComparables: runComparables2 } = await Promise.resolve().then(() => (init_comparables(), comparables_exports));
       const r = await runComparables2(annoncesDirOf(p), slug, {
         query: p.values.query,

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -223,6 +223,34 @@ describe("main dispatch (computer use)", () => {
     const bad = await runMain(["cu-sheet", "ex", "--annonces-dir", root, "--action", "boost"]);
     expect(bad.exitCode).toBe(1);
     expect(bad.err).toContain("--action must be one of");
+  });
+
+  it("comparables --own-browser prints the plan and --import builds the files, both without a browser", async () => {
+    const before = navigated.length;
+    const plan = await runMain(["comparables", "ex", "--own-browser", "--annonces-dir", root, "--json"]);
+    expect(plan.exitCode).toBe(0);
+    const p = JSON.parse(plan.out);
+    expect(p.url).toMatch(/^https:\/\/www\.leboncoin\.fr\/recherche\?text=/);
+    expect(p.snippet).toContain("__NEXT_DATA__");
+    const text = await runMain(["comparables", "ex", "--own-browser", "--annonces-dir", root]);
+    expect(text.out).toContain("javascript_tool");
+
+    const file = join(root, "captured.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ total: 1, ads: [{ list_id: 3100000001, subject: "MacBook Air M1", price: [600], location: { city_label: "Paris" } }] }),
+    );
+    const imp = await runMain(["comparables", "ex", "--import", file, "--annonces-dir", root, "--json"]);
+    expect(imp.exitCode).toBe(0);
+    expect(JSON.parse(imp.out).count).toBe(1);
+    expect(readFileSync(join(root, "ex", "comparables.md"), "utf8")).toContain("| 1 | MacBook Air M1 | 600 € | Paris |");
+
+    writeFileSync(file, JSON.stringify({ nope: true }));
+    const bad = await runMain(["comparables", "ex", "--import", file, "--annonces-dir", root]);
+    expect(bad.exitCode).toBe(1);
+    expect(bad.err).toContain("no ad list found");
+    expect((await runMain(["comparables", "ex", "--import", file, "--own-browser", "--annonces-dir", root])).exitCode).toBe(1);
+    expect(navigated.length).toBe(before);
   });
 
   it("open --real hands the URL to the (mocked) OS opener — no CDP navigation", async () => {
